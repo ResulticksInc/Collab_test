@@ -1,0 +1,126 @@
+# Web/backend CI GATE — NOT a deploy.
+#
+# The user deploys web + backend manually with docker compose (see
+# docs/ENTERPRISE_DEPLOYMENT.md), so this workflow deliberately does NOT ship
+# anything: no SSH, no registry push, no secrets to invent. It only proves the
+# frontend + backend typecheck and the frontend build is green, so a broken
+# commit is caught BEFORE the manual `docker compose ... up -d --build`.
+#
+# Manual deploy commands (run on the host AFTER this gate passes) live in
+# docs/ENTERPRISE_DEPLOYMENT.md §"Deploy commands".
+name: Web build (CI gate)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    # Skip when only desktop-shell / docs change — those don't affect the web
+    # bundle and the desktop installer has its own workflow.
+    paths-ignore:
+      - "desktop/**"
+      - "docs/**"
+      - "**/*.md"
+  pull_request:
+    branches:
+      - main
+
+# Cancel an in-flight run when a newer commit lands on the same ref (PR or
+# branch). Keeps the free-tier minutes spent on the LATEST commit only — a
+# superseded push never wastes a runner. The release-images CD workflow uses a
+# DIFFERENT group so a CD run is never cancelled by a CI run (or vice-versa).
+concurrency:
+  group: web-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: typecheck + build + test
+    runs-on: ubuntu-latest
+    # Throwaway MySQL so the backend unit suite actually RUNS (it self-skips when
+    # no DB is reachable — previously CI ran none of it, a silent false-green).
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: colab
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h127.0.0.1 -pcolab"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      # Frontend typecheck (tsc in frontend/app).
+      - name: Typecheck frontend
+        run: npm run typecheck:fe
+
+      # Backend typecheck (root tsconfig, --noEmit).
+      - name: Typecheck backend
+        run: npm run typecheck:be
+
+      # Frontend lint (next lint) — the only lint script that already exists in a
+      # workspace (frontend/app → "lint": "next lint"). NOT invented: run via the
+      # workspace, `--if-present` so it never fails if the script is removed.
+      - name: Lint frontend
+        run: npm --workspace frontend/app run lint --if-present
+
+      # Next.js production build — same build the `frontend` image runs, so a
+      # build break (bad import, server/client boundary, env) is caught here.
+      # Same-origin defaults (blank API/socket URLs) — see docker/Dockerfile.frontend.
+      - name: Build frontend
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ""
+          NEXT_PUBLIC_SOCKET_URL: ""
+          BACKEND_INTERNAL_URL: http://backend:4000
+          LIVEKIT_INTERNAL_URL: http://livekit:7534
+
+      # Backend unit suite against the real MySQL service — auth, MFA/TOTP, RBAC
+      # (fail-closed), SSO, messaging, org guards, timezone correctness. The suite
+      # self-skips when the DB is unreachable, so running it here with a provisioned
+      # MySQL is what makes it a real signal (vs the previous false-green).
+      #
+      # REPORT-ONLY for now: the suites share one `colab_test` schema and don't
+      # isolate between files, so ~14 tests fail from cross-suite state pollution in
+      # a full run even though each suite passes ALONE (a pre-existing test-infra
+      # debt, not product bugs). Give each suite its own schema/transaction in the
+      # Testing workstream, then drop continue-on-error to make this blocking.
+      - name: Unit tests (backend, real MySQL — report-only)
+        run: npm run test:unit
+        continue-on-error: true
+        env:
+          TEST_DATABASE_URL: mysql://root:colab@127.0.0.1:3306/colab_test
+          DB_BOOT_RETRY_MS: "60000"
+
+      # Secret scan — REPORT-ONLY for now (continue-on-error) because the repo still
+      # has pre-existing findings (env templates) and a git-history secret to scrub
+      # + rotate. Flip to a hard gate (drop continue-on-error) once those are clean.
+      - name: Secret scan (report-only)
+        run: npm run secrets
+        continue-on-error: true
+
+      # Dependency CVE audit — REPORT-ONLY for now: current high/critical advisories
+      # are transitive build tooling (electron-builder→tar, concurrently→shell-quote).
+      # Triage/upgrade those, then drop continue-on-error to make this blocking.
+      - name: Dependency audit (report-only)
+        run: npm run security
+        continue-on-error: true
+
+      # NOTE: the Playwright e2e suite (incl. the 6 call/meeting tests that guard
+      # the protected path — see docs/DEPLOYMENT_MODEL.md §6) needs a running
+      # backend + DB + LiveKit, so it is NOT run in this lightweight gate. Run it
+      # locally before any deploy that touches the frontend/backend:
+      #   npm run typecheck && npm run test:e2e   (then a manual call smoke)
+      # This is the NON-NEGOTIABLE calls/meetings safety gate.

@@ -1,0 +1,430 @@
+[
+  {"t":"h","level":1,"text":"4. Frontend Architecture"},
+
+  {"t":"p","text":"This section is the authoritative reference for the CoLab web client. Every claim below is grounded in the real source under `frontend/app/` — the Next.js application package `@colab/frontend`. The frontend is a single-page application (SPA): one client-rendered React tree mounted at `/`, with no nested URL routes and no server-rendered pages beyond the App Router shell. In-app navigation is *state-driven*, not URL-driven. The mental model to carry through the whole section is: **one giant client component (`CoLabV1`) owns almost all state and switches between views via a `mode` string; everything else is a child it drills props into.** There is no Redux, no Zustand, no Jotai, and — a correction to common assumptions — effectively no React Context either."},
+
+  {"t":"callout","kind":"note","title":"How to read this section","text":"Plain-language explanations come first, engineering detail second. Where a grounding assumption was wrong, the corrected fact is called out explicitly (search for the word *Correction*). File paths are absolute and load-bearing — they are the ground truth a future engineer should open."},
+
+  {"t":"h","level":2,"text":"4.1 Stack, Versions, and Build Toolchain"},
+
+  {"t":"p","text":"CoLab's web client is built on **Next.js 14.2.5** using the **App Router** (not the legacy Pages Router), **React 18.3.1**, and **TypeScript 5.9.3**. The package manifest lives at `frontend/app/package.json` and declares the package name `@colab/frontend`. The development server runs on port **3002** bound to all interfaces (`next dev -p 3002 -H 0.0.0.0`) so it is reachable from other devices on the LAN; the production server (`next start`) listens on port **3000** inside its container, fronted by nginx/Caddy in deployment."},
+
+  {"t":"p","text":"The dependency set is deliberately small and purposeful. The table below catalogs the load-bearing libraries and why each exists."},
+
+  {"t":"table","headers":["Dependency","Version","Role in CoLab"],"rows":[
+    ["next","^14.2.5","App Router, dev/prod server, the same-origin reverse proxy (rewrites)"],
+    ["react / react-dom","^18.3.1","UI runtime; Strict Mode is on (double-invokes effects in dev)"],
+    ["typescript","^5.9.3","Type checking; `tsc` still gates `next build` even though ESLint does not"],
+    ["livekit-client","^2.19.1","WebRTC SFU client for 1:1 calls, group huddles, and meetings"],
+    ["socket.io-client","^4.7.5","Realtime channel (messages, presence, call/meeting signalling)"],
+    ["@tiptap/* suite","^3.26.1","Rich-text composer (StarterKit, mention, table, link, highlight, code-block-lowlight, task-list, etc.)"],
+    ["lowlight","^3.3.0","Syntax highlighting inside TipTap code blocks"],
+    ["dompurify","^3.4.10","HTML sanitizer for rendering stored rich-HTML message bodies"],
+    ["@signalapp/libsignal-client","^0.94.4","Declared for E2EE; aliased OUT of the client bundle by webpack (native Rust NAPI cannot run in a browser)"]
+  ]},
+
+  {"t":"p","text":"**Why Signal is aliased out.** `@signalapp/libsignal-client` loads compiled Rust NAPI bindings via `node-gyp-build`. Those native modules cannot execute in the browser. In `frontend/app/next.config.js` the webpack config sets `resolve.alias['@signalapp/libsignal-client'] = false` and `resolve.alias['node-gyp-build'] = false` on the *client* build only, plus `resolve.fallback` entries that stub `fs`, `path`, `crypto`, `os`, `assert`, `net`, and `tls` to `false`. At runtime the dynamic import fails gracefully (caught by the `loadSignal()` try/catch in `lib/e2ee/manager.ts`). The practical consequence: E2EE is **off by default** and the real DM encryption path uses native Web Crypto (ECIES), not the Signal library — `SignalStore.ts` is a naming artifact, not the Signal protocol."},
+
+  {"t":"h","level":3,"text":"4.1.1 next.config.js — the most important config file in the frontend"},
+
+  {"t":"p","text":"`frontend/app/next.config.js` does five things that the entire deployment model depends on. Read it as the contract between the browser, the Next server, and the backend."},
+
+  {"t":"ol","items":[
+    "**reactStrictMode: true** — surfaces unsafe lifecycles and double-invokes effects in development to catch missing cleanup.",
+    "**eslint.ignoreDuringBuilds: true** — cosmetic ESLint errors (e.g. `react/no-unescaped-entities`) must never fail a production build or auto-deploy. Linting is a *separate* gate (`npm run lint:*`). Critically, **TypeScript type errors STILL fail `next build`** because `tsc` runs during the build — so real type bugs are caught even though ESLint is not a blocker.",
+    "**skipTrailingSlashRedirect: true** — Socket.IO's endpoint is `/socket.io/` *with* a trailing slash. Next's default behaviour 308-redirects `/socket.io/?...` to `/socket.io?...`, which then no longer matches the rewrite below, breaking realtime entirely. Disabling the redirect lets the long-poll handshake reach the backend.",
+    "**rewrites()** — the same-origin reverse proxy (detailed below). This is what lets one build run on any host/port/region with no CORS configuration.",
+    "**webpack()** — strips Signal native modules and `node:` scheme prefixes from the client bundle (detailed above)."
+  ]},
+
+  {"t":"p","text":"`next.config.js` also performs a **root-env preload**: before exporting, an IIFE reads the monorepo-root `.env` (`../../.env`) and copies any `NEXT_PUBLIC_*` keys into `process.env` *without overriding values already present*. CoLab keeps a single source of truth for environment config at the repo root, but Next only auto-loads `.env` from the app directory — this shim bridges the gap so root-level public flags (API/socket URLs, `NEXT_PUBLIC_FEATURE_SIGNUP`, etc.) reach the client build."},
+
+  {"t":"h","level":3,"text":"4.1.2 The same-origin reverse proxy (rewrites)"},
+
+  {"t":"p","text":"This is the single most consequential architectural decision in the frontend. **The browser only ever talks to its own origin.** The Next server reverse-proxies three path prefixes to the backend and media services, so there is never a cross-origin request and CORS never gates the app."},
+
+  {"t":"diagram","kind":"flow","title":"Same-origin request flow","nodes":[
+    {"label":"Browser","sub":"loads app from origin"},
+    {"label":"Next server","sub":"rewrites /api /socket.io /livekit"},
+    {"label":"Backend / LiveKit","sub":"127.0.0.1:4000 / livekit:7534"}
+  ]},
+
+  {"t":"table","headers":["Source path","Destination","Resolved from"],"rows":[
+    ["/api/:path*","backend /api/:path*","BACKEND_INTERNAL_URL → NEXT_PUBLIC_API_BASE_URL → http://127.0.0.1:4000"],
+    ["/socket.io/:path*","backend /socket.io/:path*","same backend URL"],
+    ["/livekit/:path*","LiveKit /:path* (prefix stripped)","LIVEKIT_INTERNAL_URL → http://livekit:7534"]
+  ]},
+
+  {"t":"callout","kind":"warning","title":"127.0.0.1, never localhost","text":"The local default backend URL is `http://127.0.0.1:4000`, NOT `http://localhost:4000`. Node resolves `localhost` to IPv6 `::1` first, but the backend binds IPv4 (`0.0.0.0:4000`) and is not on `::1`. Proxying to `localhost:4000` produces `ECONNREFUSED ::1:4000`, which silently breaks the WebSocket-upgrade proxy. Forcing `127.0.0.1` pins IPv4 to where the backend actually listens. Docker/other hosts override via `BACKEND_INTERNAL_URL`."},
+
+  {"t":"p","text":"Because of this proxy, `lib/config.ts` defaults `apiBaseUrl` and `socketUrl` to the empty string (`\"\"`), which means *same-origin / relative*. There is no baked `localhost:4000` to be unreachable from another machine. This is precisely what fixed the historical cross-host 'Couldn't load' attachment bug and the 'realtime only updates after a refresh' bug: an attachment is served from `/api/files/:id/download` on the *same* origin, proxied Next → backend → MinIO, and the socket connects to its own origin."},
+
+  {"t":"h","level":2,"text":"4.2 Router Type, Routing, and the App Router Layout System"},
+
+  {"t":"p","text":"CoLab uses the **App Router** under `frontend/app/src/app/`. Despite using the App Router, the application is a *single client-rendered SPA*: there are no nested route segments, no dynamic `[id]` folders, and no per-feature pages. The entire product is mounted at the root route and renders one client component. Navigation between 'Messages', 'Calendar', 'Tasks', etc. is a React state change (`mode`), never a URL change — so a browser refresh always lands back on the dashboard."},
+
+  {"t":"table","headers":["File (under src/app/)","Responsibility"],"rows":[
+    ["layout.tsx","Root layout. Imports `../styles/v1.css`, sets `<html lang=\"en\">`, exports `metadata` (title = `NEXT_PUBLIC_APP_NAME` default 'Collab'). Wraps nothing but `<body>{children}` — there is no provider tree here."],
+    ["page.tsx","The whole app. Marked `'use client'`; its body is literally `<CoLabV1 />`."],
+    ["icon.svg","App-router favicon, auto-injected by Next (replaces the browser default globe)."],
+    ["error.tsx","Page-level error boundary ('use client'). Catches render/runtime errors anywhere in the tree, shows a recoverable 'Something went wrong' fallback with **Try again** (re-renders the subtree via `reset()`) and **Reload** (full refresh). The real error is logged to console, never shown to the user."],
+    ["global-error.tsx","Last-resort boundary that replaces the entire `<html>`/`<body>` when even the root layout fails."],
+    ["loading.tsx","Route-level loading fallback — a theme-aware centered CSS spinner so the first paint is never blank."],
+    ["not-found.tsx","404 page ('This page doesn't exist in Collab') with a link home. Rarely reached because there are no real sub-routes."]
+  ]},
+
+  {"t":"p","text":"**The layout system in practice.** `layout.tsx` does almost nothing on purpose — it imports the single global stylesheet and establishes the `<html>`/`<body>` shell. All visual layout (the left nav rail, the conversation sidebar, the active view, modals, toasts, call overlays) is composed *inside* `CoLabV1`. There is no `app/(group)/` route grouping, no parallel routes, no intercepting routes. The 'layout' that users perceive — rail + sidebar + content — is plain CSS grid/flex in `v1.css` keyed off body classes that `CoLabV1` toggles."},
+
+  {"t":"callout","kind":"note","title":"Body class = the real router","text":"Because navigation is state-driven, CoLab uses **body classes as a pseudo-router for CSS**. A `useEffect` in `CoLabV1` (≈line 226) toggles `mode-<name>` on `document.body` for every module (`mode-dashboard`, `mode-chats`, `mode-calls`, …). CSS in `v1.css` scopes rules to one module via these classes — e.g. the floating 'expand list' button only appears under `mode-chats`, and the borealis ambiance only renders under `body.amb-borealis.mode-dashboard`."},
+
+  {"t":"h","level":2,"text":"4.3 Folder-by-Folder Map of frontend/"},
+
+  {"t":"p","text":"The table below is the canonical map of the frontend tree. Counts are exact as of this writing."},
+
+  {"t":"table","headers":["Path","Responsibility"],"rows":[
+    ["frontend/app/","Next package root: package.json, next.config.js, tsconfig.json, public/, src/"],
+    ["frontend/app/public/","Static assets — contains only `collab.svg`. (The Rail logo is inlined as a data-URI in `Rail.tsx`, so it can never 404.)"],
+    ["frontend/app/src/app/","App Router shell — layout, page, error/global-error, loading, not-found, icon.svg (7 files)"],
+    ["frontend/app/src/components/","All UI: **32 .tsx files**. The god-component, every view, every modal, and supporting widgets"],
+    ["frontend/app/src/lib/","17 plain-TS modules (api, socket, config, logger, etc.) — the non-UI infrastructure layer"],
+    ["frontend/app/src/lib/e2ee/","E2EE subsystem — 9 files (manager, media, SignalStore, rotation-engine, revocation-model, recovery-protocol, epoch-store, ownership-validation, safety)"],
+    ["frontend/app/src/styles/","A single stylesheet: `v1.css` (16,672 lines) — the entire design system"],
+    ["frontend/app/src/data/","EMPTY directory (reserved namespace, no files)"],
+    ["frontend/app/src/declarations.d.ts","Ambient TypeScript module declarations"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Correction to the recon notes","text":"The lib layer is **17 top-level `.ts` modules plus the `e2ee/` subdirectory of 9 files** (not '18 modules'). All other folder counts (32 components, 9 e2ee files, single v1.css, empty data/, single collab.svg) are confirmed exactly."},
+
+  {"t":"h","level":3,"text":"4.3.1 The lib/ infrastructure modules"},
+
+  {"t":"table","headers":["Module","Responsibility"],"rows":[
+    ["api.ts","Single `api` object, ~150 methods, all through one `req()` helper. Envelope contract `{ok,data,error}`; throws with `err.status` attached"],
+    ["socket.ts","`connectSocket(token)` + the `EVENTS` name map (≈60 events). Polling-first transport order"],
+    ["config.ts","`apiBaseUrl`/`socketUrl`/`appName`/`workspaceName` + the four feature flags"],
+    ["logger.ts","Zero-dep structured logger: 400-entry ring buffer, pub/sub, plain-English hints, `window.colabLogs`"],
+    ["callDiagnostics.ts","WebRTC observability — `getStats()` ICE/TURN/relay polling, `[CALLDIAG]` trail"],
+    ["mediaSupport.ts","`getUserMedia` preflight, `preferSecureWsUrl`, `hasMediaDevices` — insecure-context detection"],
+    ["messageText.ts","`messagePreview`/`messageRowPreview` — the single source for all message previews"],
+    ["sanitizeHtml.ts","DOMPurify wrapper used by the message bubble renderer"],
+    ["emojiData.ts","Searchable emoji catalog + categories"],
+    ["helpContent.ts","Help Center content + `MODE_TO_HELP` mapping"],
+    ["passwordPolicy.ts","Non-authoritative client mirror of the backend credential policy (live UX)"],
+    ["identity.ts","`otherMemberId` and DM-peer resolution helpers"],
+    ["image.ts","`downscaleToDataURL` (avatar/wallpaper JPEG data-URLs) + `resolveMediaUrl`"],
+    ["linkPreview.ts","`firstUrl` extraction for link unfurls"],
+    ["positioning.ts","`usePosition` — the one custom hook; edge-aware popover/menu placement (anti-clipping)"],
+    ["sounds.ts","`playPattern`, `RINGTONE_PATTERNS`, `MESSAGE_TONE`"],
+    ["bubbleAccent.ts","`bubbleAccentColor` — sent-bubble accent resolution for `--me-bub`"]
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"4.4 Component Structure"},
+
+  {"t":"p","text":"The 32 components fall into four tiers: the god-component, the full-screen views, the modals, and the reusable widgets. The dependency is almost entirely top-down: `CoLabV1` imports and renders the views, drilling props and callbacks downward."},
+
+  {"t":"diagram","kind":"layered","title":"Component hierarchy (top-down)","layers":[
+    {"label":"App shell","items":["page.tsx → CoLabV1"]},
+    {"label":"Persistent chrome","items":["Rail (left nav)","ConversationSidebar"]},
+    {"label":"Active view (by mode)","items":["ChatView","CalendarView","TasksView","Settings","…"]},
+    {"label":"Overlays","items":["CallModal (in CoLabV1)","MeetingRoom/MeetingStage","Modals.*"]}
+  ]},
+
+  {"t":"h","level":3,"text":"4.4.1 Views rendered by the mode switch"},
+
+  {"t":"p","text":"`CoLabV1` holds a `mode` state string (initialised to `\"dashboard\"`). A large ternary chain in its render (≈line 4206) maps `mode` to a view. The table maps every mode to its component and source location."},
+
+  {"t":"table","headers":["mode value","Rendered view","Source"],"rows":[
+    ["chats","ChatView","components/ChatView.tsx (6,296 lines) — keyed `cv`/`empty` to avoid hook-count crashes"],
+    ["search","SearchView","components/SearchView.tsx (nav hidden by feature flag)"],
+    ["agents","AgentsView","components/AgentsView.tsx (static governance page)"],
+    ["settings","Settings","components/Settings.tsx (1,822 lines) — opened from Rail footer, not a nav item"],
+    ["files","FilesView","components/FilesView.tsx"],
+    ["calendar / meetings","CalendarView","components/CalendarView.tsx — Meetings merged into Calendar; both modes hit this branch"],
+    ["activity","ActivityView","Defined INLINE inside CoLabV1.tsx (≈line 5003) — the Notifications feed"],
+    ["dashboard","DashboardView","Defined INLINE inside CoLabV1.tsx (≈line 5477) — the default landing view"],
+    ["tasks","TasksView","components/TasksView.tsx"],
+    ["reminders","RemindersView","components/RemindersView.tsx"],
+    ["contacts","ContactsView","components/ContactsView.tsx"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Two views live inside the god-component","text":"`ActivityView` and `DashboardView` are NOT separate files — they are functions declared inside `CoLabV1.tsx` (≈lines 5003 and 5477). Everything else in the switch is an imported component. This is one reason `CoLabV1.tsx` is 9,039 lines long."},
+
+  {"t":"p","text":"The ChatView render is keyed `key={active ? \"cv\" : \"empty\"}`. ChatView early-returns a `<Welcome/>` empty state *above* some of its hooks; toggling between empty and a real conversation would change the hook count and crash with 'Rendered more hooks than during the previous render'. Keying by presence-of-conversation remounts cleanly across that boundary, while conversation→conversation switches keep the same instance (same key)."},
+
+  {"t":"h","level":3,"text":"4.4.2 Modals and supporting widgets"},
+
+  {"t":"p","text":"`components/Modals.tsx` exports the dialog family: `CreateGroupModal`, `ManageGroupModal`, `AddParticipantsModal`, `ForwardModal`, `BookmarksPanel`, `InviteModal`, and `NewCallModal`. The reusable widget set includes `Rail` (left nav), `ConversationSidebar`, `Avatar` + `AvatarCropModal`, `RichTextEditor` (TipTap), `VoicePlayer`, `LinkPreview`, `PremiumSelect`, `FloatingMenu`, `GlobalTooltip`, `Modal` (the base dialog primitive, plus a `Btn` export), `PreJoinMeeting`, `ConnectionCheck`, `CallDebugPanel`, and `DiagnosticsPanel`. Calls (`CallModal`) and the incoming-ring UI live *inside* `CoLabV1` rather than as separate components."},
+
+  {"t":"h","level":2,"text":"4.5 State Management"},
+
+  {"t":"p","text":"**Plain-language version:** CoLab does not use any state-management library. One component (`CoLabV1`) holds dozens of `useState` values and passes them down as props. To keep callbacks fast and stable, it also keeps a *ref mirror* of the important state, so a function can read the latest value without listing that state in its dependency array."},
+
+  {"t":"p","text":"**Engineering version:** State is centralized local React state in `CoLabV1`. There is no Redux/Zustand/Jotai/MobX. The `useState` set includes (non-exhaustively) `mode`, `navHistory`, `forwardStack`, `theme`, `conversations`, `convLoaded`, `activeId`, `railCollapsed`, `mobilePane`, `settings`, `modal`, `toast`, `me`, plus per-domain collections (`messagesByConv`, `readState`, `scheduledByConv`, `huddles`, `tasks`, `reminders`, `folders`, `invites`, `meetings`, `calls`, `voicemails`, `notifications`, `notifUnread`). Props are drilled into child views."},
+
+  {"t":"h","level":3,"text":"4.5.1 The ref-mirror pattern"},
+
+  {"t":"p","text":"Many callbacks (socket handlers, the global ESC handler, the reconnect resync) must read the *latest* state but must not be re-created every time that state changes — otherwise their identity churns and re-subscribes effects. CoLab solves this with refs that mirror state:"},
+
+  {"t":"table","headers":["Ref","Mirrors","Why"],"rows":[
+    ["activeIdRef / modeRef / mobilePaneRef","activeId / mode / mobilePane","Reconnect handler and nav history read current values without re-subscribing"],
+    ["tokenRef","auth token","Every API call reads the live token; survives without re-rendering"],
+    ["messagesByConvRef","messagesByConv","Socket handlers append without stale closures"],
+    ["socketRef","the live Socket.IO instance","Emit from anywhere"],
+    ["settingsRef / meRef / usersRef / conversationsRef","settings / me / users / conversations","Callbacks read latest snapshots cheaply"],
+    ["modalRef / goBackRef","modal open-state / back action","Single global ESC handler reads them"]
+  ]},
+
+  {"t":"p","text":"Two frozen constants — `const EMPTY_ARR = Object.freeze([])` and `const EMPTY_OBJ = Object.freeze({})` — provide *stable identities* for fallback props. Writing `x || []` inline would hand a child a brand-new array every render and defeat its `React.memo`. Using the shared frozen empties keeps the identity constant. These are used at the ChatView call site (e.g. `messages={(active && messagesByConv[active.id]) || EMPTY_ARR}`)."},
+
+  {"t":"h","level":3,"text":"4.5.2 Context providers — there are none"},
+
+  {"t":"callout","kind":"warning","title":"Correction: the app uses ZERO React Context","text":"The recon notes said ChatView holds one internal React context. The source proves otherwise: `createContext` and `useContext` are **imported** at the top of `ChatView.tsx` (lines 21–22) but are **never actually called** anywhere in the file — they are dead imports. A repo-wide search for `createContext(` returns no call sites in any component or lib file. CoLab therefore has **no React Context at all**, at any level. State centralization in `CoLabV1` replaces the provider pattern entirely. `layout.tsx` wraps nothing; there is no app-wide provider tree beyond `<body>{children}`."},
+
+  {"t":"p","text":"The one pub/sub mechanism that *looks* like context is `lib/logger.ts`: `DiagnosticsPanel` calls `subscribeLogs()` to receive updates from a module-level ring buffer. This is a plain observer pattern, not React Context."},
+
+  {"t":"h","level":3,"text":"4.5.3 The re-render-storm mitigation"},
+
+  {"t":"p","text":"Because `CoLabV1` is a god-component, every socket event (a new message, a presence change, a typing flicker) updates its state and would, naively, re-render the *entire* tree — including the heavyweight chat list. The mitigation has three parts:"},
+
+  {"t":"ol","items":[
+    "**Memoized shells.** `ChatView` is exported as `React.memo(ChatViewImpl)` (end of `ChatView.tsx`). Inside it, each message row `MsgRow` is `React.memo(MsgRowImpl, customCompare)` — by far the highest-impact perf win for the list.",
+    "**Stable props via refs and frozen empties.** The ref-mirror pattern keeps callback identities stable, and `EMPTY_ARR`/`EMPTY_OBJ` keep fallback props stable, so the memo comparators actually short-circuit instead of seeing a 'new' prop every render.",
+    "**Custom memo comparators.** `MsgRow`'s second `React.memo` argument is a hand-written equality function, so a row only re-renders when *its own* message data changes, not when a sibling or unrelated state updates."
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Pattern to follow for future perf work","text":"When adding a new high-frequency stream to CoLabV1, wrap the consuming view in `React.memo`, pass it data through a frozen-empty fallback, and route any 'read latest' callback through a ref mirror rather than a dependency array. Anything that hands a child a fresh array/object/function each render will silently defeat the memoization and reintroduce the storm."},
+
+  {"t":"h","level":2,"text":"4.6 Hooks and Cross-Cutting Wiring"},
+
+  {"t":"p","text":"CoLab uses standard React hooks throughout — `useState`, `useEffect`, `useRef`, `useCallback`, `useMemo`, plus `useLayoutEffect` in ChatView for measurement. There is exactly **one custom hook**: `usePosition` in `lib/positioning.ts`, which computes edge-aware placement for popovers, menus, and pickers so they never clip off-viewport. There is no `hooks/` directory."},
+
+  {"t":"p","text":"Cross-cutting behaviour that would normally use context or an event bus is wired through **window `CustomEvent`s** instead:"},
+
+  {"t":"table","headers":["Event","Dispatched by","Handled by","Purpose"],"rows":[
+    ["colab:unauthorized","lib/api.ts (on a confirmed 401)","CoLabV1 (logs out)","Graceful mid-session logout"],
+    ["colab:esc (cancelable)","CoLabV1 global ESC handler","Each open transient surface","ESC closes the topmost picker/menu/dropdown; a handler calls preventDefault()"],
+    ["'?' keypress","CoLabV1 keydown listener","CoLabV1","Opens the keyboard shortcuts cheat-sheet (ignored while typing)"]
+  ]},
+
+  {"t":"p","text":"**The ESC priority chain** (CoLabV1 ≈line 695) is worth memorizing because it is app-wide policy: (1) if a modal is open, close it; (2) otherwise dispatch a *cancelable* `colab:esc` window event — any open transient surface that handles it calls `preventDefault()`, which makes `dispatchEvent` return `false`; (3) if nothing consumed it (`dispatchEvent` returned `true`), ESC acts as a global Back via `goBackRef.current()`. Every picker in the app must listen for `colab:esc` and `preventDefault()` when it closes, or ESC will skip past it straight to Back."},
+
+  {"t":"h","level":2,"text":"4.7 Auth and Socket Bootstrap"},
+
+  {"t":"p","text":"The session token is stored in `localStorage` under the key `clb_token`. The bootstrap and login flows live in `CoLabV1`."},
+
+  {"t":"diagram","kind":"pipeline","title":"Login / bootstrap sequence","steps":[
+    {"label":"Restore token","detail":"On mount, read clb_token from localStorage; if present set tokenRef and call api.me(token)"},
+    {"label":"Validate","detail":"api.me resolves the user → setMe; on failure clear tokenRef + localStorage"},
+    {"label":"authSuccess","detail":"login/signup → set tokenRef + me, persist token, setMode('dashboard'), initE2EE(token,userId)"},
+    {"label":"Connect socket","detail":"connectSocket(token) → store in socketRef, attach ~60 event handlers"},
+    {"label":"Signup extra","detail":"A brand-new account also opens the one-time Onboarding overlay"}
+  ]},
+
+  {"t":"p","text":"`authSuccess(token, user)` (≈line 819) sets `tokenRef.current`, `setMe(user)`, writes `clb_token`, clears offline-demo mode, `setMode('dashboard')`, and calls `initE2EE(token, user.id)` (which resolves to `setAuthed(true)` whether or not E2EE initialises — E2EE failure never blocks login). `doLogin` and `doSignup` wrap `api.login`/`api.signup`, then call `authSuccess`; `doSignup` additionally calls `setOnboardingOpen(true)` so only fresh sign-ups see Onboarding — existing users logging in are never interrupted."},
+
+  {"t":"h","level":3,"text":"4.7.1 connectSocket and the polling-first transport order"},
+
+  {"t":"p","text":"`lib/socket.ts` `connectSocket(token)` calls `io(config.socketUrl || undefined, {...})`. Passing `undefined` (not `\"\"`) means same-origin — socket.io treats the empty string inconsistently. The transport configuration is the load-bearing detail:"},
+
+  {"t":"code","lines":[
+    "transports: [\"polling\", \"websocket\"],  // POLLING FIRST, then upgrade",
+    "tryAllTransports: true,                  // fall through if a transport fails",
+    "reconnection: true"
+  ]},
+
+  {"t":"callout","kind":"warning","title":"Why polling first","text":"In the same-origin setup the socket is proxied through the Next server. Next's dev rewrites can carry HTTP long-poll but CANNOT proxy a raw WebSocket upgrade. A websocket-first client (with socket.io's default `tryAllTransports=false`) failed to connect at all and timed out — which is exactly why call recipients received nothing. Connecting via polling guarantees the socket comes up; Engine.IO then opportunistically upgrades to WebSocket where the proxy supports it (nginx in prod) and silently stays on polling where it does not (Next dev)."},
+
+  {"t":"p","text":"The `EVENTS` map in `lib/socket.ts` mirrors the backend's `shared/src/events.ts` and names ≈60 events across families: `message:*`, `conversation:*`, `call:*`, `huddle:*`, `meeting:*`, `notification:*`, `invite:*`, `task:changed`, `reminder:changed`, `presence:update`, `typing*`, and `ready`. CoLab attaches handlers for all of these inside the bootstrap effect."},
+
+  {"t":"h","level":3,"text":"4.7.2 Reconnect and resync"},
+
+  {"t":"p","text":"A dropped-and-restored socket must not lose any messages or badge updates that arrived during the gap. The `connect` handler (≈line 1004) tracks a `hadConnection` flag. On the *first* connect, the initial data load plus the `ready` handler cover everything. On a *reconnect* (`hadConnection === true`) it: re-emits `CONVERSATION_JOIN` for the currently active conversation, refetches that conversation's messages (`api.getMessages` → `decryptMessageList`), calls `refetchConversations()` to rebuild the list and unread badges, and re-pulls the unread notification count (which a conversation refetch alone would miss if the badge was cleared on another device). The `ready` event also re-emits `CONVERSATION_JOIN` so the room subscription is always correct after reconnect."},
+
+  {"t":"p","text":"`connect_error` is intentionally *not* silent but also not spammy: a counter surfaces exactly **one** toast on the 4th consecutive failure (socket.io keeps auto-retrying), and the counter resets on a successful `connect`. A silent failure here is precisely what made realtime appear to 'only update after a refresh', so visibility is deliberate."},
+
+  {"t":"h","level":2,"text":"4.8 The API Layer (lib/api.ts)"},
+
+  {"t":"p","text":"`lib/api.ts` (683 lines) exports a single `api` object with roughly 150 methods, every one of which routes through one `req()` helper. The base URL is `config.apiBaseUrl` (default `\"\"` = same-origin). The Bearer token is passed per-call, never stored inside the module."},
+
+  {"t":"p","text":"**Envelope contract.** Every backend response is `{ok, data, error}`. `req()` returns `json.data` on success. On a non-`ok` response it throws an `Error` with the server message and **attaches `err.status`** (the HTTP status). Callers key off this — for example, MeetingStage and the CoLabV1 connect-error path key on `err.status === 403` to surface the precise call/meeting denial reason ('locked' / 'removed' / 'not admitted yet' / 'ended') instead of a misleading generic network error. A network-level failure (offline, DNS, server down) throws with `err.status = 0`."},
+
+  {"t":"h","level":3,"text":"4.8.1 The careful 401 handling"},
+
+  {"t":"p","text":"A naive 'log out on any 401' implementation caused unexpected logouts during calls on flaky networks. The real logic (≈line 37) is defensive: a 401 on an *authenticated* request does not immediately end the session. If the failing path is `/api/auth/me` itself, the 401 is conclusive and `colab:unauthorized` fires directly. Otherwise `req()` *re-validates* by calling `/api/auth/me`; only a 401 *there* dispatches `colab:unauthorized`. A network error during re-validation is treated as inconclusive — the user stays signed in. This distinguishes a genuinely revoked/expired token from a transient blip or an endpoint-specific authz check."},
+
+  {"t":"h","level":3,"text":"4.8.2 File uploads and raw-blob bodies"},
+
+  {"t":"p","text":"Most methods use `fetch` with a JSON body. **File uploads are the exception**: `api.uploadFile()` uses `XMLHttpRequest` (not fetch) specifically so it can report upload progress via an `onProgress(pct)` callback bound to `xhr.upload.onprogress`. It still resolves the same `{ok,data,error}` envelope, so existing callers are unaffected — `onProgress` is purely additive. Voicemail and meeting-recording uploads send raw blob bodies. Note that `api.askAgent` (the Agen-X 'ask' assistant) is *defined* (≈line 616) but is never called from any component — the endpoint exists with zero UI; only `api.summarizeConversation` is surfaced (gated by the `aiSummary` flag)."},
+
+  {"t":"h","level":2,"text":"4.9 Configuration and Feature Flags"},
+
+  {"t":"p","text":"`lib/config.ts` centralizes runtime config. `apiBaseUrl` and `socketUrl` default to `\"\"` (same-origin); `appName` and `workspaceName` default to `\"Collab\"`. The four product feature flags are all **off by default** and are flipped via `NEXT_PUBLIC_*` environment variables baked at build time."},
+
+  {"t":"table","headers":["Flag","Env var","On → effect","Gating site"],"rows":[
+    ["agents","NEXT_PUBLIC_FEATURE_AGENTS=1","Shows the Agents nav item","Rail.tsx HIDDEN_NAV"],
+    ["aiSummary","NEXT_PUBLIC_FEATURE_AI_SUMMARY=1","Enables 'Catch up' conversation summarize","ChatView.tsx"],
+    ["globalSearch","NEXT_PUBLIC_FEATURE_GLOBAL_SEARCH=1","Shows the Search nav item","Rail.tsx HIDDEN_NAV"],
+    ["signup","NEXT_PUBLIC_FEATURE_SIGNUP=1","Exposes the self-service sign-up form","LoginScreen.tsx"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Hidden ≠ removed","text":"Hidden surfaces keep their components, routes, APIs, and data fully intact — reactivation is just flipping the env var to '1'. In `Rail.tsx`, `HIDDEN_NAV` is a `Set` built from the flags; `GROUPS` filters nav items against it and drops empty groups. Search and Agents are filtered out of the rail by default but their views and backend endpoints still exist."},
+
+  {"t":"h","level":2,"text":"4.10 Theme and Design System"},
+
+  {"t":"p","text":"The entire design system is one file: `frontend/app/src/styles/v1.css` (16,672 lines). It is a token-driven system built on CSS custom properties declared on `:root` and overridden by body classes. There is no Tailwind, no CSS-in-JS, no CSS modules — just one global stylesheet plus a handful of inline styles in the App Router boundary files."},
+
+  {"t":"h","level":3,"text":"4.10.1 Design tokens"},
+
+  {"t":"table","headers":["Token group","Examples","Meaning"],"rows":[
+    ["Grayscale ramp","--g50 … --g900","Neutral scale (inverted in dark)"],
+    ["Accent","--ac / --acl / --acb / --ac100","Brand accent (default indigo #5e6ad2)"],
+    ["Surfaces","--main / --bg / --card / --sb","Backgrounds and the sidebar surface"],
+    ["Status","--grn / --amb / --red / --pur (+ -bg)","Success / warning / danger / purple"],
+    ["Radii","--r 12px / --rsm 8px / --rxs 5px","Corner radii"],
+    ["Shadows","--sh / --shm / --shl","Elevation"],
+    ["Header","--hdr-h 56px","Single baseline header height"],
+    ["Type scale","--msgfs / --fs-title / --fs-section / --fs-body / --fs-meta","Message + UI font sizes"]
+  ]},
+
+  {"t":"p","text":"Fonts are loaded via a Google Fonts `@import` at the top of `v1.css`: **Plus Jakarta Sans** (default), Inter, Geist, IBM Plex Sans, Poppins, and JetBrains Mono. The active family is selected by toggling a `font-<family>` body class."},
+
+  {"t":"h","level":3,"text":"4.10.2 applySettings — where settings become CSS"},
+
+  {"t":"p","text":"`applySettings(s)` in `CoLabV1` (≈line 300) is the bridge from the user's settings object to the DOM. It toggles body classes for theme, ambiance, accent, density, font, and every accessibility flag, and sets inline CSS variables. The effects it produces:"},
+
+  {"t":"ul","items":[
+    {"text":"**Body classes toggled:**","items":["theme: `dark`, `oled`, `midnight`, `slate`, `forest`","ambiance: `amb-borealis`, `amb-none`","accent: `accent-<name>` (only when accent ≠ indigo)","density: `compact` / `cozy` / `spacious` (none = default 'comfy')","font: `font-<family>`","a11y: `high-contrast`, `reduce-motion`, `larger-text`, `blur-media`, `dyslexia-font`, `compact-list`"]},
+    {"text":"**Inline styles / CSS vars set:**","items":["`document.body.style.zoom = s.zoom` (user zoom)","`--msgfs` ← `s.fontSize`","`--me-bub` ← bubbleAccentColor (sent-bubble accent)","`--bub-r` / `--bub-r-me` ← bubble shape (rounded / pill / square)"]}
+  ]},
+
+  {"t":"h","level":3,"text":"4.10.3 Theme catalog and dark/OLED handling"},
+
+  {"t":"p","text":"Themes are body-class token overrides. The dark family is keyed off a single `body.dark` flag for shared dark rules, with deeper per-theme overrides layered on top."},
+
+  {"t":"table","headers":["Theme","Body class(es)","Base","Character"],"rows":[
+    ["light","(default :root)","light","Default"],
+    ["dark","dark","dark","Inverted gray ramp, true surfaces (--main #0F0F0F)"],
+    ["oled","dark + oled","dark","True black (--main/--bg #000000) for AMOLED power saving"],
+    ["midnight","dark + midnight","dark","Deep navy, blue-tinted neutrals — premium"],
+    ["slate","slate","LIGHT","Warm paper-like light gray (NOT added to the dark flag)"],
+    ["forest","dark + forest","dark","Nord-style green-teal"]
+  ]},
+
+  {"t":"p","text":"`applySettings` sets `body.dark` when the theme is in `{dark, oled, midnight, forest}` **or** when theme is `auto` and `prefers-color-scheme: dark` matches. It then adds the specific class (`oled`/`midnight`/`slate`/`forest`). **Auto theme** installs a `matchMedia('(prefers-color-scheme: dark)')` listener (≈line 386) that re-applies settings whenever the OS appearance flips. OLED extends dark to `#000000` backgrounds with dimmer grays; the high-contrast variant (`body.dark.high-contrast` / `body.oled.high-contrast`) bumps secondary-text contrast. Accent themes on dark bases get clamped accent backgrounds via selectors like `body.oled[class*='accent-']` (v1.css ≈14912)."},
+
+  {"t":"callout","kind":"note","title":"Two body.dark blocks","text":"v1.css defines `body.dark` twice — an early block (≈line 58) and a later, authoritative block (≈line 14536) that sets the real surfaces (--main #0F0F0F, --card #1E1E1E). The later rule wins by source order. When editing dark surfaces, edit the ≈14536 block."},
+
+  {"t":"h","level":2,"text":"4.11 The Responsive System"},
+
+  {"t":"p","text":"CoLab's responsiveness combines two independent systems plus a phone-layout pane swap. Understanding the distinction between them prevents a class of 'why is the UI tiny / blurry' bugs."},
+
+  {"t":"h","level":3,"text":"4.11.1 The zoom ramp (two layers)"},
+
+  {"t":"p","text":"**Layer 1 — automatic large-display scaling.** The UI is authored in fixed px at a ~1440–1920px baseline. On 4K/8K displays those px stay tiny with lots of dead space. Rather than rely on browser zoom (which upscales raster assets and looks blurry), `v1.css` scales the whole UI with the CSS `zoom` property, which re-rasterizes text and vectors crisply — unlike `transform: scale()`, which would blur. The ramp (v1.css lines 157–162):"},
+
+  {"t":"table","headers":["Min width","Min height","zoom"],"rows":[
+    ["2100px","900px","1.15"],
+    ["2560px","1000px","1.3"],
+    ["3200px","1200px","1.6"],
+    ["3840px","1500px","2"],
+    ["5120px","2000px","2.7"],
+    ["7680px","3000px","4"]
+  ]},
+
+  {"t":"p","text":"Each step is gated on *both* a wide and a tall enough viewport so scaling never clips the `100vh` shell — an ultra-wide-but-short panel degrades to internal scroll, never a clipped shell. Common laptops/desktops (≤1920px wide) are untouched. Steps only ever scale up."},
+
+  {"t":"p","text":"**Layer 2 — user zoom.** The settings 'Zoom' picker (`.zoom-opts` in Settings.tsx) writes `settings.zoom`, which `applySettings` applies as `document.body.style.zoom = s.zoom`. This composes with Layer 1 (a per-user multiplier on top of the auto large-display scaling)."},
+
+  {"t":"h","level":3,"text":"4.11.2 Breakpoints, the app inset, and the resizable sidebar"},
+
+  {"t":"p","text":"Width breakpoints are scattered through `v1.css` at 1100 / 1024 / 1000 / 980 / 900 / 760 / 720 / 700 / 640 / 600 / 560 / 480 / 430 / 360px. A uniform gutter is provided by `--app-inset` (10px), applied as a *margin* on `#app` so the authenticated app 'floats'; at ≤640px the inset drops to 0 and `#app` loses its radius/shadow for an edge-to-edge phone view. The conversation sidebar width is user-resizable: `ConversationSidebar` binds the CSS var `--sbw` from `settings.sidebarWidth` (default 288) with a drag handle and a `dragW` override. The nav rail width is bounded `MIN_W 208` / `MAX_W 320` / `DEFAULT_W 248` in `Rail.tsx`, persisted and published as `--railw`."},
+
+  {"t":"h","level":3,"text":"4.11.3 Phone layout — the mobilePane swap"},
+
+  {"t":"p","text":"On narrow screens CoLab is a single-column phone flow. A `mobilePane` state in `CoLabV1` (`'list'` vs `'chat'`, mirrored by `mobilePaneRef`) swaps between the conversation list and the open chat. Navigating into a conversation sets the pane to `'chat'`; the Back affordance returns to `'list'`."},
+
+  {"t":"h","level":3,"text":"4.11.4 The centered chat-column measure (and what is NOT measured)"},
+
+  {"t":"callout","kind":"warning","title":"There is no JS ResizeObserver sizing the chat column","text":"The readable chat column is pure CSS: message bubbles cap at `max-width: min(72%, 720px)` (v1.css line 1539, the `.mb` rule). No JavaScript measures or sets the column width. The runtime measuring you find in `ChatView.tsx` (`measureRect()` / `getBoundingClientRect()`, ≈lines 2144–2205) is used ONLY to position reaction bars, context menus, and hover toolbars relative to the live message bubble (edge-aware, anti-clipping). It does not size the column. Anti-clipping placement is handled by `lib/positioning.ts` `usePosition`."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"4.12 Major Views in Depth"},
+
+  {"t":"p","text":"This subsection walks the five most important surfaces — entry point, components used, API calls, state flow, and rendering flow — exactly as they are wired in the code."},
+
+  {"t":"h","level":3,"text":"4.12.1 CoLabV1 — the application shell (9,039 lines)"},
+
+  {"t":"p","text":"**Entry point.** `page.tsx` renders `<CoLabV1 />` and nothing else. CoLabV1 is the single stateful root of the entire authenticated app."},
+
+  {"t":"p","text":"**Components used.** It imports and renders Rail, ConversationSidebar, and the active view (ChatView / CalendarView / SearchView / FilesView / AgentsView / TasksView / RemindersView / ContactsView / Settings), the inline ActivityView and DashboardView, the Modals.* family, Modal, Onboarding, HelpCenter, MeetingRoom + PreJoinMeeting, plus CallDebugPanel and DiagnosticsPanel. It imports `* as LK from livekit-client` for the 1:1/group call path."},
+
+  {"t":"p","text":"**API calls.** On auth it calls `api.me` / `api.login` / `api.signup`; after auth it batch-loads conversations, users, settings, tasks, reminders, folders, invites, meetings, calls, voicemails, and notifications. It calls `api.updateSettings` on every settings change, `api.getMessages` (with `decryptMessageList`) on conversation open and on reconnect, `api.getUnreadNotificationCount` on resync, and the call/meeting token mint endpoints for media."},
+
+  {"t":"p","text":"**State flow.** Render is driven by `mode` (which view) and `activeId` (which conversation). Realtime events mutate the per-domain state collections; ref mirrors keep handler identities stable. Settings flow `setSettings` → `applySettings` → body classes / CSS vars → `api.updateSettings`."},
+
+  {"t":"p","text":"**Rendering flow.** A `useEffect` tags `document.body` with `mode-<name>`. The header (back/forward nav, search) renders, then the big ternary switch selects the view by `mode`. Overlays (CallModal, incoming-ring, MeetingRoom, modals, toasts, Onboarding, HelpCenter, DiagnosticsPanel) render above the view. The whole tree re-renders on state change, but memoized shells (ChatView, MsgRow) short-circuit."},
+
+  {"t":"h","level":3,"text":"4.12.2 MeetingStage — the full meeting UI (2,850 lines)"},
+
+  {"t":"p","text":"**Entry point.** `MeetingStage` is wrapped by `MeetingRoom` (the full-page surface), which CoLabV1 mounts when the user joins a meeting. Its props include `meetingId`, `token`, `socket`, `isHost`/`isCoHost`, `meetingLocked`, mic/cam defaults, and host-control callbacks."},
+
+  {"t":"p","text":"**Components used.** `CallDebugPanel` + `CallStatChip` for diagnostics; it imports `* as LK from livekit-client` and builds the LiveKit `Room` directly. Its CSS uses the `.ms-*` class family — which is REUSED by the 1:1/group CallModal inside CoLabV1, so meetings and calls share one styling source."},
+
+  {"t":"p","text":"**API calls.** Mints a LiveKit room token via the backend `/api/calls/token` path (`meetingId` → `meeting_<id>`, gated server-side by `enterRoom` lobby/lock/eject). Emits `MEETING_JOIN` over the socket on connect and on every reconnect (critical: without re-emitting on reconnect, a re-routed SFU node would desync the participant set)."},
+
+  {"t":"p","text":"**State flow.** A `phase` state machine (`joining → connected → disconnected → ended`), `mic`/`cam` toggles, `mtgDiag` WebRTC stats, and a bounded `rejoinAttemptsRef` auto-rejoin counter. Participant tiles derive from `room.remoteParticipants` (livekit-client 2.x; the v1 `room.participants` alias is gone)."},
+
+  {"t":"p","text":"**Rendering flow.** Builds the `LK.Room` (≈line 410) with `adaptiveStream`, `dynacast`, simulcast layers (h180 + h360), VP9 with a VP8 backup codec, 1080p@30 capture, and `videoEncoding.maxBitrate = 1_700_000` (vs `3_000_000` for 1:1 calls). Renders the tile grid, the glass control dock, in-meeting chat/reactions/hand-raise, and host controls. Screen share uses `localParticipant.setScreenShareEnabled(next, { audio:true, systemAudio:'include' })` — identical to the call path."},
+
+  {"t":"h","level":3,"text":"4.12.3 LoginScreen"},
+
+  {"t":"p","text":"**Entry point.** Rendered by CoLabV1 when there is no authenticated session. Props: `onLogin`, `onSignup`, `error`, `busy`."},
+
+  {"t":"p","text":"**Components used.** Self-contained form; imports the client-side `passwordPolicy` mirror for live validation UX."},
+
+  {"t":"p","text":"**State flow.** Local `mode` (`'signin'` | `'signup'`), `name`/`email`/`password`/`confirm`, visibility toggles, and a `touched` flag that reveals the inline password checklist once the user starts typing. `signupAllowed = config.features.signup` gates whether the sign-up form is reachable at all — when the flag is off, only sign-in is shown (the backend endpoint stays intact). Submitting calls `onSignup(name, email, password)` or `onLogin(email, password)`, which resolve to CoLabV1's `doSignup`/`doLogin`."},
+
+  {"t":"h","level":3,"text":"4.12.4 Onboarding — first-run, signup-only"},
+
+  {"t":"p","text":"**Entry point.** Opened *only* by a fresh sign-up (`doSignup` sets `onboardingOpen`); never on login, never for existing users. Re-openable from Settings via `onReopenOnboarding`."},
+
+  {"t":"p","text":"**State flow.** A `step` index (seeded from `settings.onboardingStep`, clamped to the step list), local `name`/`about`, a directory of `people` for the 'Connect your team' step, and an `invited` map. It calls `api.getUsers` to populate the team step and `api.sendInvite` to send real connection invites. Step progress persists via `onChangeSetting('onboardingStep', next)`. The finale is a welcome animation (`finishing` → `exiting` → dashboard)."},
+
+  {"t":"p","text":"**Rendering flow.** A guided multi-step overlay covering profile, appearance (themes/fonts/wallpapers), team connection, and a welcome finale — driven entirely by `step` with no URL involvement."},
+
+  {"t":"h","level":3,"text":"4.12.5 DiagnosticsPanel — the user-facing health overlay"},
+
+  {"t":"p","text":"**Entry point.** Mounted by CoLabV1; opens via `Ctrl+Alt+D`, the `?diag=1` query param, the floating error pill, or `window.__colabDiag()`."},
+
+  {"t":"p","text":"**State flow.** On mount it subscribes to the logger's ring buffer via `subscribeLogs((all) => setEntries(...))` — a pub/sub observer, not React Context. It tracks `open`, `entries`, `copied`, and `unseenError` (which drives the floating error pill)."},
+
+  {"t":"p","text":"**Rendering flow.** Renders health chips grouped by category (app / auth / server / realtime / call / meeting / media / data) and a plain-English event log. **Copy report** writes `buildReport()` to the clipboard for support hand-off. The logger (`lib/logger.ts`) is a zero-dep structured logger: a 400-entry ring buffer (`BUF_MAX = 400`), levels info/success/warn/error, `hintForStatus` mapping HTTP codes to plain-English directions, a mirror to a color-coded console, the `window.colabLogs` API, and `initGlobalLogging()` which captures `window` error / unhandledrejection / online / offline events. `callDiagnostics.ts` feeds the separate `CallDebugPanel` (always on in dev; opt-in in staging/prod via `localStorage colab_call_debug=1` or `?calldebug=1`)."},
+
+  {"t":"h","level":2,"text":"4.13 Ambiance (Independent of Theme)"},
+
+  {"t":"p","text":"Ambiance is a background effect layered orthogonally to the theme. `body.amb-borealis` renders an Aurora-Borealis radial-gradient gutter glow, scoped to the dashboard only via `body.amb-borealis.mode-dashboard` on `#main` — it never bleeds into other modules because the `mode-<name>` body tag gates it. `body.amb-none` disables it. Because ambiance and theme are separate classes, any theme can run with or without the borealis glow."},
+
+  {"t":"h","level":2,"text":"4.14 Settings as the Control Surface"},
+
+  {"t":"p","text":"`Settings.tsx` (1,822 lines) is the single control surface for theme, accent, density, zoom, font, font size, and every accessibility/behaviour toggle. It is opened from the Rail footer (not a nav `mode`). Settings persist via `api.getSettings` / `api.updateSettings`, with a `saveStatus` indicator ('saving' / 'saved' / 'error'). Changes flow `changeSetting(key, value)` → `setSettings` → `applySettings(next)` → DOM, then fire-and-forget `api.updateSettings`."},
+
+  {"t":"callout","kind":"risk","title":"The settings whitelist gotcha","text":"Settings are persisted to a backend JSON blob behind a **whitelist of known defaults**. A frontend-only setting that is NOT present in the backend DEFAULTS is **silently dropped on save** — the toggle appears to work in-session (because `applySettings` already mutated the DOM) but never persists. When adding a new setting, you MUST add it to the backend defaults or it will not survive a reload. This previously caused a 'wallpaper not implemented' class of bug."},
+
+  {"t":"h","level":2,"text":"4.15 Honest Status of Frontend-Facing Features"},
+
+  {"t":"p","text":"To keep this handbook a reliable source of truth, the following are the genuinely partial or absent frontend surfaces — distinct from the fully shipped ones (messaging, calls, meetings, contacts, calendar, activity, tasks, reminders, files, attachments, reactions, presence, voice messages, screen sharing, channels, groups, DMs)."},
+
+  {"t":"table","headers":["Surface","State","Detail"],"rows":[
+    ["Global Search","BUILT, hidden","SearchView + backend exist; nav gated off by globalSearch flag"],
+    ["AI 'Catch up' summarize","PARTIAL, flagged off","ChatView calls api.summarizeConversation; gated by aiSummary flag"],
+    ["AI 'ask' assistant","ENDPOINT ONLY","api.askAgent defined in api.ts but called from NO component — zero UI"],
+    ["AgentsView","STATIC","Informational/governance page ('No MCP server configured'); nav hidden by agents flag"],
+    ["Self-service signup","FLAGGED OFF","LoginScreen hides the form unless signup flag is on; backend endpoint intact"],
+    ["Custom status text/emoji","ABSENT","Only manual presence (away/busy/DND) exists — no free-text status UI"],
+    ["React Context","ABSENT","createContext/useContext imported in ChatView but never called anywhere"]
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Bottom line for maintainers","text":"To extend CoLab's frontend, work *with* the architecture, not against it: add state to CoLabV1 (with a ref mirror if a callback needs it), drill props into a memoized child, drive new visual states with body classes + v1.css tokens, wire cross-cutting behaviour through window CustomEvents, and remember the same-origin proxy means you never configure CORS or hardcode a host. The two biggest footguns are (1) handing a memoized child an unstable prop (re-render storm) and (2) adding a setting the backend whitelist will silently drop."}
+]

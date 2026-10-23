@@ -1,0 +1,426 @@
+[
+  {"t":"h","level":1,"text":"5. Backend Architecture"},
+
+  {"t":"p","text":"The CoLab backend is a single **Express** application written in **TypeScript** and executed directly with `tsx` (no compile-to-JS build step in the container). It is the authority for every product capability the frontend exposes: authentication, conversations and messaging, calls and meetings, files, tasks, reminders, contacts, search, settings, notifications, and the realtime fabric. This section documents the backend as it actually exists in `backend/app/src/`, grounded line-by-line in the route, service, middleware, and socket files. Where the higher-level recon notes diverged from the real code, the code wins and the divergence is called out explicitly."},
+
+  {"t":"callout","kind":"note","title":"Framework correction","text":"The backend is **Express 4** (`express`), not Fastify. Routing is done with `express.Router()` (wrapped by a small `asyncRouter()` helper), body parsing with `express.json()` / `express.raw()`, and the error contract is a classic four-argument Express error middleware. Anyone who has internalized 'CoLab uses Fastify' should discard that — there is no Fastify anywhere in the tree."},
+
+  {"t":"p","text":"In plain language: the backend is one Node process that listens on a single port, answers JSON HTTP requests under the `/api` prefix, and simultaneously runs a Socket.IO server on the same HTTP server for realtime events. There is no microservice mesh, no GraphQL gateway, and no separate worker fleet. The few background jobs (scheduled-message delivery, recording retention, stale-call sweeping) run as timers inside the same process. This monolith-by-design keeps the operational surface small, which matters because the whole stack is deployed onto a single corporate box per environment."},
+
+  {"t":"diagram","kind":"layered","title":"Backend layering (top-to-bottom)","layers":[
+    {"label":"HTTP + Realtime edge","items":["Express app (/api)","Socket.IO server"]},
+    {"label":"Middleware chain","items":["security headers","CORS","rate limit","auth (JWT + blocklist)"]},
+    {"label":"Routes (thin controllers)","items":["routes/*.ts","asyncRouter wrap","emit socket events"]},
+    {"label":"Services (business logic)","items":["services/*.ts","membership + role gates","state machines"]},
+    {"label":"Data / repository layer","items":["db.<namespace> repos","mysql2 pool","pg-compatible q() shim"]}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.1 Server Entry and Bootstrap"},
+
+  {"t":"p","text":"The process entry point is `backend/app/src/index.ts`. It is an async IIFE that performs a strict, ordered boot sequence before the server ever accepts a connection. The ordering is deliberate: every fail-fast guard runs first, then the database is provisioned and migrated, then the HTTP server and realtime layer are attached, then background timers start, and finally the socket binds to the port."},
+
+  {"t":"diagram","kind":"pipeline","title":"Boot sequence (index.ts)","steps":[
+    {"label":"Install crash guards","detail":"process.on('unhandledRejection') + ('uncaughtException') log and keep serving — a single rejected promise must never kill the server"},
+    {"label":"Assert secrets + config","detail":"assertProductionSecrets / assertLiveKitUrl / assertDbProfile — refuse to boot in production with weak JWT/LiveKit secrets, loopback LIVEKIT_WS_URL, or a DB_PROFILE with no matching DATABASE_URL_<PROFILE>"},
+    {"label":"Provision + migrate DB","detail":"ensureDatabase → migrate → promoteIfNeeded → seedIfNeeded, inside a transient-error retry loop (waits for MySQL to come up instead of dying)"},
+    {"label":"Create app + realtime","detail":"createApp() → http.createServer(app) → attachRealtime(server) → app.set('io', io); ensureBucket() (non-fatal S3 check)"},
+    {"label":"Start background timers","detail":"stale-ringing-call sweep, minute-aligned scheduled-message poller (+ 15s safety interval), daily recording-retention purge"},
+    {"label":"Listen + register shutdown","detail":"server.listen(4000, 0.0.0.0); SIGTERM/SIGINT drain io + server + DB pool within SHUTDOWN_GRACE_MS"}
+  ]},
+
+  {"t":"h","level":3,"text":"Fail-fast production guards"},
+
+  {"t":"p","text":"Three guards run synchronously at the top of boot and call `process.exit(1)` on violation. `assertProductionSecrets()` refuses to start when `NODE_ENV==='production'` and `AUTH_JWT_SECRET` is still the dev default `dev-only-change-me` or shorter than 32 characters, or when `LIVEKIT_API_SECRET` is still its bundled default. The internal MySQL and MinIO credentials are intentionally *not* gated here — a comment in the code documents that this deployment runs on a private, firewalled, single-tenant corporate network where the bundled datastore credentials are acceptable and never surface in the product UI; only the forgeable JWT/LiveKit secrets are enforced. `assertLiveKitUrl()` blocks boot if the production `LIVEKIT_WS_URL` is empty or points at `localhost`/`127.0.0.1` (a browser would try to connect to itself and calls would fail silently). `assertDbProfile()` blocks boot if `DB_PROFILE` is set but the corresponding `DATABASE_URL_<PROFILE>` env var is missing, preventing a silent fallback to the wrong database."},
+
+  {"t":"callout","kind":"warning","title":"Why these guards exist","text":"Each guard maps to a real incident from the deployment history: forged tokens (weak JWT secret), 'calls fail / media server error' (loopback LiveKit URL), and writes landing in the wrong database (DB_PROFILE with no matching URL). Refusing to boot is safer than running a misconfigured production server, so these are hard exits, not warnings."},
+
+  {"t":"h","level":3,"text":"Resilient database bootstrap"},
+
+  {"t":"p","text":"After the guards, boot runs `ensureDatabase(url)` (creates the database if it does not exist), `migrate(url)` (applies unseen SQL migrations idempotently), `promoteIfNeeded(url)` (a one-time data-promotion that imports a bundled localhost snapshot on the very first live boot so prior signups survive a cutover), and `seedIfNeeded()` (seeds the demo workspace in demo mode, or logs the live account count). The whole block sits inside a retry loop that distinguishes *transient* DB errors (cold Docker Desktop, container still initializing, VPN flake) from real config errors. On a transient error it waits 5s and retries — by default forever, capped only when `DB_BOOT_RETRY_MS` is set. This matters because `tsx watch` does not restart an exited process until a file changes, so an early exit used to strand local dev until a manual re-run; instead the backend now connects automatically once MySQL is up. Real errors (bad SQL, wrong database name) still crash loudly."},
+
+  {"t":"h","level":3,"text":"Background timers"},
+
+  {"t":"p","text":"Three background jobs run as in-process timers, not separate workers. **(1) Stale-call sweep** runs once at boot: it finds calls left in `ringing` from before a restart and marks them missed, so a server bounce never leaves ghost ringing calls. **(2) Scheduled-message poller** is minute-aligned — `alignToMinute()` schedules `tickScheduled()` to fire at `HH:MM:00 + 60ms` so a message due at a given minute is delivered sharply at the top of that minute, with an additional light `SCHEDULED_POLL_SECONDS` interval (default 15s) as a drift safety net. Each due message is delivered through the normal send path and then broadcast as `MESSAGE_NEW` to the conversation room plus `SCHEDULED_CHANGED` to the sender. **(3) Recording-retention purge** runs daily only when `RECORDING_RETENTION_DAYS > 0`, deleting recordings older than the window."},
+
+  {"t":"h","level":3,"text":"Graceful shutdown"},
+
+  {"t":"p","text":"On `SIGTERM`/`SIGINT` (Docker sends `SIGTERM` on redeploy) the process drains rather than hard-killing live work: it emits `server:restarting` to all sockets, closes the Socket.IO server, closes the HTTP server (lets in-flight requests finish), and ends the MySQL pool cleanly. A `SHUTDOWN_GRACE_MS` timer (default 10s, `unref`'d) forces exit if draining overruns. This avoids half-cut transactions and abrupt call drops during deploys."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.2 Application Wiring (app.ts)"},
+
+  {"t":"p","text":"`createApp()` in `backend/app/src/app.ts` constructs the Express app and wires the global middleware and all route modules. The ordering of `app.use()` calls is load-bearing — Express runs middleware in registration order, so security headers and rate limiting must precede the routes they protect, and raw-body parsers must precede the global JSON parser for the routes that need them."},
+
+  {"t":"ol","items":[
+    "`app.disable('x-powered-by')` — do not advertise Express.",
+    "`app.set('trust proxy', true)` — so `X-Forwarded-For` (client IP for rate limiting) reflects the real client, not the load balancer.",
+    "Security-headers middleware — sets nosniff, frame-deny, no-referrer, DNS-prefetch-off, Permissions-Policy, and HSTS (production only).",
+    "CORS — `cors({ origin: corsOrigin(config.backend.corsOrigins), credentials: true })`.",
+    "Auth rate limiter on `/api/auth/login` and `/api/auth/signup` (30 per 15 min per IP).",
+    "Global API rate limiter on the whole `/api` prefix (default 600 per 60s per IP).",
+    "Raw body parser for the LiveKit webhook (`/api/livekit/webhook`) — must run before JSON parsing for signature verification.",
+    "`express.json({ limit: '5mb' })` — the global JSON body parser.",
+    "All route modules mounted under `/api/<name>` (debug only when not production).",
+    "404 handler, then the central error-handling middleware."
+  ]},
+
+  {"t":"p","text":"The API prefix `p` comes from `config.constants.api.prefix` and is `/api`. Note a subtlety in route mounting: both the raw-body LiveKit parser and the LiveKit route are mounted at `/api/livekit/webhook` — the raw parser is registered early (before `express.json`) so the webhook receives an unparsed `Buffer` for HMAC signature checking, while the JSON parser still applies to every other route."},
+
+  {"t":"h","level":3,"text":"Mounted route modules"},
+
+  {"t":"table","headers":["Mount path","Module","Auth","Notes"],"widths":[2600,2200,1100,3100],"rows":[
+    ["/api/health","health.ts","none","liveness + db driver name"],
+    ["/api/auth","auth.ts","per-route","signup/login open; me/logout/account authed"],
+    ["/api/conversations","conversations.ts","router.use","messaging + membership + scheduled"],
+    ["/api/bookmarks","bookmarks.ts","router.use","saved messages"],
+    ["/api/search","search.ts","router.use","global search (?q)"],
+    ["/api/meetings","meetings.ts","router.use","scheduling, room lifecycle, host controls, recordings"],
+    ["/api/users","users.ts","router.use","directory, profile, blocks/reports"],
+    ["/api/reminders","reminders.ts","router.use","folders + reminders"],
+    ["/api/calls","calls.ts","router.use","history, LiveKit token mint, group controls, voicemail"],
+    ["/api/settings","settings.ts","router.use","per-user settings blob"],
+    ["/api/tasks","tasks.ts","router.use","kanban board"],
+    ["/api/invites","invites.ts","router.use","connection-request workflow"],
+    ["/api/files","files.ts","mixed","public link route open; rest authed"],
+    ["/api/ai","ai.ts","router.use","summarize / ask (503 if LLM unconfigured)"],
+    ["/api/audit","audit.ts","router.use","self-scoped activity log"],
+    ["/api/e2ee","e2ee.ts","router.use","devices/prekeys/bundle/keys (dormant)"],
+    ["/api/notifications","notifications.ts","router.use","feed + unread count"],
+    ["/api/link-preview","linkPreview.ts","router.use","URL unfurl (+ limiter)"],
+    ["/api/public","public.ts","none","avatar serving (no Bearer header possible)"],
+    ["/api/livekit/webhook","livekit.ts","signature","egress finalize, raw body"],
+    ["/api/debug","debug.ts","router.use","NON-production only; raw DB dumps"]
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.3 Middleware"},
+
+  {"t":"h","level":3,"text":"5.3.1 Authentication middleware"},
+
+  {"t":"p","text":"`backend/app/src/middleware/auth.ts` exports the default `authMiddleware`. It reads `Authorization: Bearer <jwt>`, and if no Bearer token is present returns `401 UNAUTHORIZED 'Missing token'`. Otherwise it verifies the token via `authService.verify` (which is `jwt.verify` with the configured secret), then checks `tokenBlocklist.isBlocked(token)` — a revoked token returns `401 'Token revoked'`. On success it sets `req.user = { userId: p.sub, name: p.name }` and calls `next()`. Any verification throw is caught and returned as `401 'Invalid token'`."},
+
+  {"t":"p","text":"Most routers apply it once at the top with `router.use(authMiddleware)`, so every route in that module is protected. The two exceptions are deliberate: `auth.ts` applies it per-route (signup/login are public), and `files.ts` registers the public share-link route *before* `router.use(authMiddleware)` so an unauthenticated link download works while everything else stays gated."},
+
+  {"t":"h","level":3,"text":"5.3.2 Rate limiting"},
+
+  {"t":"p","text":"`backend/app/src/middleware/rateLimit.ts` is a dependency-free, in-memory fixed-window limiter. The `clientIp` key is the first hop of `X-Forwarded-For` (valid because `trust proxy` is on), falling back to the socket address. Each call to `rateLimit({ windowMs, max })` returns middleware backed by its own `Map<ip, {count, resetAt}>`, with an opportunistic sweep so the map cannot grow unbounded. It sets `X-RateLimit-Limit` and `X-RateLimit-Remaining` on every response, and on overflow sets `Retry-After` and returns `429 RATE_LIMITED`."},
+
+  {"t":"table","headers":["Where applied","Limit","Window","Purpose"],"widths":[3000,1600,1600,2800],"rows":[
+    ["/api/auth/login + /api/auth/signup","30","15 min","brute-force / credential-stuffing throttle"],
+    ["/api (whole prefix)","600 (env API_RATE_MAX)","60s (env API_RATE_WINDOW_MS)","stop a hot retry-loop from saturating the DB pool"],
+    ["/api/files upload","60","60s","cap the heavy 100mb raw-body route (runs BEFORE express.raw)"],
+    ["/api/link-preview","60","60s","cap the outbound unfurl fetch"],
+    ["socket MESSAGE_SEND (per user)","cap 20, refill 5/s","token bucket","flood protection on realtime send"]
+  ]},
+
+  {"t":"callout","kind":"warning","title":"Per-instance limiter","text":"The HTTP limiter state lives in process memory, so it is **per-instance**. In a multi-instance deployment it must be fronted by an LB/WAF or swapped for a Redis-backed limiter — a client could otherwise get N× the limit by spreading requests across N instances. CoLab currently runs single-instance per environment, so this is an accepted constraint, but it is the first thing to revisit before horizontal scale-out."},
+
+  {"t":"h","level":3,"text":"5.3.3 Security headers and CORS"},
+
+  {"t":"p","text":"A single inline middleware in `app.ts` sets, on every response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off`, and `Permissions-Policy: geolocation=(), payment=(), usb=()`. In production it additionally sets `Strict-Transport-Security: max-age=31536000; includeSubDomains`. There is intentionally **no Content-Security-Policy on the API** — the API serves only JSON; the app HTML (where a CSP would matter) is served by Next.js, not Express. CORS is configured via `cors()` with `corsOrigin(config.backend.corsOrigins)` and `credentials: true`, and the same origin function is reused for the Socket.IO server."},
+
+  {"t":"h","level":3,"text":"5.3.4 Validation"},
+
+  {"t":"p","text":"There is **no schema-validation library** (no Zod/Joi/express-validator). Validation is two-tier and intentional. At the route layer it is inline and defensive: destructure `req.body || {}`, coerce and clamp (`Math.min(Number(limit) || 50, 100)`, `description.slice(0, 500)`, `name.trim().slice(0, 255)`), and reject obviously bad input with a `400`. The *authoritative* validation lives in the service layer, which the client cannot bypass: `credentialPolicy.ts` (`validateEmail`/`validatePassword`) is the source of truth for signup; membership and role gates throw errors carrying an `err.status` that the central handler turns into the right HTTP code. This 'thin route, authoritative service' split is the consistent pattern across the codebase."},
+
+  {"t":"h","level":3,"text":"5.3.5 Async wrapping and error handling"},
+
+  {"t":"p","text":"Every router is built with `asyncRouter()` (`backend/app/src/asyncRouter.ts`), a drop-in replacement for `express.Router()`. Its verb methods (`get`/`post`/`put`/`patch`/`delete`) auto-wrap each handler so that both synchronous throws and rejected promises are forwarded to Express's error middleware via `next(e)`. Without this, an unhandled promise rejection in an `async` handler would leave the HTTP request hanging forever — `asyncRouter` guarantees a throwing handler instead returns a JSON error the client can surface. Handlers with arity ≥ 4 (i.e. existing error middleware) are passed through unwrapped."},
+
+  {"t":"p","text":"The central error handler is the final `app.use((err, req, res, next) => …)` in `app.ts`. It logs the error, then translates common database integrity and trigger violations into friendly 4xx responses instead of opaque 500s. It supports both MySQL (`mysql2`) errno/sqlState and legacy Postgres SQLSTATE codes."},
+
+  {"t":"table","headers":["Condition","Mapped status","Client message"],"widths":[3600,1500,3900],"rows":[
+    ["MySQL errno 1452/1451 (FK) or PG 23503","400","That item references something that no longer exists."],
+    ["MySQL errno 1062 (dup) or PG 23505","400","That already exists."],
+    ["MySQL errno 1048 (null) or PG 23502","400","A required field is missing."],
+    ["SIGNAL '45000' / errno 1644 (app check)","400","passes through err.sqlMessage (e.g. meeting-in-past, append-only audit)"],
+    ["errno 1264/1366 or sqlState 23000","400","generic BAD_REQUEST"],
+    ["any err.status set by a service","that status","the thrown message"],
+    [">= 500 (anything else)","500","Something went wrong. Please try again. (masked)"]
+  ]},
+
+  {"t":"p","text":"The envelope is always the shared `ok()`/`fail()` shape (re-exported through `platform.ts` from `shared/src/http`): success responses are `{ ok: true, data }` and failures are `{ ok: false, error: { code, message } }`. The 404 fallthrough returns `fail('NOT_FOUND', 'No route <method> <path>')`."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.4 Authentication and Authorization"},
+
+  {"t":"h","level":3,"text":"5.4.1 Password hashing and JWT issuance"},
+
+  {"t":"p","text":"`backend/app/src/services/authService.ts` owns credentials. Passwords are hashed with Node's built-in **scrypt** (no external dependency): a 16-byte random salt, a 64-byte derived key, stored as the string `saltHex:hashHex`. Verification recomputes with the stored salt and compares with `crypto.timingSafeEqual` (constant-time, resistant to timing attacks). Tokens are signed with `jsonwebtoken` as HS256, payload `{ sub: userId, name }`, secret `config.auth.jwtSecret`, and `expiresIn = config.auth.tokenTtl`."},
+
+  {"t":"callout","kind":"note","title":"Session JWT TTL is 7 days, not 1 hour","text":"`config.auth.tokenTtl` defaults to `'7d'` (env `AUTH_TOKEN_TTL`). The frequently-cited '~1 hour / 3600s' TTL belongs to the **separate LiveKit room token** (`config.livekit.tokenTtlSec = 3600`), not the session JWT. These are two different tokens for two different systems; do not conflate them."},
+
+  {"t":"p","text":"There is no refresh-token or silent-remint flow. A single long-lived (7d) access JWT is issued at login/signup and stored client-side; on expiry the user re-authenticates. The frontend performs 401 auto-logout. Signup is policy-gated server-side: `signup()` calls `validateEmail` and `validatePassword` before creating the account and throws a `400` with the policy message on violation, so the client UI mirror in `passwordPolicy.ts` is convenience only. Signup can *claim* an invited/passwordless stub account that shares the same email (existing row with no `passwordHash`); a fully-registered email returns `409`."},
+
+  {"t":"h","level":3,"text":"5.4.2 Auth endpoints and session revocation"},
+
+  {"t":"p","text":"`routes/auth.ts`: `POST /signup` and `POST /login` are public (rate-limited) and return `{ token, user }`; `GET /me` returns the current public user; `POST /logout` adds the token to the blocklist; `DELETE /account` performs a soft + anonymized account deletion (frees the email, cascades owned data, keeps authored messages attached to an anonymized 'Deleted user' shell because `sender_id` is FK-restricted) and then revokes the session token. Every auth action records an audit event."},
+
+  {"t":"p","text":"Revocation is stateless-JWT + a **token blocklist** (`services/tokenBlocklist.ts`). On logout/account-delete the token is keyed by its signature segment (`token.split('.')[2]`) with a TTL equal to the token's remaining lifetime. Storage is Redis (`jwt:block:` prefix, `EX` = remaining seconds) when `REDIS_URL` is set, else an in-memory `Map` swept every 60s. Redis init is hardened with `reconnectStrategy: false` plus a 3.5s connect race, so a down Redis degrades to memory instead of hanging every request — critical because `isBlocked()` runs on every authenticated request."},
+
+  {"t":"callout","kind":"risk","title":"Socket handshake does not re-check the blocklist","text":"The HTTP `authMiddleware` checks `isBlocked`, but the Socket.IO handshake middleware only verifies the JWT signature/expiry — it does not consult the token blocklist. A token revoked by logout therefore still authorizes a *new* socket connection until it naturally expires. For most flows this is benign (the user logs out and stops connecting), but it is a real gap to close if hard session-kill on the realtime plane is ever required."},
+
+  {"t":"h","level":3,"text":"5.4.3 Authorization model"},
+
+  {"t":"p","text":"Authorization is overwhelmingly **resource-membership based**, not global-role based. The user row carries a coarse `role` (default `member`, values include `admin`), but almost every gate is 'are you a member of / a participant in this resource'. Examples grounded in the code:"},
+
+  {"t":"ul","items":[
+    "**Messaging** — `messageService.assertMember(conversationId, userId)` throws `403 FORBIDDEN` before any read, send, react, or pin; DMs additionally enforce block lists in either direction (throws `403 BLOCKED`).",
+    "**Calls** — `callService.request` requires the caller to share a conversation (group membership) or a DM (1:1) with the peer, and rejects blocked pairs; the `/calls/token` route re-checks membership before minting a LiveKit token (IDOR guard).",
+    {"text":"**Meetings** — two host tiers:","items":["host = `meeting.createdBy`","co-host = per-attendee role 'co-host'"]},
+    "Group-call controls — `requireConvOwner` allows only `owner`/`admin` of the conversation to mute-all / mute / remove participants.",
+    "Meeting controls — `requireMeetingHostOrCoHost` / `requireMeetingHost` gate mute, eject, lobby admit/deny, lock, and co-host promote/demote.",
+    "E2EE conversation keys — `e2eeService` throws `403` if the caller is not a member of the conversation."
+  ]},
+
+  {"t":"p","text":"The meeting eject path is worth highlighting as a security pattern: removing a participant persists a row in `meeting_ejected` *first*, then kicks them from the SFU. `meetingService.enterRoom` consults that table before issuing a token, so a removed user cannot re-mint a token and rejoin in the milliseconds between the SFU kick and the row write. The meeting UUID is treated as the access credential (Zoom/Meet-style join-by-link), but `enterRoom` enforces eject → lock → lobby in that order, so an uninvited holder of the link still waits in the lobby when one is enabled."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.5 The Service Layer"},
+
+  {"t":"p","text":"Roughly thirty modules under `backend/app/src/services/` hold all business logic. The discipline is consistent: **routes are thin controllers** that parse input, call exactly one or two service functions, emit any socket events, record any audit entry, and serialize the response; **services own the rules** (membership and role gates, state machines, block enforcement, atomic transactions) and never touch HTTP. Services depend on the data layer (`db.<namespace>`) and on `serialize.ts` to shape rows into client-facing objects."},
+
+  {"t":"table","headers":["Service","Responsibility"],"widths":[2600,6400],"rows":[
+    ["authService","scrypt hash/verify, JWT mint/verify, signup/login/me"],
+    ["credentialPolicy","authoritative email + password validation (disposable-domain + common-password blocklists)"],
+    ["tokenBlocklist","JWT revocation store (Redis or in-memory)"],
+    ["conversationService","create/list DMs/groups/channels/self, members, star/mute/hide/read, dm_key dedupe"],
+    ["messageService","send/history/edit/react/pin/delete with assertMember gate + DM block enforcement"],
+    ["scheduledMessageService","schedule/cancel + runDue poller"],
+    ["callService","1:1 call state machine (ringing→connected→ended/declined/cancelled/missed), atomic busy-check"],
+    ["meetingService","schedule, room lifecycle, lobby/lock/eject, host + co-host controls"],
+    ["livekitService","mint LiveKit room tokens, resolve identities, mute/remove via RoomServiceClient"],
+    ["recordingService","Egress + client-recording upload/finalize/retention"],
+    ["voicemailService","record/list/listen/delete voicemail audio"],
+    ["fileService / storageService","permission resolution + S3/MinIO upload/download with DB-BLOB fallback"],
+    ["notificationService","mention/reply/reaction/missed-call/meeting-invite notifications + unread count"],
+    ["inviteService","connection-request send/accept/decline/block (DM created on accept)"],
+    ["blockService","block/unblock/report users"],
+    ["taskService / reminderService","kanban + reminders CRUD, bulk ops, activity log"],
+    ["searchService","cross-entity search (messages via FULLTEXT)"],
+    ["aiService","OpenAI-compatible summarize/ask (off when LLM_BASE_URL unset)"],
+    ["e2eeService","dormant E2EE device/prekey/key storage"],
+    ["auditService","append-only audit record/listForActor"],
+    ["settingsService","per-user settings blob get/update (whitelist on DEFAULTS)"],
+    ["huddleStore","group-call membership + raised-hands state (Redis-backed or in-proc Map)"]
+  ]},
+
+  {"t":"p","text":"Two services illustrate the depth of the rules. `callService.request` does authorization, block-check, and a **single atomic transaction** (`db.calls.requestAtomic`, rows locked `FOR UPDATE`) so two concurrent callers to the same peer cannot both ring — the loser gets `busy` and an initiator already on a call gets `409`. `livekitService` mints tokens with a per-join identity `userId__<randomUUID>`: the UUID suffix means an honest page reload does not trip LiveKit's `DUPLICATE_IDENTITY` (that fires only on a genuine second tab/device), while host controls resolve the operator's plain user-id back to the live `userId__<uuid>` via `listParticipants`, so mute/remove act on the right participant regardless of the UUID."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.6 The Data / Repository Layer"},
+
+  {"t":"p","text":"There is a single MySQL persistence layer. `platform.ts` calls `db = getDb(config)` from `database/src`; `getDb` memoizes `createMysqlDb` (`database/src/drivers/mysql.ts`, ~2,580 lines), which builds a `mysql2/promise` pool from `config.database.url` (IPv4-forced, `utf8mb4`, UTC timezone, `connectionLimit` from `DB_POOL_LIMIT`, default 20)."},
+
+  {"t":"p","text":"Internally the driver exposes a pg-compatible `q(sql, params)` shim so the higher layers can be written in a portable dialect: a `translate()` step rewrites `= ANY(...)` → `IN (...)` and `ILIKE` → `LIKE`, a `bind()` step rewrites `$n` placeholders → `?`, and `normParam` coerces ISO date strings to `Date`. The driver returns one object whose keys are repository namespaces. The full, verified set of namespaces is:"},
+
+  {"t":"code","lines":[
+    "db.driver = 'mysql'",
+    "db.users          db.conversations   db.messages",
+    "db.bookmarks      db.meetings        db.folders",
+    "db.reminders      db.calls           db.tasks",
+    "db.invites        db.settings        db.meetingMessages",
+    "db.files          db.fileShares      db.audit",
+    "db.recordings     db.voicemails      db.e2ee",
+    "db.scheduledMessages   db.notifications   db.blocks",
+    "db.pool"
+  ]},
+
+  {"t":"p","text":"Services call methods on these namespaces — for example `db.conversations.isMember`, `db.messages.listForConversation`, `db.users.getByEmail`, `db.calls.requestAtomic`. Keyset pagination is supported on message history (`?before=<id>&limit<=100`) and message ordering uses millisecond-precision `created_at`. Schema and migrations are applied at boot by `database/src/migrate.ts` + `bootstrap.ts` (statement-by-statement, idempotent, BEGIN/END-aware splitting for trigger bodies)."},
+
+  {"t":"callout","kind":"note","title":"One API gateway is inert","text":"The config exposes a 'One API' structured-JSON DB gateway (`oneApiClient.ts`), but it is **inert at runtime**: `q()` always uses the direct `mysql2` pool, and nothing imports `oneApiClient.fetchData`/`mutate`. The gateway's payload shape cannot express CoLab's FULLTEXT search, window functions, `ON DUPLICATE KEY` upserts, or `FOR UPDATE` transactions, so it cannot transparently replace the driver. The `ONE_API_ENABLED` switch only gates the (currently unused) helper for future explicit call sites."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.7 The Socket Layer"},
+
+  {"t":"p","text":"`backend/app/src/realtime/socket.ts` attaches a single Socket.IO `Server` to the same HTTP server (`attachRealtime(httpServer)`), exposed app-wide as `app.set('io', io)` so HTTP routes can emit by pulling `req.app.get('io')`. The server mirrors the REST CORS origins and sets `addTrailingSlash: false` so the Next.js reverse-proxy form `/socket.io` (no trailing slash) still matches."},
+
+  {"t":"h","level":3,"text":"Rooms and fan-out"},
+
+  {"t":"p","text":"Two primary room namespaces exist: `conv:<conversationId>` (joined on `CONVERSATION_JOIN`, on message send, and on huddle join) and `user:<userId>` (every socket auto-joins its own on connect — the target for per-user fan-out across a user's tabs/devices). Meetings use `meeting:<meetingId>`. The exported `broadcast = { room, userRoom }` lets routes target either. Almost all *targeted* emits use `user:<id>` rooms rather than a global `io.emit`, so they route correctly across the Redis adapter for multi-instance and avoid O(N²) reconnect storms. The deliberate exceptions are `USER_UPDATED` (a profile/avatar/manual-presence change, broadcast globally) and `TASK_CHANGED` (global) — both are thin signals that trigger a client refetch."},
+
+  {"t":"h","level":3,"text":"Auth handshake and the Redis adapter gate"},
+
+  {"t":"p","text":"`io.use()` is the handshake middleware. It first `await`s an `adapterReady` promise, then verifies `handshake.auth.token` via `authService.verify` and sets `socket.userId = payload.sub`, rejecting with `Error('unauthorized')` on failure. The `adapterReady` gate is a subtle correctness fix: when `REDIS_URL` is set, swapping in the Redis adapter (`io.adapter(createAdapter(...))`) replaces the namespace adapter with a fresh, empty-rooms instance, so any socket that joined a room on the *old* adapter silently stops receiving `io.to(userRoom)` emits (this dropped `CALL_INCOMING`, notifications, and huddle state in production). Holding the swap behind a promise that the auth middleware awaits guarantees every `socket.join()` runs against the final adapter. A 3s hard cap falls back to the in-memory adapter, and the Redis client uses `reconnectStrategy: false` so a down Redis cannot wedge handshakes."},
+
+  {"t":"h","level":3,"text":"Connection lifecycle"},
+
+  {"t":"p","text":"On `connection` the server: (1) joins `user:<uid>`; (2) registers **all** `socket.on` listeners synchronously, before any `await`, so an event a client emits immediately on connect (e.g. a call) is never dropped; (3) in an async tail sets presence to online, fans presence out to the user's conversation peers (scoped, not global), and emits `READY`. Cleanup is split across two events for correctness: on `disconnecting` (while `socket.rooms` is still populated) it ends any huddle legs the socket held — preventing ghost huddle participants on tab-close/network-loss; on `disconnect` it sweeps the user's active 1:1 calls (ringing → mark missed; connected → hang up) and sets presence offline."},
+
+  {"t":"h","level":3,"text":"Message send: the echo *is* the ack"},
+
+  {"t":"p","text":"The most important realtime design note: there is **no separate per-message ACK event**. On `MESSAGE_SEND` the server applies the per-user token-bucket throttle (`allowSend`, cap 20 / refill 5/s — on reject it emits a sender-only `message:rate_limited` advisory), calls `messageService.send` (a service throw such as `BLOCKED` produces a sender-only `message:send_failed`), and on success broadcasts `MESSAGE_NEW` to the conversation room. The client renders optimistically and reconciles on that `MESSAGE_NEW` echo. Mention and reply notifications are dispatched fire-and-forget afterward, and the code explicitly refuses to read or persist plaintext excerpts when a message is flagged encrypted."},
+
+  {"t":"h","level":3,"text":"Event catalog (representative)"},
+
+  {"t":"table","headers":["Event","Direction","Trigger / payload"],"widths":[2500,1900,4600],"rows":[
+    ["CONVERSATION_JOIN","client→server","{conversationId} — join conv room"],
+    ["MESSAGE_SEND","client→server","{conversationId,text,file,type,voice,encrypted,parentMessageId}"],
+    ["MESSAGE_NEW","server→client","full serialized message — universal delivery+ack"],
+    ["MESSAGE_UPDATED","server→client","edits, reactions, soft-delete tombstone, pin/unpin"],
+    ["MESSAGE_REACT","client→server","{conversationId,messageId,emoji} → toggle + notify owner"],
+    ["MESSAGE_READ","server→client","{conversationId,userId,lastReadAt} (REST-driven, receipts-privacy-aware)"],
+    ["TYPING_START/STOP → TYPING","both","{conversationId,userId,typing} ephemeral"],
+    ["PRESENCE_UPDATE","server→client","{userId,presence} scoped to conversation peers"],
+    ["CALL_REQUEST/ACCEPT/DECLINE/CANCEL/HANGUP","client→server","1:1 call signalling"],
+    ["CALL_INCOMING/RINGING/ACCEPTED/DECLINED/CANCELLED/ENDED/MISSED/BUSY/NEW","server→client","call lifecycle to both parties' user rooms"],
+    ["HUDDLE_JOIN/LEAVE/SYNC/RING → HUDDLE_STATE/RUNG","both","group call membership via huddleStore"],
+    ["MEETING_JOIN/HAND_RAISE/REACTION/CHAT_SEND","client→server","gated by canAccessMeeting"],
+    ["MEETING_NEW/UPDATED/PRESENCE","server→client","HTTP-emitted to attendee user rooms"],
+    ["NOTIFICATION_NEW/READ/COUNT","server→client","activity feed + unread badge"],
+    ["TASK_CHANGED / REMINDER_CHANGED / INVITE_NEW/UPDATED / SCHEDULED_CHANGED","server→client","thin 'changed' signals → client refetches"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Signal-then-refetch pattern","text":"Many events (CALL_NEW, TASK_CHANGED, REMINDER_CHANGED, CONVERSATION_NEW/UPDATED/DELETED, MEETING_NEW/UPDATED, SCHEDULED_CHANGED, INVITE_*) carry no full delta — they are thin notifications that prompt the client to issue a REST refetch. This keeps the socket payloads tiny and makes the REST endpoint the single source of truth for the resulting state, at the cost of an extra round-trip after each change."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.8 Request Lifecycle"},
+
+  {"t":"p","text":"An authenticated mutating request — for example sending a message — traverses the full stack: the Express middleware chain, the thin route handler, the service (with its membership gate and state rules), the data layer, and finally serialization plus a realtime broadcast. The diagram below traces `POST /api/conversations/:id/messages`."},
+
+  {"t":"diagram","kind":"pipeline","title":"Request lifecycle: POST /api/conversations/:id/messages","steps":[
+    {"label":"Edge + middleware","detail":"security headers → CORS → global API rate limiter → express.json → authMiddleware (verify JWT + blocklist, set req.user)"},
+    {"label":"Route handler","detail":"asyncRouter-wrapped; destructure body, call messageService.send({conversationId, senderId, text, ...})"},
+    {"label":"Service rules","detail":"assertMember (403 if not a member) → DM block-check (403 BLOCKED) → build row, bumpUnread, unhide"},
+    {"label":"Data layer","detail":"db.messages.create + db.conversations.bumpUnread via mysql2 pool (q() pg-shim → ? placeholders)"},
+    {"label":"Serialize + broadcast","detail":"serializeMessage(row) → io.to(conv:<id>).emit(MESSAGE_NEW, msg)"},
+    {"label":"Response","detail":"res.status(201).json(ok(msg)); a throw anywhere routes to the central error handler → ok()/fail() envelope"}
+  ]},
+
+  {"t":"p","text":"Failure modes along this path and how they surface: a missing/expired/revoked token → `401` at the middleware; a non-member → `403 FORBIDDEN` from `assertMember`; a blocked DM → `403 BLOCKED`; a DB integrity violation → mapped to a friendly `400` by the central handler; any unexpected throw → `500` masked as 'Something went wrong'. Because the route is `asyncRouter`-wrapped, none of these can hang the request — they all resolve to a JSON envelope the client can act on."},
+
+  {"t":"h","level":3,"text":"Realtime path of the same action"},
+
+  {"t":"p","text":"The same message can originate over the socket (`MESSAGE_SEND`) instead of REST. The realtime path adds the per-user send throttle and emits sender-only advisories (`message:rate_limited`, `message:send_failed`), but converges on the identical `messageService.send` and the identical `MESSAGE_NEW` broadcast. This convergence is intentional: REST and socket are two front doors to one service, so a message sent by either route is delivered, persisted, and reconciled the same way — and the REST route exists as a durable fallback when the socket is unavailable (the same is true for reactions, pin/unpin, and edits)."},
+
+  {"t":"diagram","kind":"flow","title":"Two front doors, one service","nodes":[
+    {"label":"REST POST","sub":"durable fallback"},
+    {"label":"messageService.send","sub":"gate + persist"},
+    {"label":"MESSAGE_NEW","sub":"room echo = ack"}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.9 Endpoint Catalog"},
+
+  {"t":"p","text":"The following catalog covers the main routes. All paths are relative to the `/api` prefix. Unless noted, every route requires a valid Bearer JWT (`router.use(authMiddleware)`), accepts/returns the `{ok,data,error}` envelope, and emits the listed socket events through `req.app.get('io')`. 'Service' names the primary service module the route delegates to."},
+
+  {"t":"h","level":3,"text":"Auth"},
+
+  {"t":"table","headers":["Method","Path","Purpose","Input","Output / Dependencies"],"widths":[900,2300,2100,1850,1850],"rows":[
+    ["POST","/auth/signup","create/claim account","{email,name,password}","{token,user}; authService, credentialPolicy, audit (public, rate-limited)"],
+    ["POST","/auth/login","credentials → JWT","{email,password}","{token,user}; authService, audit (public, rate-limited)"],
+    ["GET","/auth/me","current user","Bearer","public user; authService"],
+    ["POST","/auth/logout","revoke token","Bearer","{loggedOut}; tokenBlocklist, audit"],
+    ["DELETE","/auth/account","soft+anon delete","Bearer","{deleted}; db.users.deleteAccount, tokenBlocklist, audit"]
+  ]},
+
+  {"t":"h","level":3,"text":"Conversations and messaging"},
+
+  {"t":"table","headers":["Method","Path","Purpose","Input","Output / Dependencies"],"widths":[900,2500,1900,1900,1800],"rows":[
+    ["GET","/conversations","list user's conversations","Bearer","conversationService.listForUser"],
+    ["POST","/conversations","create DM/group/channel","{kind,title,icon,memberIds}","conversationService.create; DM gated by accepted invite; emits CONVERSATION_NEW"],
+    ["PATCH","/conversations/:id","rename/icon/avatar/description","{title,icon,...}","emits CONVERSATION_UPDATED"],
+    ["GET","/conversations/:id/messages","keyset history","?before&limit≤100","messageService.history (assertMember)"],
+    ["POST","/conversations/:id/messages","send message","{text,file,type,voice,parentMessageId}","messageService.send; emits MESSAGE_NEW"],
+    ["GET","/conversations/:id/thread/:mid","thread parent+replies","Bearer","messageService.getThread"],
+    ["PATCH","/conversations/:id/messages/:mid","edit","{text}","emits MESSAGE_UPDATED (sender-only)"],
+    ["DELETE","/conversations/:id/messages/:mid","soft-delete (everyone)","Bearer","tombstone via MESSAGE_UPDATED; audit"],
+    ["POST","/conversations/:id/messages/:mid/react","toggle reaction (REST fallback)","{emoji}","emits MESSAGE_UPDATED"],
+    ["POST",".../:mid/bookmark | /delete-me | /pin | /unpin","save / hide-for-me / pin","Bearer","messageService; pin/unpin emit MESSAGE_UPDATED"],
+    ["GET","/conversations/:id/pinned","list pinned","Bearer","db.messages.listPinned"],
+    ["GET/POST","/conversations/:id/scheduled","list/schedule send-later","{body,sendAt}","scheduledMessageService; emits SCHEDULED_CHANGED"],
+    ["PATCH/DELETE","/conversations/:id/scheduled/:sid","reschedule/cancel","{body,sendAt}","emits SCHEDULED_CHANGED"],
+    ["POST/GET","/conversations/:id/members","add/list members","{userIds,shareHistory}","conversationService; system MESSAGE_NEW; audit"],
+    ["PATCH/DELETE","/conversations/:id/members/:uid","role / kick / leave (uid=me)","{role}","emits CONVERSATION_UPDATED/DELETED; audit"],
+    ["POST","/conversations/:id/star|mute|hide|read","per-member flags","{value} / {read,receipts}","read emits MESSAGE_READ (privacy-aware)"],
+    ["GET","/conversations/:id/receipts | /files | /links","receipts / attachments / links","Bearer","conversationService"],
+    ["DELETE","/conversations/:id","delete conversation","Bearer","emits CONVERSATION_DELETED to members; audit"]
+  ]},
+
+  {"t":"h","level":3,"text":"Calls"},
+
+  {"t":"table","headers":["Method","Path","Purpose","Input","Output / Dependencies"],"widths":[900,2600,1900,1700,1900],"rows":[
+    ["GET","/calls","call history","?before&limit","callService.history"],
+    ["POST","/calls/token","mint LiveKit room token","{callId|conversationId|meetingId}","livekitService.roomToken; membership/enterRoom gate (403 IDOR); {token,wsUrl,room,iceServers}"],
+    ["POST","/calls/diag-token","media-path preflight token","Bearer","private probe room diag_<uid> (no membership)"],
+    ["POST","/calls/group/:convId/controls/mute-all","mute everyone","Bearer","requireConvOwner; livekitService.muteAllParticipants"],
+    ["POST",".../participants/:userId/mute","mute one","{muted}","requireConvOwner; muteParticipant"],
+    ["DELETE",".../participants/:userId","remove one","Bearer","requireConvOwner; removeParticipant (not self)"],
+    ["POST","/calls/voicemail","leave voicemail (raw 100mb)","raw audio + ?toUserId&callId","voicemailService.leave"],
+    ["GET/POST/DELETE","/calls/voicemails[...]","list/listen/delete/audio","Bearer","voicemailService"],
+    ["POST","/calls/:callId/add-participants","promote 1:1 → group","{userIds}","creates group, seeds huddle, emits CALL_UPGRADED + HUDDLE_STATE"]
+  ]},
+
+  {"t":"h","level":3,"text":"Meetings"},
+
+  {"t":"table","headers":["Method","Path","Purpose","Input","Output / Dependencies"],"widths":[900,2700,1900,1600,1900],"rows":[
+    ["GET / POST","/meetings","list / schedule","{title,startsAt,durationMin,attendees,recurrenceRule}","meetingService.create; posts invite cards; emits MEETING_NEW"],
+    ["POST","/meetings/:id/invite","invite user or conversation","{userId|conversationId}","requireMeetingHostOrCoHost; invite card + notification"],
+    ["PATCH / DELETE","/meetings/:id","reschedule / remove","{patch}","emits MEETING_UPDATED"],
+    ["POST","/meetings/:id/rsvp | /leave","RSVP / leave","{status}","meetingService.respond/leave; emits MEETING_UPDATED"],
+    ["POST","/meetings/:id/room/enter|heartbeat|leave","room presence lifecycle","Bearer","meetingService; emits MEETING_PRESENCE"],
+    ["POST","/meetings/:id/cancel | /complete","end states","Bearer","emits MEETING_UPDATED + timeline trace"],
+    ["POST/DELETE","/meetings/:id/controls/...","mute-all / mute / eject / promote / demote / readmit","Bearer","requireMeetingHost(OrCoHost); livekitService + meeting_ejected"],
+    ["POST/GET","/meetings/:id/lobby/...","toggle / list / admit / deny / admit-all","{enabled|userId}","host-gated; emits MEETING_UPDATED + MEETING_PRESENCE"],
+    ["POST","/meetings/:id/lock","seal the room","{locked}","host-gated"],
+    ["GET/POST/DELETE","/meetings/:id/recordings[...]","list/start/stop/delete/upload(raw 300mb)/download","Bearer / raw","recordingService (Egress + client upload)"]
+  ]},
+
+  {"t":"h","level":3,"text":"Files"},
+
+  {"t":"table","headers":["Method","Path","Purpose","Input","Output / Dependencies"],"widths":[900,2500,1900,1800,1900],"rows":[
+    ["GET","/files/link/:token","public link download","token (no auth)","fileService.linkDownload; streams from S3"],
+    ["GET","/files","list user's files","Bearer","fileService.listForUser"],
+    ["POST","/files","upload (raw 100mb)","raw bytes + ?name&mime&conversationId","uploadLimiter → express.raw → fileService.create (S3, DB-BLOB fallback); audit"],
+    ["GET","/files/:id/download","download","Bearer","fileService.getDownload; streams S3 or serves BLOB"],
+    ["GET","/files/:id/presigned","S3 presigned URL","Bearer","getPresignedUrl (wired but bypassed by same-origin proxy)"],
+    ["POST","/files/:id/star","favorite","{starred}","fileService.setStar"],
+    ["DELETE","/files/:id","soft-delete","Bearer","fileService.remove"],
+    ["GET/POST/DELETE","/files/:id/details|shares|share|link","sharing + link mgmt","{subjectType,subjectId,permission}","fileService share/unshare/createLink/revokeLink; audit"]
+  ]},
+
+  {"t":"h","level":3,"text":"Tasks, Reminders, Search, Settings, Users/Contacts, Notifications, Invites, AI"},
+
+  {"t":"table","headers":["Method","Path","Purpose","Input","Output / Dependencies"],"widths":[900,2700,1900,1600,1900],"rows":[
+    ["GET/POST/PATCH/DELETE","/tasks[...]","kanban CRUD + /bulk /:id/move /deps /comments /activity","{title,status,assigneeId,...}","taskService; emits TASK_CHANGED (global)"],
+    ["GET/POST/PATCH/DELETE","/reminders[...] + /folders","reminders + folders CRUD + /bulk + /:id/toggle /status","{text,dueAt,priority,...}","reminderService; emits REMINDER_CHANGED (user room)"],
+    ["GET","/search?q=","cross-entity search","?q","searchService (messages via FULLTEXT)"],
+    ["GET / PUT","/settings","get / update settings blob","{settings...}","settingsService; manualPresence mirrors to user row + USER_UPDATED"],
+    ["GET","/users","directory","Bearer","db.users.list → pubUser"],
+    ["GET","/users/frequent","interaction-ranked contacts","Bearer","db.users.interactionScores"],
+    ["PATCH","/users/me","update profile","{avatarUrl,about,title,pronouns,phone,timezone}","db.users.updateProfile; emits USER_UPDATED (global)"],
+    ["GET/POST/DELETE","/users/blocks | /:id/block | /report | /reports","block/report safety","{reason}","blockService"],
+    ["GET/POST/DELETE","/notifications[...]","feed / unread-count / read / read-all / delete","Bearer","notificationService; emits NOTIFICATION_READ/COUNT"],
+    ["GET/POST","/invites + /:id/accept|decline|block","connection requests","{toUserId}","inviteService; emits INVITE_NEW/UPDATED + CONVERSATION_NEW on accept"],
+    ["POST","/ai/summarize | /ask","conversation summary / Q&A","{conversationId} / {prompt}","aiService; 403 if not member, 503 AI_DISABLED if LLM unset"]
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"5.10 Operational Notes and Honest Limitations"},
+
+  {"t":"p","text":"This subsection records the backend's known constraints so future engineers do not rediscover them the hard way. None are bugs in the sense of broken behavior; all are deliberate trade-offs documented in the code."},
+
+  {"t":"ul","items":[
+    "**Rate limiting is per-instance** — correct for single-instance deployments; needs Redis or LB fronting before scale-out.",
+    "**Socket handshake skips the blocklist** — a revoked token still authorizes new socket connections until expiry (HTTP requests are blocked correctly).",
+    "**Ephemeral realtime state is in-process** — `callTimers`, send buckets, and `recentIncoming` live in process memory by design (setTimeout handles cannot be serialized); only durable huddle/hand state goes to Redis.",
+    "**No schema-validation library** — input validation is manual at the route layer and authoritative in services; adding Zod would be additive, not a rewrite.",
+    "**E2EE routes are dormant** — registered but unused while `E2EE_ENABLED=false`; messages are plaintext server-side by default.",
+    "**File DB-BLOB fallback is silent** — if MinIO is down, uploads quietly land in MySQL with no operator alert.",
+    "**AI is off unless configured** — `/ai/*` returns `503 AI_DISABLED` when `LLM_BASE_URL` is unset; no outbound calls are made.",
+    "**Debug routes are non-production only** — `/api/debug` (raw DB dumps / DESCRIBE) is mounted only when `NODE_ENV !== 'production'`."
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Reading the backend with confidence","text":"When tracing any behavior, start at the route file (it names the service), read the one or two service functions it calls (that is where the rules live), and check `serialize.ts` for the response shape. Socket behavior lives entirely in `realtime/socket.ts`. The data layer is `database/src/drivers/mysql.ts` — search for the namespace method name (e.g. `requestAtomic`) to find the exact SQL. This route→service→serialize→data path is uniform across every feature."}
+]

@@ -1,0 +1,60 @@
+# azure-pipelines-sync.yml — CRM
+# Target repo id: cmpapfipn001j21vlv7dfd7w4
+
+trigger:
+  branches:
+    include:
+      - UAT
+
+pool:
+  name: DevOps-GLB-BGAgent
+
+variables:
+  - name: GITU_REPO_ID
+    value: "cmv50ac8u005ahod1f2mrxp1k"
+  - name: SOURCE_BRANCH
+    value: "UAT"
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+    persistCredentials: true
+
+  - task: NodeTool@0
+    inputs:
+      versionSpec: "18.x"
+    displayName: "Install Node.js"
+
+  - script: |
+      npm install -g resulgit
+    displayName: "Install resulgit CLI"
+
+  - script: |
+      set -euo pipefail
+      git fetch origin $(SOURCE_BRANCH)
+      rm -rf /tmp/master-src
+      git worktree prune
+      git worktree add /tmp/master-src origin/$(SOURCE_BRANCH)
+    displayName: "Checkout latest $(SOURCE_BRANCH) into a separate worktree"
+
+  - script: |
+      set -euo pipefail
+      sed -i 's/\r$//' sync-to-gitu.sh
+      chmod +x sync-to-gitu.sh
+      ./sync-to-gitu.sh
+    displayName: "Sync Azure DevOps -> Gitu"
+    env:
+      GITU_SERVER: $(GITU_SERVER)
+      GITU_TOKEN: $(GITU_TOKEN)
+      GITU_REPO_ID: $(GITU_REPO_ID)
+      AZURE_BRANCH: $(SOURCE_BRANCH)
+      GITU_TARGET_BRANCH: "UAT"
+      GITU_BASE_BRANCH: "main" # TODO verify: run the repo list --json check for this repo id before first run
+      AZURE_SRC_DIR: /tmp/master-src
+      AZURE_REPO_NAME: $(Build.Repository.Name)
+
+  - script: |
+      git worktree remove --force /tmp/master-src || rm -rf /tmp/master-src
+      git worktree prune
+    displayName: "Clean up worktree"
+    condition: always()

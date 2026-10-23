@@ -1,0 +1,1351 @@
+[
+  {
+    "id": "messaging",
+    "title": "Messaging",
+    "overview": "Messaging is the heart of Collab. From the message box you can format text, react, reply, edit, forward, pin, bookmark, and search any message, plus record voice notes and see typing and read status. (For every keyboard shortcut, see the Keyboard shortcuts page.)",
+    "howTo": [
+      "Open a conversation on the left, type in the message box, and send it with the arrow (or Enter).",
+      "Format text from the toolbar above the box — bold, italic, underline, strikethrough, lists, quotes, links, inline code, and more (code blocks, tables, rules) under the three-dots menu.",
+      "React by hovering a message (long-press on mobile) and tapping an emoji, or the plus for the full picker.",
+      "Reply by clicking the reply arrow on a message; your reply quotes the original, and others can click the quote to jump to it.",
+      "Edit or delete your own message from its three-dots menu — edits show an 'edited' label; delete offers 'for me' or 'for everyone'.",
+      "Forward, pin, or bookmark from the same three-dots menu.",
+      "Record a voice note with the microphone icon by the message box; stop to send, or pause and trash to cancel.",
+      "Search within a chat using the magnifying glass in the chat header; the bookmark icon there opens all your saved messages."
+    ],
+    "bestPractices": [
+      "Reply to a specific message in a busy conversation so everyone sees exactly what you're responding to.",
+      "Pin the few messages that matter to everyone (decisions, links, dates) — they sit in a banner at the top of the chat; bookmark messages that are useful only to you.",
+      "Keep messages easy to scan — long messages are shown in full, so break them into paragraphs or separate messages where it helps.",
+      "Add a caption when sharing images or files so people understand them at a glance."
+    ],
+    "commonIssues": [
+      "Not seeing the message go — the send arrow stays greyed out until you type something or attach a file.",
+      "Expecting 'Delete for everyone' on someone else's message — you can delete your own for everyone, but only remove others' from your own view.",
+      "Trying to edit a message with a file or voice note attached — editing is for plain text messages only.",
+      "Assuming a bookmark notifies the other person, or that a pin is private — bookmarks are private to you, while pins are visible to everyone in the chat."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "I don't see reaction, reply, or more-actions buttons on a message.",
+        "solution": "On desktop, hover your mouse over the message to reveal its action toolbar, or click the message to keep it open. On a phone or tablet, press and hold the message to open the actions sheet."
+      },
+      {
+        "problem": "My voice note won't record or play.",
+        "solution": "Recording needs microphone permission; if access is denied you'll see a notice, so allow the mic in your browser and try again. If a clip won't play, it may still be loading or failed to load; press play again, and check your connection."
+      },
+      {
+        "problem": "My message didn't send and shows a warning.",
+        "solution": "If you see a 'Failed' marker with a Retry option, click it to resend. This usually means a brief connection drop; once you're back online the message goes through."
+      },
+      {
+        "problem": "I can't find an older message in a long chat.",
+        "solution": "Use the search icon in the chat header to filter this conversation, or scroll up and click 'Load earlier messages'. To return to the newest message, use the down-arrow jump button that appears when you scroll up."
+      },
+      {
+        "problem": "An external link asks me to confirm before opening.",
+        "solution": "That's a safety feature showing you the real destination before you leave Collab. Check the site name and confirm if you trust it; you can adjust link behavior in Settings."
+      },
+      {
+        "problem": "I edited a message but others still see the old one.",
+        "solution": "Edits sync automatically when you're connected. If it doesn't update, your connection may have dropped briefly; the edit will appear once you're back online, and an 'edited' label will show on the message."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "Can I edit or unsend a message after sending it?",
+        "a": "Yes. Open the message's three-dots menu to edit your own text (it shows 'edited'), or delete it. Delete gives you 'Delete for me' and, for your own messages, 'Delete for everyone'."
+      },
+      {
+        "q": "What's the difference between pinning and bookmarking?",
+        "a": "Pinning puts a message in a banner at the top of the chat for everyone in that conversation. Bookmarking privately saves it to your own Bookmarks list, which only you can see."
+      },
+      {
+        "q": "How do reactions work?",
+        "a": "Hover a message (or long-press on mobile) and tap a quick emoji, or the plus for more. Reaction pills appear under the message; tap your own to remove it."
+      },
+      {
+        "q": "How do I send a voice message?",
+        "a": "Click the microphone icon next to the message box and start talking. You can pause and resume, cancel with the trash icon, or stop to send. Recordings can be up to five minutes."
+      },
+      {
+        "q": "Can others tell when I'm typing or when I've read their message?",
+        "a": "Yes. People see a 'typing…' indicator while you write, and read status (Sent, Delivered, Seen) can appear on messages. You can turn read receipts and last-seen off in Settings — see Security & Privacy."
+      }
+    ],
+    "related": [
+      "shortcuts",
+      "dms",
+      "groups",
+      "channels",
+      "files",
+      "notifications",
+      "security"
+    ]
+  },
+  {
+    "id": "shortcuts",
+    "title": "Keyboard shortcuts",
+    "kind": "shortcuts",
+    "overview": "Keyboard shortcuts let you move and act faster in Collab. The list below adapts to your device — it shows the right modifier key (⌘ on Mac, Ctrl elsewhere) and, in the desktop app, adds global hotkeys that work even when Collab is in the background.",
+    "howTo": [
+      "Press ⌘/Ctrl + K anywhere to open the command palette and jump to a chat, person, or screen.",
+      "Press Enter to send a message and Shift + Enter to start a new line.",
+      "Press Esc to close the topmost menu, picker, or dialog, or to go back.",
+      "Double-click a message to react to it with a heart.",
+      "Hold Space during a call to push-to-talk while you're muted.",
+      "Press ? anywhere (outside a text box) to pop up the quick cheat sheet."
+    ],
+    "bestPractices": [],
+    "commonIssues": [],
+    "troubleshooting": [],
+    "faqs": [
+      {
+        "q": "Why is the modifier ⌘ on one device and Ctrl on another?",
+        "a": "Collab follows your operating system: macOS uses Command (⌘), while Windows and Linux use Ctrl. The web app detects your OS too, so a Mac in the browser still shows ⌘."
+      },
+      {
+        "q": "Why don't I see the global call hotkeys?",
+        "a": "The Global shortcuts (show/hide window, mute, answer, decline, Picture-in-Picture) are provided by the Collab desktop app and work even when the window isn't focused. They aren't available in the browser — install the desktop app to use them."
+      },
+      {
+        "q": "Can I customise or disable the shortcuts?",
+        "a": "The in-app shortcuts are fixed. In the desktop app you can turn the global OS-wide hotkeys on or off in Settings, which is useful if one clashes with another app."
+      }
+    ],
+    "related": [
+      "messaging",
+      "calls",
+      "meetings",
+      "workspace"
+    ]
+  },
+  {
+    "id": "dms",
+    "title": "Direct Messages",
+    "overview": "Direct Messages are private one-to-one chats with another person in your workspace — a quiet side conversation where you share files and see whether someone's around. Each DM lives in the Chat sidebar with a status dot showing who's online.",
+    "howTo": [
+      "Open Chat from the left rail to see your conversations, grouped into You, Favourites, Direct Messages, Groups, and Channels.",
+      "Start a 1:1 chat with the New DM button (speech-bubble icon) at the top of the sidebar, or the plus next to the Direct Messages heading.",
+      "Type a name in the search box and pick the person under People (their row reads 'Start a direct message') to open the chat.",
+      "Or open Contacts, find the person, and click Chat / Message to jump straight in.",
+      "Send your first message and the conversation appears in your Direct Messages list.",
+      "Check the colored dot on someone's picture, or the line under their name in the chat header, to see if they're Available, Away, or in Do Not Disturb.",
+      "To reach a new teammate, send them a connection request from Settings → Run setup again → Connect with your team."
+    ],
+    "bestPractices": [
+      "Star the people you talk to most (the star on their row) so they sit at the top under Favourites.",
+      "Glance at the status dot before an urgent chat: green is active, amber is away, grey is offline.",
+      "Use the Chat search box to jump to a person or old message instead of scrolling.",
+      "Mute chats you don't need pings from (row menu) so your unread badges stay meaningful.",
+      "Archive DMs you've finished with to declutter — they stay searchable and return the moment a new message arrives."
+    ],
+    "commonIssues": [
+      "Expecting a separate New Message page — New DM and the plus just move your cursor into the search box, where you pick the person.",
+      "Looking for someone not in your workspace yet — invite or connect with them first.",
+      "Reading a grey dot as a problem — grey just means that person is offline right now.",
+      "Confusing the You chat at the top with a contact — it's your private space for notes and files to yourself.",
+      "Thinking an archived chat is gone — archived chats reappear with new activity and can be restored from the Archived section."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "I can't find the person I want to message in search.",
+        "solution": "Make sure they've joined your workspace. If not, invite or send a connection request from the Connect with your team step, then search again once they appear in Contacts."
+      },
+      {
+        "problem": "The New DM button doesn't open a chat.",
+        "solution": "It moves your cursor into the search box. Type the person's name, then click their row under People ('Start a direct message') to open the conversation."
+      },
+      {
+        "problem": "A connection request I sent doesn't seem to have arrived.",
+        "solution": "The other person gets a small pop-up that you sent a request. Give them a moment to come online; once they do, the request reaches them and you can chat."
+      },
+      {
+        "problem": "My direct message disappeared from the list.",
+        "solution": "It was likely archived. Open the Archived filter at the top of Chat, or expand the Archived section, and click the chat to bring it back."
+      },
+      {
+        "problem": "The chat header shows Offline even though the person just replied.",
+        "solution": "Status updates in real time but can lag a few seconds, and only shows when both of you share status (see Security & Privacy). Their reply still goes through regardless of the dot."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "How do I start a one-to-one chat with someone?",
+        "a": "Open Chat, click New DM or the plus next to Direct Messages, search, and click the person under People. You can also click Chat next to them in Contacts."
+      },
+      {
+        "q": "What do the colored dots mean?",
+        "a": "Green means online and active now, amber means away, and grey means offline. Status only shows when both people share it — see Security & Privacy to control yours."
+      },
+      {
+        "q": "How do I connect with a new teammate?",
+        "a": "Send a connection request from the Connect with your team step in setup, or invite them by email. Once they're in your workspace they show up in Contacts."
+      },
+      {
+        "q": "What is the You chat at the top of the list?",
+        "a": "It's your own private space for messaging yourself — handy for quick notes, links, and files. Only you can see it."
+      }
+    ],
+    "related": [
+      "messaging",
+      "groups",
+      "channels",
+      "calls",
+      "profiles",
+      "security",
+      "notifications"
+    ]
+  },
+  {
+    "id": "groups",
+    "title": "Groups",
+    "overview": "Groups are shared conversations with several teammates at once. Anyone you add can read and send messages, share files, and start group huddles. Groups live in the 'Groups' section of the chat list. (For the full owner/admin/member rules, see Admin and owner controls.)",
+    "howTo": [
+      "Create a group: click the '+' next to the 'Groups' heading in the chat list to open the 'New Group' window.",
+      "Name it (required), optionally click the round picture circle to add a photo, tick teammates under 'Add members', then click 'Create'.",
+      "Add more members later: open the group, click its name in the header for the Details panel, then 'Add'.",
+      "Edit the name, description, or picture (owners and admins): click the group picture in the header for 'Manage Group', or edit them inline in the Details panel.",
+      "Leave a group from the bottom of the Details panel — the group continues for everyone else.",
+      "Mute a noisy group with 'Mute notifications' in the Details panel to stay a member without the alerts."
+    ],
+    "bestPractices": [
+      "Give every group a clear name and short description so members know what it's for.",
+      "Add a group picture so it's easy to spot in your chat list.",
+      "Promote a trusted member to admin so management doesn't depend on you being online (see Admin and owner controls).",
+      "Mute a busy group rather than leaving it when you only want fewer notifications."
+    ],
+    "commonIssues": [
+      "Clicking 'Create' before typing a name — the button stays greyed out until the group has a name.",
+      "Confusing leaving with removing — leaving only takes you out; the group stays open for everyone else.",
+      "Skipping the round picture circle in the create or manage window, so the group keeps its default look.",
+      "Expecting to edit details as a regular member — only owners and admins can (see Admin and owner controls)."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "The 'Create' button is greyed out.",
+        "solution": "Type a name in the group name field — a group needs a name before it can be created."
+      },
+      {
+        "problem": "A teammate I added isn't in the group.",
+        "solution": "Open the Details panel, click 'Add', and tick their name again. They must be a connected contact in your workspace to appear in the list."
+      },
+      {
+        "problem": "I left a group by mistake.",
+        "solution": "Leaving removes your access, so you can't rejoin on your own. Ask an owner or admin still in the group to add you back."
+      },
+      {
+        "problem": "The group is too noisy but I still need it.",
+        "solution": "Open the Details panel and turn on 'Mute notifications' instead of leaving. You stay a member without the alerts."
+      },
+      {
+        "problem": "I can't change the group name, description, or picture.",
+        "solution": "Only owners and admins can edit a group. Ask an admin to make the change or to promote you — see Admin and owner controls."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "Who can add or remove people, or change the group's details?",
+        "a": "Owners and admins. The full role rules — what owners, admins, and members each can do — are in Admin and owner controls."
+      },
+      {
+        "q": "Can I change the group's name or picture after creating it?",
+        "a": "Yes, if you're an owner or admin. Click the group picture in the header for 'Manage Group', or edit the name and description inline in the Details panel."
+      },
+      {
+        "q": "What happens when I leave a group?",
+        "a": "You're removed and it leaves your list. The group continues for everyone else, and an admin or owner would need to add you back."
+      },
+      {
+        "q": "Can I be in a group without constant notifications?",
+        "a": "Yes. Turn on 'Mute notifications' in the Details panel — you stay a member but stop getting alerts for new messages."
+      }
+    ],
+    "related": [
+      "channels",
+      "admin",
+      "messaging",
+      "dms",
+      "groupCalls",
+      "files"
+    ]
+  },
+  {
+    "id": "channels",
+    "title": "Channels",
+    "overview": "Channels are broadcast-style spaces for announcements, updates, and topic-based posts that reach a wider group at once. They sit in their own 'Channels' section (each marked with #), keeping important updates separate from everyday DMs and group chats. You add the people who should be in a channel — there's no public directory to browse. (For role and editing rules, see Admin and owner controls.)",
+    "howTo": [
+      "Click the '+' next to the 'Channels' heading in the chat list to open the 'New Channel' window.",
+      "Type a channel name (e.g. 'Company News' or 'Product Updates').",
+      "Optionally click the round picture area to add a channel image so it's easy to recognise.",
+      "Under 'Add members', tap the people you want — a checkmark appears next to each.",
+      "Click 'Create'. The channel opens with a # icon and appears in your Channels list.",
+      "Post your announcement in the message box like any other message.",
+      "Bring in more people later from the Details panel's 'Add' (owners and admins)."
+    ],
+    "bestPractices": [
+      "Give channels clear names so members know what each is for.",
+      "Keep posts focused on announcements and updates — use group chats for back-and-forth discussion.",
+      "Add only the people who need the updates; you can add more later.",
+      "Star key channels so they stay near the top of your list, and mute ones you want to follow without a ping per post."
+    ],
+    "commonIssues": [
+      "Expecting a public directory — you join a channel by being added, not by discovering it.",
+      "Looking under 'Groups' — channels have their own '#' section.",
+      "Clicking 'Create' before naming the channel — the button stays disabled until you enter a name.",
+      "Using a channel for a two-way chat — channels are for reaching many members at once; use a group for discussion."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "The 'Create' button is greyed out.",
+        "solution": "Enter a channel name first — the button stays disabled until the name field has text."
+      },
+      {
+        "problem": "I can't find the new channel after creating it.",
+        "solution": "Look in the 'Channels' section (marked with #), not under Groups or Direct Messages. You can also search by name."
+      },
+      {
+        "problem": "I'm getting too many notifications from a busy channel.",
+        "solution": "Open the channel's menu and choose Mute. You stay in and can still read everything, just without the alerts."
+      },
+      {
+        "problem": "I can't rename the channel, change its picture, or add people.",
+        "solution": "Those controls are for owners and admins. Ask one to make the change or to promote you — see Admin and owner controls."
+      },
+      {
+        "problem": "I'm the owner and can't leave the channel.",
+        "solution": "Promote another member to admin to manage it, then leave. Collab keeps every channel with someone in charge."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "What's the difference between a channel and a group?",
+        "a": "Both bring multiple people together, but channels are built for broadcast-style announcements (their own '#' section), while groups are for everyday back-and-forth discussion."
+      },
+      {
+        "q": "How do people join my channel?",
+        "a": "You add them. You pick the starting members when you create it, and an owner or admin can add more later. There's no public list to join on your own."
+      },
+      {
+        "q": "Who can manage a channel?",
+        "a": "The owner and admins — adding/removing members, renaming, and changing the picture or description. See Admin and owner controls for the full rules."
+      }
+    ],
+    "related": [
+      "groups",
+      "admin",
+      "messaging",
+      "dms",
+      "notifications"
+    ]
+  },
+  {
+    "id": "calls",
+    "title": "Audio Calls",
+    "overview": "Audio Calls let you talk one-on-one straight from a conversation. Start with a tap, accept or politely decline incoming calls, and control your mic and speaker as you talk. You get a live timer, a connection-quality indicator, push-to-talk, and quick-reply messages when you can't pick up.",
+    "howTo": [
+      "Start a call: open a direct conversation and tap the phone icon in the chat header.",
+      "Call back from history: go to the Calls area and tap the person's entry.",
+      "Answer: tap the green accept button on the ringing card. Decline with the red button.",
+      "Decline with a message: tap the message icon on the ringing card and pick a quick reply (e.g. 'In a meeting — call you back') to let them know why.",
+      "Mute and unmute: tap Mute to silence your mic, Unmute to speak again. While muted, hold Space to push-to-talk (see Keyboard shortcuts).",
+      "End the call with the red Leave button."
+    ],
+    "bestPractices": [
+      "Mute when you're not speaking, then hold Space to jump in quickly without fully unmuting.",
+      "Glance at the signal bars at the top of the call — green is strong, amber is weak.",
+      "If you can't take a call, decline with a quick message so the caller knows you'll follow up.",
+      "Allow microphone access in your browser before your first call so you're ready the moment it connects.",
+      "Keep Collab open or notifications on so you don't miss incoming calls when the tab is in the background."
+    ],
+    "commonIssues": [
+      "Holding Space to talk while typing in a text box — push-to-talk is ignored while you're typing, so click away from any input first.",
+      "Forgetting you're muted and talking with no one hearing you — the button reads 'Unmute' when you're muted.",
+      "Trying to call someone while already on another call — Collab allows one call at a time.",
+      "Expecting the timer to start the instant you accept — it begins once the audio actually connects.",
+      "Confusing Speaker with the mic — Speaker controls what you hear, Mute controls what others hear from you."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "The other person can't hear me.",
+        "solution": "If the mic button reads 'Unmute', you're muted — tap it (or hold Space to talk). Also confirm you allowed microphone access in your browser."
+      },
+      {
+        "problem": "I can't hear the other person.",
+        "solution": "Make sure Speaker is on (not 'Speaker off'). If you see a 'Tap to enable sound' prompt, tap it — your browser blocked audio until you interacted with the call."
+      },
+      {
+        "problem": "The call says 'Connecting…' and never connects.",
+        "solution": "Usually a network or firewall issue. Wait a moment, tap Retry if it appears, and try a different or less restricted network."
+      },
+      {
+        "problem": "I got a '…is busy' message, or I can't start a call at all.",
+        "solution": "Collab allows one call at a time, so the person may already be on another call (or you are). You can only call people you're connected with, and not anyone you've blocked or who has blocked you."
+      },
+      {
+        "problem": "Weak signal and choppy audio.",
+        "solution": "Amber signal bars mean a weak connection — move closer to your router or switch to a stronger network."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "How do I start an audio call?",
+        "a": "Open your direct conversation and tap the phone icon in the chat header. You'll see a 'Calling…' screen while they're reached."
+      },
+      {
+        "q": "Can I decline a call but still let the person know?",
+        "a": "Yes. On the incoming call screen, tap the message icon and pick a quick reply like 'Can't talk right now'. The call is declined and your message is sent."
+      },
+      {
+        "q": "What is push-to-talk?",
+        "a": "While muted, hold Space to talk, then release to mute again — the mic button shows 'Talking…' as you hold it. Handy for quick comments without fully unmuting. (See Keyboard shortcuts.)"
+      },
+      {
+        "q": "What happens if the person I'm calling doesn't answer?",
+        "a": "After a while the call ends with a 'No answer' message. If they decline you'll see 'Call declined' — or their quick-reply message if they sent one."
+      }
+    ],
+    "related": [
+      "videoCalls",
+      "groupCalls",
+      "meetings",
+      "shortcuts",
+      "dms",
+      "screenSharing"
+    ]
+  },
+  {
+    "id": "videoCalls",
+    "title": "Video Calls",
+    "overview": "Video calls add face-to-face video to a one-on-one call. Turn your camera on or off any time, switch camera or mic mid-call, and use the same screen for muting, screen sharing, and recording. Keep your camera off and it continues as voice-only with the other person's photo shown. (The mic, speaker, and connection basics are shared with Audio Calls.)",
+    "howTo": [
+      "Open a one-on-one conversation, then click the camera (video) button in the chat header. The phone button next to it starts a voice-only call.",
+      "Wait while it rings — the other person can Accept, Decline, or reply with a quick message.",
+      "Once they answer, you both appear on the full-screen stage with live video.",
+      "Use the bottom controls to mute, stop or start your camera, share your screen, or adjust the speaker.",
+      "Switch camera or microphone from the dropdowns just below the control bar.",
+      "Click Fullscreen for a larger view, and Leave (red phone) to end the call."
+    ],
+    "bestPractices": [
+      "Before an important call, use Test Camera in Settings to confirm the right camera works.",
+      "Allow camera and microphone access the first time your browser asks, so the call connects without interruptions.",
+      "Turn your camera off when you don't need video to save bandwidth — the call keeps running as voice-only.",
+      "Switch camera or mic with the in-call dropdowns instead of leaving and rejoining."
+    ],
+    "commonIssues": [
+      "Clicking the phone button instead of the camera button, starting a voice-only call.",
+      "Blocking camera access in the browser, so video can't connect.",
+      "Expecting your own face to fill the screen when your camera is off — you simply stop sending video.",
+      "Forgetting recording needs everyone informed first, and your mic or camera active."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "My camera shows a black screen or won't turn on.",
+        "solution": "Click Start video to turn the camera on, then pick a different camera from the dropdown below the controls. You can also check it with Test Camera in Settings."
+      },
+      {
+        "problem": "The other person can't see me even though my video is on.",
+        "solution": "Confirm the camera button says Stop video (on). If it still doesn't work, switch cameras with the dropdown or check the browser hasn't blocked camera access."
+      },
+      {
+        "problem": "My camera or microphone permission was denied.",
+        "solution": "Allow camera and microphone access in your browser's site permissions, then rejoin the call."
+      },
+      {
+        "problem": "The picture freezes or the call won't connect.",
+        "solution": "These are the shared audio/connection issues covered in Audio Calls — check the signal bars, click Retry, turn your camera off to reduce load, or switch networks."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "How do I start a video call, and what's the difference from the phone button?",
+        "a": "Open a one-on-one chat and click the camera (video) button in the header — the phone button starts a voice-only call. Either way, you can turn your camera on or off after it connects."
+      },
+      {
+        "q": "Can I turn my camera off during a video call?",
+        "a": "Yes. Click Stop video any time to stop sending video while audio continues, and Start video to turn it back on. The call keeps going either way."
+      },
+      {
+        "q": "Can I switch camera or microphone mid-call?",
+        "a": "Yes. Use the dropdowns just below the control bar to pick a different device without leaving. You can also set defaults in Settings (Audio & Video)."
+      }
+    ],
+    "related": [
+      "calls",
+      "screenSharing",
+      "meetings",
+      "settings"
+    ]
+  },
+  {
+    "id": "groupCalls",
+    "title": "Group Calls (Huddles)",
+    "overview": "A huddle is a quick, drop-in audio or video call inside any group or channel chat. Instead of ringing people, you start it and everyone in that conversation sees a 'Call in progress' banner they join with one tap — the fastest way to turn a thread live. (Mic, screen share, and connection basics are shared with Audio Calls.)",
+    "howTo": [
+      "Open the group or channel, then tap the phone icon (audio) or camera icon (video) in the chat header. You drop straight in — no ringing.",
+      "Join a huddle someone else started from the 'Call in progress' banner at the top of the chat.",
+      "Use the bottom controls to Mute/Unmute, Start/Stop video, Share screen, Speaker, and Record. While muted, hold Space to push-to-talk.",
+      "Add more people from the control bar's Add — they're added to the conversation and notified to join.",
+      "If you started the huddle, tap Mute all to settle a noisy call.",
+      "Tap Fullscreen for a bigger view, and Leave (red phone) when done — others can keep talking."
+    ],
+    "bestPractices": [
+      "Use huddles for fast, informal sync-ups; schedule a Meeting when you need a set time, invites, or a lobby.",
+      "Join from the 'Call in progress' banner rather than starting a second call, so everyone ends up together.",
+      "Before recording, let everyone know — Collab asks you to confirm all participants consent.",
+      "As host, use Mute all to settle a noisy call instead of muting people one by one."
+    ],
+    "commonIssues": [
+      "Expecting the group to ring — huddles don't ring; people join from the banner.",
+      "Not noticing the 'Call in progress' banner and starting a separate call, so people split.",
+      "Looking for Mute all when you didn't start the call — only the host who started the huddle sees it.",
+      "Trying to add people while offline — you need to be connected to a workspace to add and notify."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "I can't find a call button in the chat header.",
+        "solution": "Huddles are only in group and channel conversations. Open a group or channel and look for the phone and camera icons at the top right."
+      },
+      {
+        "problem": "People in the group never got a ring for my huddle.",
+        "solution": "That's expected — huddles don't ring. Everyone sees a 'Call in progress' banner at the top of the chat and taps Join."
+      },
+      {
+        "problem": "The stage shows circles with initials instead of video.",
+        "solution": "That's the fallback when Collab can't reach the media server. Tap Retry, check your network or firewall, then rejoin (same as the connection issues in Audio Calls)."
+      },
+      {
+        "problem": "Add does nothing or shows a 'connecting' message.",
+        "solution": "You must be signed in and connected to a workspace to add people. Once connected, tap Add, choose people, and confirm — they're added and notified to join."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "What's the difference between a huddle and a scheduled meeting?",
+        "a": "A huddle is an instant, drop-in call inside a group or channel — people join from a banner, no invite. A meeting is planned for a specific time with attendees. Use a huddle for quick syncs, a meeting when you need a set time."
+      },
+      {
+        "q": "Who is the host, and what can they do?",
+        "a": "The host is whoever started the huddle, and gets a Mute all control. Everyone else has the normal controls for their own mic, camera, and screen share."
+      },
+      {
+        "q": "How do I add someone who isn't in the group?",
+        "a": "Tap Add in the control bar and pick the people — they're added to the conversation and notified that they were added to a group call, so they can join from the chat."
+      },
+      {
+        "q": "Can I share my screen or record a huddle?",
+        "a": "Yes. Use Share screen to present and Record to capture; before recording, Collab asks you to confirm everyone has been informed and consents."
+      }
+    ],
+    "related": [
+      "calls",
+      "videoCalls",
+      "meetings",
+      "screenSharing",
+      "channels",
+      "groups"
+    ]
+  },
+  {
+    "id": "meetings",
+    "title": "Meetings",
+    "overview": "Meetings let you schedule and run audio/video gatherings from the Meetings area. Plan one for later (even recurring), invite people, and join with one click. Inside you get video tiles, screen sharing, a side chat, raised hands and reactions, plus host tools — waiting room, locking, muting, and recording. Past meetings and recordings stay available to catch up on.",
+    "howTo": [
+      "Open Meetings from the left rail. You'll see Upcoming, Past, and Recordings tabs.",
+      "Schedule with + New meeting: enter a title, pick a future date and time, and optionally set Repeats (Daily, Weekly, Every 2 weeks, or Monthly).",
+      "Tick people under Participants, then Create. To change it later, select it and click Edit.",
+      "Join by selecting a meeting and clicking Join (or Join now when active), or paste a meeting ID/link into the 'Join by meeting ID or link' box and press Enter.",
+      "Invite on the spot with Copy link in the details, or Copy join link / Share invitation inside the room.",
+      "Inside, use the bottom controls to mute, start/stop camera, share screen, record, raise your hand, react, switch Gallery/Participant view, go fullscreen, or open Chat.",
+      "Hosts and co-hosts can admit people from the lobby, Mute all, mute or remove a participant, and record; the host alone toggles the lobby and locks the meeting.",
+      "Click Leave to exit. Hosts can End meeting or Cancel meeting from the details; recordings appear under the Recordings tab."
+    ],
+    "bestPractices": [
+      "Set a recurrence for standing meetings so you don't re-create them each time.",
+      "Turn on the lobby for sensitive meetings, and lock it once everyone's arrived to stop late or uninvited joins.",
+      "Promote a trusted attendee to co-host so admitting, muting, and recording don't all fall on you.",
+      "Ask people to respond Going, Maybe, or Decline so you can see who's coming at a glance.",
+      "Use Mute all at the start of a presentation, and let people Raise hand when they want to speak."
+    ],
+    "commonIssues": [
+      "Scheduling in the past or with a blank title/time — the start must be in the future, and all three are required to create.",
+      "Trying to join an ended or cancelled meeting — Join only shows while it's scheduled, starting, or active.",
+      "Looking for Record, Lock, Lobby, or Mute all as a regular attendee — only hosts and co-hosts see these (lock and lobby are host-only).",
+      "Waiting in the lobby — you stay on the waiting screen until the host admits you.",
+      "Expecting a recording instantly — new recordings show Recording, then Processing, and play once marked Ready."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "The Create button stays greyed out.",
+        "solution": "Fill in a title, date, and time. If it says the start must be in the future, pick a later time."
+      },
+      {
+        "problem": "I can't find the Join button on a meeting.",
+        "solution": "Join only shows while a meeting is scheduled, starting, or active. If it says Ended or Cancelled, it's over — check Upcoming for ones you can still join."
+      },
+      {
+        "problem": "I'm stuck on 'Waiting to be admitted'.",
+        "solution": "The meeting has a lobby on, so the host must let you in. Wait for them to admit you; 'Entry denied' means the host declined the request."
+      },
+      {
+        "problem": "People can't join my meeting even with the link.",
+        "solution": "It may be locked. As host, open the lock control in the bottom bar and unlock it so people can enter, then re-lock once everyone's in."
+      },
+      {
+        "problem": "I can't hear anyone, or the meeting won't connect.",
+        "solution": "These are the shared audio/connection issues from Audio Calls — click 'Tap to enable sound' at the top, check the Speaker in Device settings (the gear), and click Retry or switch networks if it shows a media server error."
+      },
+      {
+        "problem": "I started a recording but can't play it yet.",
+        "solution": "Recordings take a moment — they show Recording, then Processing, then Ready, where a Play / Download option appears in the meeting details or Recordings tab."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "Can I join a meeting if I wasn't invited?",
+        "a": "Yes, with the meeting ID or link. Paste it into the 'Join by meeting ID or link' box and press Enter. If the host has a lobby on you'll wait until admitted; if the meeting is locked you can't enter."
+      },
+      {
+        "q": "What's the difference between the lobby and locking a meeting?",
+        "a": "The lobby (host-only) holds each arriving person on a waiting screen until the host admits or denies them. Locking stops anyone new from joining at all, even with the link."
+      },
+      {
+        "q": "Who can record, and where do recordings go?",
+        "a": "Only the host or co-host, using Record in the meeting. Afterward it appears in the meeting details and the Recordings tab, where you can play, download, or (if it's yours) delete it."
+      },
+      {
+        "q": "How do I make someone a co-host?",
+        "a": "As host, open the participants list, find the person, and choose Make co-host. Co-hosts can admit from the lobby, mute all, mute or remove participants, and record. Remove the role the same way."
+      },
+      {
+        "q": "Can I chat or share files during a meeting?",
+        "a": "Yes. Open Chat from the bottom controls to message, @mention, add emoji, and attach files. Others see your messages live and can download files from the chat."
+      },
+      {
+        "q": "How do I cancel or end a meeting?",
+        "a": "As the organizer, use End meeting to stop a running one, Cancel meeting to call off an upcoming one, or Delete to remove it entirely."
+      }
+    ],
+    "related": [
+      "videoCalls",
+      "groupCalls",
+      "screenSharing",
+      "files",
+      "notifications"
+    ]
+  },
+  {
+    "id": "screenSharing",
+    "title": "Screen Sharing",
+    "overview": "Screen sharing shows your screen to everyone in a call or meeting — present slides, walk through a document, or demo live. One button in the call controls starts and stops it, and your screen becomes the main view. It works in one-on-one calls, huddles, and meetings.",
+    "howTo": [
+      "In a connected call or meeting, click Share screen (the monitor icon) in the bottom control bar.",
+      "When your browser asks, choose what to share — your whole screen, a single window, or a browser tab — then confirm.",
+      "Your screen appears to everyone; the button becomes Stop share and your tile is marked PRESENTING.",
+      "Switch to the app or document you want to show; everyone follows in real time.",
+      "Click Stop share when done (or use your browser's own 'Stop sharing' bar if it shows one)."
+    ],
+    "bestPractices": [
+      "Open the window or document before you start, so you're not fumbling live.",
+      "Share a single window or tab when you only need to show one thing — it keeps notifications and other apps out of view.",
+      "Close or silence personal chats and pop-ups before sharing your entire screen.",
+      "Ask viewers to switch to Participant view or pin your tile so the shared screen fills their window.",
+      "Stop share as soon as you're done so you don't keep broadcasting by accident."
+    ],
+    "commonIssues": [
+      "Closing the browser's picker without choosing — nothing shares and you click the button again.",
+      "Sharing the entire screen and exposing private messages, email, or notifications.",
+      "Forgetting to stop sharing, so your screen keeps showing after you've moved on.",
+      "Expecting a shared video's sound to carry — sharing shows your screen, not system audio.",
+      "Looking for screen sharing in text chat — it's only inside a call or meeting."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "I clicked Share screen but nothing happened.",
+        "solution": "You likely cancelled the browser's screen-picker. Click Share screen again, choose a screen, window, or tab, and confirm."
+      },
+      {
+        "problem": "The Share screen button is greyed out.",
+        "solution": "Wait until the call is fully connected (not still 'Connecting…'), then try again."
+      },
+      {
+        "problem": "My browser never asks me what to share.",
+        "solution": "Your browser may be blocking screen capture. Allow screen sharing for Collab in the browser's site permissions, then click Share screen again."
+      },
+      {
+        "problem": "Others say my shared screen looks small.",
+        "solution": "It's shown in full without cropping. Ask viewers to switch to Participant view or pin/expand your tile to enlarge it on their side."
+      },
+      {
+        "problem": "I stopped sharing but my screen still seems to show.",
+        "solution": "Click Stop share in the control bar, and also stop it from your browser's own 'Stop sharing' bar at the edge of the screen."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "Where can I share my screen?",
+        "a": "Anywhere you have call controls — one-on-one calls, huddles, and meetings."
+      },
+      {
+        "q": "Will everyone see my whole screen?",
+        "a": "Only what you choose. When you start, you pick your entire screen, a single window, or one browser tab — so you control exactly what others see."
+      },
+      {
+        "q": "Can more than one person share at once?",
+        "a": "Sharing is one presenter at a time — when someone shares, their screen becomes the main view everyone follows."
+      },
+      {
+        "q": "Does sharing turn off my camera?",
+        "a": "No. Your camera keeps running if it was on; the shared screen just becomes the focus, and your video still shows in your tile."
+      }
+    ],
+    "related": [
+      "calls",
+      "videoCalls",
+      "meetings"
+    ]
+  },
+  {
+    "id": "files",
+    "title": "Files & Attachments",
+    "overview": "Share images, videos, and documents inside any conversation, and find them all in the Files page. Attach by picking a file, dragging it in, or pasting a screenshot — Collab shows a preview so you can add a caption before sending. Back-to-back photos form album grids, and anything downloads in one click.",
+    "howTo": [
+      "Attach from the chat box: click the paperclip (Attach file) icon below the message box and choose one or more files.",
+      "Drag and drop files onto the message area — a 'Drop files to attach' panel appears and releasing adds them to the preview tray.",
+      "Paste a screenshot or image: click into the message box and paste — it lands in the tray, auto-named like 'Screenshot …'.",
+      "Add a caption (it attaches to the first item) and press Send.",
+      "Adjust before sending: 'Add' for more, the small X to remove one, or 'Discard all' to clear the tray.",
+      "Download by hovering an item in chat and clicking the round download button, or from the Files page row.",
+      "View photos full-size: click an image to open it large and use the arrows (or your keyboard) to flip through an album.",
+      "Browse your library: open Files from the left rail to search, filter, favourite, share, or delete uploads."
+    ],
+    "bestPractices": [
+      "Glance at the preview tray before Send — your chance to remove the wrong file or add a caption.",
+      "Send several photos in a row (no captions between) to get a clean album grid instead of stacked images.",
+      "Star files you reuse so they're one click away under Favorites in the Files page.",
+      "Turn on 'Blur media until hovered' in Settings > Accessibility if you present or work in public — images stay blurred until you point at them."
+    ],
+    "commonIssues": [
+      "Expecting a file to send the instant you pick it — it's staged in the preview tray until you press Send.",
+      "Sending a file larger than 2 GB — Collab declines it with a 'too large' message.",
+      "Forgetting a caption only attaches to the first item when sending several files at once.",
+      "Reading a blurred image as broken — it's the 'Blur media' privacy setting; hover to reveal it.",
+      "Hunting for an uploaded file — chat attachments and Files-page uploads both live in your Files library, filterable by tab."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "An attachment shows 'Couldn't load' or 'Loading…' and never appears.",
+        "solution": "Check your internet connection and refresh the conversation. Large images can take a moment; if it persists, try downloading it with the download button to confirm the file is intact."
+      },
+      {
+        "problem": "My file won't attach and I see a 'too large' message.",
+        "solution": "Files are limited to 2 GB each. Compress the file or share a smaller version, or upload very large items through a link instead."
+      },
+      {
+        "problem": "A pasted screenshot didn't land in the message box.",
+        "solution": "Make sure you clicked inside the message box first, then paste. Copy the image itself (not a file path), and confirm your browser allowed clipboard access."
+      },
+      {
+        "problem": "All the photos in my chat look fuzzy.",
+        "solution": "That's the 'Blur media until hovered' privacy option. Hover over an image to reveal it, or turn the setting off under Settings > Accessibility."
+      },
+      {
+        "problem": "I sent several photos but they didn't group into an album.",
+        "solution": "Only back-to-back photos/videos with no caption, reply, reaction, pin, or bookmark — sent close together by the same person — combine into an album grid. A caption or reaction keeps an image separate."
+      },
+      {
+        "problem": "I can't find a file I shared earlier.",
+        "solution": "Open the Files page and use the search box, or try the Recent and Shared tabs. Starred files appear under Favorites."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "How do I send a file with a message in the same go?",
+        "a": "Attach the file (or paste/drag it), then type your message before pressing Send. Your text becomes the caption on the attachment."
+      },
+      {
+        "q": "Can I send more than one file at once?",
+        "a": "Yes. Pick multiple files, drag several in, or use the 'Add' button in the preview tray to keep stacking attachments before you send."
+      },
+      {
+        "q": "Is there a size limit?",
+        "a": "Each file can be up to 2 GB. Anything larger is declined with a message so you can swap in a smaller version."
+      },
+      {
+        "q": "What's the photo grid I sometimes see?",
+        "a": "Several photos or videos sent in a row with no captions tidy into an album grid. Click any tile to view it full-size and flip through the rest."
+      },
+      {
+        "q": "Why are my images blurry until I hover?",
+        "a": "You have 'Blur media until hovered (privacy)' on in Settings > Accessibility. Hover to reveal, or switch it off."
+      }
+    ],
+    "related": [
+      "messaging",
+      "meetings",
+      "settings"
+    ]
+  },
+  {
+    "id": "notifications",
+    "title": "Notifications",
+    "overview": "Notifications keep you on top of messages, mentions, calls, and meetings. Choose how much to be alerted — every message, only mentions, or nothing — add a sound, show an unread count on your tab, set Quiet Hours, and review everything in the Activity inbox. The controls live in Settings and follow you across devices.",
+    "howTo": [
+      "Turn on alerts: Settings → Notifications → Desktop Notifications → Enable, then allow Collab when your browser asks. This is required before any pop-up can appear.",
+      "Choose the level under 'Notify me about': All messages, Mentions only, or None. Mentions only fires when someone types your name or uses @all, @here, or @everyone.",
+      "Mention someone: type @ in the message box and pick a name (or @all / @here / @everyone) — this is how you reach people set to Mentions only.",
+      "Add a sound with Notification sound and a tone from the Ringtone list.",
+      "Show an unread count on your browser tab with Unread badge.",
+      "Set Quiet Hours with a From and To time (e.g. 22:00–07:00) to silence pop-ups during that window; overnight ranges work.",
+      "Review the Activity inbox (the bell in the left rail) → Notifications tab for mentions, replies, reactions, missed calls, invites, and shared files. Use Mark all read, or click one to open it."
+    ],
+    "bestPractices": [
+      "In busy channels, switch 'Notify me about' to Mentions only so you're alerted just when someone needs you.",
+      "Enable the browser permission first — without it, your sound, level, and Quiet Hours have nothing to act on.",
+      "Set Quiet Hours to your sleep or focus window; messages stay silent but still wait in the Activity inbox.",
+      "Use @name (or @all / @here / @everyone) only when you genuinely need attention — it's the one alert people on Mentions only receive."
+    ],
+    "commonIssues": [
+      "Expecting pop-ups without first selecting Enable and allowing the browser prompt.",
+      "Setting Mentions only, then wondering why ordinary messages no longer pop up.",
+      "Forgetting Quiet Hours silences all pop-ups during the window, even though messages still arrive.",
+      "Expecting an alert while viewing the same conversation the message lands in — pop-ups are suppressed only for that exact chat; other chats, calls, and meetings still fire.",
+      "Thinking you missed something when Notification sound was simply off."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "No pop-up notifications appear at all.",
+        "solution": "Open Settings, go to Notifications, and check Desktop Notifications. If it says Blocked, you'll need to re-allow Collab in your browser's site settings. If it says Not enabled, select Enable and accept the browser prompt."
+      },
+      {
+        "problem": "The Enable button is greyed out and shows 'Blocked in browser settings'.",
+        "solution": "Your browser previously denied notifications for Collab. Open your browser's site permissions for this page, switch notifications to Allow, then reload Collab."
+      },
+      {
+        "problem": "I only get alerted sometimes.",
+        "solution": "Check 'Notify me about'. If it's set to Mentions only, you're alerted just when someone uses your name or @all/@here/@everyone. Switch it to All messages to be alerted for everything."
+      },
+      {
+        "problem": "No sound plays with my notifications.",
+        "solution": "In Settings > Notifications, turn on Notification sound. You can also try a different Ringtone. Make sure your device and browser tab volume aren't muted."
+      },
+      {
+        "problem": "Notifications went silent in the evening.",
+        "solution": "Quiet Hours is probably on. In Settings > Notifications, check the Quiet hours window and adjust the From/To times, or turn it off."
+      },
+      {
+        "problem": "My browser tab doesn't show an unread count.",
+        "solution": "Turn on Unread badge in Settings > Notifications. The count only appears while you actually have unread messages and you're not currently viewing them."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "What's the difference between All messages, Mentions only, and None?",
+        "a": "All messages alerts you for every new message. Mentions only alerts you just when someone types your name or uses @all, @here, or @everyone. None turns off pop-ups entirely, though messages still arrive in your Activity inbox."
+      },
+      {
+        "q": "Will I get notified for my own messages?",
+        "a": "No. Collab never alerts you about messages you send yourself."
+      },
+      {
+        "q": "Why didn't I get a pop-up while I was using Collab?",
+        "a": "You still get pop-ups when you're in a different conversation, on a call, or in a meeting. A pop-up is suppressed only when you're actively viewing the exact conversation the message arrived in."
+      },
+      {
+        "q": "Do Quiet Hours mean I'll miss messages?",
+        "a": "No. Quiet Hours only silences pop-ups and sounds during the window you set. Every message still arrives and waits in your conversations and the Activity inbox."
+      }
+    ],
+    "related": [
+      "messaging",
+      "channels",
+      "calls",
+      "settings"
+    ]
+  },
+  {
+    "id": "profiles",
+    "title": "Your Profile",
+    "overview": "Your profile is how teammates recognize you — a display name, a short 'About' line (like a status), and a photo. You set all three in Settings → Appearance, and they appear next to your messages, in conversations, and on calls. Changes save automatically (see Settings).",
+    "howTo": [
+      "Open Settings → Appearance; the Profile area is at the top.",
+      "Set your Display name (up to 60 characters), then click away — it saves automatically.",
+      "Add an About line (up to 140 characters), e.g. 'Available' or 'In a meeting', then click away.",
+      "Add a photo: click Upload, choose an image, then in the Adjust photo window drag to reposition and use the slider or mouse wheel to zoom inside the circle.",
+      "Click Save to apply the cropped photo. Your new picture appears right away.",
+      "Later, click Change for a new image, or Remove to go back to your initials."
+    ],
+    "bestPractices": [
+      "Use the name your team knows you by so people recognize you in chats and member lists.",
+      "Add a square, well-lit photo where your face fills the frame — it crops to a circle, so centre yourself before saving.",
+      "Keep your About line short and current, like a status (e.g. 'Out until Monday').",
+      "Refresh your photo or About whenever your role or availability changes."
+    ],
+    "commonIssues": [
+      "Navigating away without clicking out of the field first, so the change doesn't save.",
+      "Expecting your About line in group chats — it only shows on your profile in direct messages.",
+      "Uploading a very small or low-quality image that looks blurry once cropped to a circle.",
+      "Clicking Remove and being surprised the photo becomes your initials rather than blank.",
+      "Assuming a change is instant for everyone — others see it the next time their view refreshes."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "My new name or About didn't save.",
+        "solution": "Click outside the field after typing so Collab can save it. Watch for the \"All changes saved\" status near the Settings menu. If it says \"Couldn't save changes,\" check your connection and try again."
+      },
+      {
+        "problem": "My profile photo won't upload.",
+        "solution": "Make sure you picked an image file (not a document or video). Choose a standard photo format and try again. If the upload still fails, you'll see a brief message — check your connection and retry."
+      },
+      {
+        "problem": "My photo looks cut off or off-center.",
+        "solution": "Click Change to re-open the Adjust photo window, then drag to reposition and use the slider to zoom until your face sits inside the circle, and Save again."
+      },
+      {
+        "problem": "Teammates still see my old name or picture.",
+        "solution": "Your changes apply for others when their app next refreshes their view of you. Ask them to reopen the conversation or refresh, and your latest profile will show."
+      },
+      {
+        "problem": "I want to remove my photo but keep my name.",
+        "solution": "Click Remove under your profile picture. Your photo is cleared and replaced by a colored circle with your initials; your name and About stay exactly as they were."
+      },
+      {
+        "problem": "My About line isn't showing to the person I'm chatting with.",
+        "solution": "About appears on your profile in direct messages, in the conversation's info panel. It does not appear in group chats or channels, so a teammate will only see it in a one-on-one chat with you."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "Where does my profile show up?",
+        "a": "Your name and photo appear next to your messages, in the conversation list, chat headers, member lists, and on calls. Without a photo, Collab shows a coloured circle with your initials."
+      },
+      {
+        "q": "Who can see my About status?",
+        "a": "Your About line shows on your profile in direct messages — the other person sees it in the chat's info panel. It isn't shown in group chats or channels."
+      },
+      {
+        "q": "Do I have to upload a photo?",
+        "a": "No. A photo is optional — without one, Collab shows a coloured circle with the first letter of your name. You can add one any time from Settings."
+      },
+      {
+        "q": "Can I set up my profile when I first join?",
+        "a": "Yes. The first-run welcome setup has a Profile step for your display name and a short About line; you can change your photo any time afterward."
+      }
+    ],
+    "related": [
+      "settings",
+      "dms",
+      "security"
+    ]
+  },
+  {
+    "id": "security",
+    "title": "Security & Privacy",
+    "overview": "Collab gives you simple controls over who can reach you and what you share — block or report people, hide your read receipts and last-seen status, control typing indicators, confirm before opening outside links, and sign out any time. In some workspaces, direct messages are also end-to-end encrypted so only you and the recipient can read them.",
+    "howTo": [
+      "Open Settings and pick a section (Privacy, Safety, Chat Display, Security).",
+      "Block someone: in their direct message, open the info panel from the chat header and choose Block user — contact is cut off both ways until you unblock.",
+      "Manage blocked people in Settings → Privacy → Blocked users; choose Unblock to restore contact.",
+      "Report someone: from their info panel choose Report user and optionally describe the issue; review or withdraw in Settings → Safety → Reported users.",
+      "Hide read receipts (Chat Display → Read Receipts off) — you stop sending the double-check marks and stop seeing others'.",
+      "Hide your online status (Chat Display → Last Seen & Online off) — your status is hidden and you also can't see others'.",
+      "Stop showing when you're typing in Privacy → Typing indicators.",
+      "Add a link safety check in Safety (confirm before opening external links). To sign out, choose Log out on the rail and confirm."
+    ],
+    "bestPractices": [
+      "Block to cut off contact both ways; report to flag the issue for review — you can do both on the same person.",
+      "Remember read-receipt and last-seen are reciprocal: turning yours off also hides that info about others from you.",
+      "Turn on confirm-before-opening-links if you often get links from people you don't know well.",
+      "If your workspace uses end-to-end encryption, keep using the same device and browser so your encrypted history stays available.",
+      "Always log out on a shared or public computer — Collab keeps you signed in until you do."
+    ],
+    "commonIssues": [
+      "Looking for an encryption on/off switch — it's set up by your workspace, not an in-app toggle, and is off by default in most workspaces.",
+      "Thinking you can still see someone's read receipts or online status after turning your own off — these settings hide both directions.",
+      "Assuming blocking also files a report — they're separate; do both if you want the person blocked and flagged.",
+      "Looking for remote sign-out — Collab shows only your current device; log out on each device directly.",
+      "Expecting password change or two-factor setup in the Security section — those are shown for reference, not configurable here in this version."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "I unblocked someone but they don't reappear in my conversation list.",
+        "solution": "Unblocking only restores the ability to message and call. Start a new direct message with them, or reopen your earlier conversation, to continue chatting."
+      },
+      {
+        "problem": "My blocked or reported list shows nothing or stays on Loading.",
+        "solution": "An empty list simply means you haven't blocked or reported anyone. If it stays on Loading, check your connection, then leave and reopen the Privacy or Safety section to refresh it."
+      },
+      {
+        "problem": "I turned off Last Seen but still can't tell if people are online.",
+        "solution": "That's expected. When you hide your own last-seen and online status, Collab also hides everyone else's from you. Turn it back on in Chat Display to see statuses again."
+      },
+      {
+        "problem": "A message or attachment shows 'Restoring…' or 'Encrypted message' instead of its content.",
+        "solution": "The message was sent before this device was added, so it is being restored from your encrypted backup or from your other devices — this happens automatically when you open the chat, and the text, photos, files and voice notes fill in as they arrive. Nothing to retry. If this device signed in without a password (single sign-on, or a saved session) and none of your other devices are online, Collab asks once for your sign-in password, recovery passphrase or recovery key to unlock the backup; after that it stays unlocked. Only a message that was never backed up and exists on no other device cannot be shown, and Collab says so instead of waiting."
+      },
+      {
+        "problem": "A direct message won't send and says it couldn't be encrypted.",
+        "solution": "When your workspace uses end-to-end encryption, Collab will not fall back to sending unprotected text. Wait a moment and resend; if it persists, the other person's device may not be set up for encryption yet."
+      },
+      {
+        "problem": "I want to switch accounts but I'm still signed in.",
+        "solution": "Choose Log out on the navigation rail and confirm. This ends your session on this device and returns you to the sign-in screen, where you can sign in with a different account."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "What's the difference between blocking and reporting someone?",
+        "a": "Blocking stops all contact both ways: a blocked person can't message or call you, and you can't reach them either, until you unblock. Reporting flags the person for review and can include an optional note. They're separate, and you can do both."
+      },
+      {
+        "q": "Will someone know if I block or report them?",
+        "a": "Collab doesn't announce it to them. After you block, the conversation closes on your side, and your blocked and reported lists are private to you in Settings."
+      },
+      {
+        "q": "If I turn off read receipts, can I still see when others read my messages?",
+        "a": "No. The read-receipt setting is reciprocal: when it's off you won't send the double-check marks and you won't see other people's either. The same applies to the Last Seen & Online setting."
+      },
+      {
+        "q": "Are my direct messages encrypted?",
+        "a": "It depends on your workspace. Some Collab workspaces protect direct messages and personal notes with end-to-end encryption so only you and the recipient can read them. It's off by default and set up at the workspace level, and it applies to direct messages only, not group chats, channels, calls, or meetings."
+      },
+      {
+        "q": "Can I sign out of Collab on a device I no longer have?",
+        "a": "Not remotely in this version. Collab shows the device you're currently signed in on; to end a session on another device, sign out directly from that device."
+      },
+      {
+        "q": "Where do I review the recent security activity on my account?",
+        "a": "Open Settings and choose Activity log to see recent security-relevant actions on your account, such as sign-ins and account changes."
+      }
+    ],
+    "related": [
+      "dms",
+      "messaging",
+      "settings",
+      "profiles",
+      "notifications",
+      "admin"
+    ]
+  },
+  {
+    "id": "settings",
+    "title": "Settings",
+    "overview": "Settings is where you tailor how Collab looks, sounds, and feels — theme and accent colour, typeface and zoom, chat density and wallpaper, your mic/speaker/camera, notifications, and accessibility helpers. Most changes apply instantly with a Live preview, and everything saves automatically (a status line at the top of the menu confirms when).",
+    "howTo": [
+      "Open Settings from the rail, then use the left menu to jump between sections: Appearance, Audio & Video, Chat Display, Notifications, Accessibility, and more.",
+      "In Appearance, pick a Theme (Light, Dark, OLED, or System), an Accent Color, a Typeface, and the Application Zoom.",
+      "Open Chat Display for message Density (Comfortable or Compact), Message Font Size, bubble style, and a Chat Wallpaper (a built-in design, a solid colour, or Upload image).",
+      "Open Audio & Video to pick your Microphone, Speaker, and Camera, then run Test Microphone, Play Test Sound, and Test Camera to confirm each works.",
+      "Open Accessibility for High Contrast Mode, Reduce Motion, Larger Text, Dyslexia-friendly text, and other on/off helpers.",
+      "Watch the Live preview at the bottom of Appearance and Chat Display — it updates as you change themes, colours, fonts, and wallpaper.",
+      "Notification controls (alerts, sounds, Quiet hours) live here too — see Notifications for the details. Close the panel any time; your changes are already saved."
+    ],
+    "bestPractices": [
+      "Use the Live preview while choosing a theme, accent, font, or wallpaper so you see the result before settling.",
+      "Run the device tests in Audio & Video before an important call to confirm the right hardware is selected.",
+      "If a section feels cramped, try Compact vs Comfortable density and a larger Message Font Size or Application Zoom.",
+      "Pick Dark or OLED on bright screens to reduce glare, and try High Contrast Mode if text is hard to read."
+    ],
+    "commonIssues": [
+      "Looking for a Save button — there isn't one. Collab saves automatically; the status line shows Saving, All changes saved, or Couldn't save changes.",
+      "Confusing the font controls — Typeface and Application Zoom (Appearance) affect the whole app, while Message Font Size (Chat Display) only changes chat bubbles.",
+      "Selecting a mic, speaker, or camera but not testing it, then finding the wrong device in use during a call.",
+      "Picking a device before granting access, so the dropdown shows only generic names until you allow access and test."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "My appearance or wallpaper choice didn't stick.",
+        "solution": "Check the status line at the top of the Settings menu. If it says Couldn't save changes, check your connection and make the change again; when it says All changes saved, your choice is stored to your account."
+      },
+      {
+        "problem": "My microphone or camera doesn't show up in the dropdown.",
+        "solution": "In Audio & Video, click Test Microphone or Test Camera and allow access when your browser asks. Once allowed, the device list fills in with real names and you can pick the one you want."
+      },
+      {
+        "problem": "Play Test Sound is silent.",
+        "solution": "Confirm the correct output is chosen in the Speaker dropdown, check your system volume isn't muted, then press Play Test Sound again to hear a short tone."
+      },
+      {
+        "problem": "My uploaded chat wallpaper makes messages hard to read.",
+        "solution": "In Chat Display, switch the wallpaper to None, a lighter solid color, or a subtler built-in design, the Live preview shows readability before you commit."
+      },
+      {
+        "problem": "The app feels too small or too large.",
+        "solution": "In Appearance, adjust Application Zoom to scale the whole interface, and turn on Larger Text in Accessibility for bigger type throughout."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "Will my theme, font, and wallpaper follow me to other devices?",
+        "a": "Yes. Appearance choices — theme, accent, typeface, zoom, and chat wallpaper — are stored with your account and apply when you sign in elsewhere. Device choices like which mic or camera to use stay specific to the device you're on."
+      },
+      {
+        "q": "What's the difference between Typeface, Application Zoom, and Message Font Size?",
+        "a": "Typeface changes the font across the whole app, Application Zoom scales the entire interface, and Message Font Size only changes the text inside chat bubbles."
+      },
+      {
+        "q": "What does the Live preview show?",
+        "a": "A small sample conversation that reflects your current theme, accent, density, font, and wallpaper in real time, so you can see how chats will look without leaving Settings."
+      },
+      {
+        "q": "Can I choose which device my calls use?",
+        "a": "Yes. In Audio & Video, pick your microphone, speaker, and camera from the dropdowns and use the test buttons to confirm each works before a call."
+      }
+    ],
+    "related": [
+      "notifications",
+      "profiles",
+      "videoCalls",
+      "security"
+    ]
+  },
+  {
+    "id": "workspace",
+    "title": "Your Workspace",
+    "overview": "Your workspace is your whole Collab home base — messages, calls, meetings, contacts, tasks, and files in one place. You move around with the navigation bar on the left and always land on the Dashboard, a single page that sums up your day and links you everywhere else.",
+    "howTo": [
+      "Sign in to land on the Dashboard, which greets you and summarises what needs your attention.",
+      "Use the left navigation to switch areas: Dashboard, Messages, Calls, Meetings, Contacts, Calendar, and more (Tasks, Reminders, Files, and Activity sit lower down).",
+      "Glance at the four summary cards — upcoming meetings, tasks due today, unread messages, missed calls — and click one to jump to that area.",
+      "Use Quick actions to start fast: New message, Schedule meeting, Start call, or Create task.",
+      "Open the Frequent users panel and click a name to message someone you talk to often.",
+      "Type in the Dashboard search box and press Enter to search messages, people, calls, meetings, and more.",
+      "Collapse the navigation with the arrow next to the Collab name (or drag its right edge to resize); open your profile, settings, and Log out from the bottom of the navigation."
+    ],
+    "bestPractices": [
+      "Start your day on the Dashboard — the summary cards and one-line insight show what's unread, due, or missed at a glance.",
+      "Use the Dashboard search box as your fastest way to find anything.",
+      "Lean on the Frequent users panel to reach the people you talk to most in one click.",
+      "Collapse the navigation to focus on a conversation, or widen it for larger labels.",
+      "Use Quick actions to begin a message, meeting, call, or task without navigating there first."
+    ],
+    "commonIssues": [
+      "Expecting the Dashboard to be a chat — it's an overview page; go to Messages to read and reply.",
+      "Looking for a section that isn't there — some areas (Search, Agents) may be hidden depending on your workspace.",
+      "Not realising the summary cards are clickable — each jumps to its related area.",
+      "Thinking Frequent users is fixed — it updates based on who you interact with, showing recent contacts until you build history.",
+      "Collapsing the navigation and thinking sections disappeared — the arrow just hides the labels; click it to expand."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "The Frequent users panel says there are no frequent contacts yet.",
+        "solution": "This is normal for a new account. Once you exchange a few messages or calls, the people you interact with most will start appearing here automatically."
+      },
+      {
+        "problem": "I can't find the Search option in the left navigation.",
+        "solution": "A standalone Search item may be turned off in your workspace. You can still search anytime from the search box at the top of the Dashboard."
+      },
+      {
+        "problem": "The Dashboard summary cards all show zero or 'All clear'.",
+        "solution": "That means you are caught up. There are no upcoming meetings, due tasks, unread messages, or missed calls right now."
+      },
+      {
+        "problem": "The left navigation is too narrow or too wide.",
+        "solution": "Hover over the right edge of the navigation and drag it to resize. Your chosen width is remembered next time you open the app."
+      },
+      {
+        "problem": "I switched to another section and want to go back.",
+        "solution": "When you open a section by clicking something on the Dashboard, a Back button appears at the top of that area. Click it to return, or click Dashboard in the left navigation."
+      },
+      {
+        "problem": "My name and picture at the bottom of the navigation look wrong.",
+        "solution": "Click your name there to open Profile and settings, where you can update your display name and picture."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "What is the Dashboard?",
+        "a": "Your workspace landing page. It greets you, summarises unread messages, due tasks, upcoming meetings, and missed calls, and offers quick shortcuts, recent activity, today's schedule, and the people you talk to most."
+      },
+      {
+        "q": "How does the Dashboard search work?",
+        "a": "Type in the search box at the top of the Dashboard and press Enter. It searches conversations, people, messages, tasks, reminders, and meetings, and opens the full results. (For a keyboard-driven quick switcher, see the command palette in Keyboard shortcuts.)"
+      },
+      {
+        "q": "How are Frequent users chosen?",
+        "a": "Collab ranks them by how often you interact, most frequent first. If you're new, it shows people from your most recent direct messages instead."
+      },
+      {
+        "q": "What do the Quick actions do?",
+        "a": "One-click shortcuts on the Dashboard to start a new message, schedule a meeting, start a call, or create a task without navigating there first."
+      }
+    ],
+    "related": [
+      "messaging",
+      "shortcuts",
+      "meetings",
+      "notifications",
+      "settings"
+    ]
+  },
+  {
+    "id": "ai",
+    "title": "AI Features",
+    "overview": "Collab has two AI helpers built for trust and transparency. 'Catch me up' summarises a busy conversation so you get the gist without scrolling. The Agents area shows how outside AI assistants can safely connect to your workspace — always within permissions you can see, with every action recorded. Both are switched on per workspace, so you may or may not see them.",
+    "howTo": [
+      "Summarise a chat: open it and click the sparkle button in the chat header (tooltip 'Catch me up').",
+      "Wait while Collab reads recent messages — you'll see 'Summarizing this conversation…'.",
+      "Read the summary in the highlighted panel at the top of the chat, then dismiss it with the × when done.",
+      "Open Agents from the left rail (under Search) to see AI assistant settings.",
+      "Review 'How it works' and 'Permission scopes' to see exactly what an assistant could be allowed to do.",
+      "Open the 'Audit trail' to see a timestamped record of every action an assistant has taken."
+    ],
+    "bestPractices": [
+      "Use 'Catch me up' on long or fast-moving conversations you've been away from, before replying.",
+      "Treat the summary as a quick guide, not a replacement — open the original messages when accuracy matters.",
+      "Dismiss a summary when finished, and re-run it later if new messages have come in.",
+      "Review an assistant's permission scopes and audit trail in Agents before relying on it."
+    ],
+    "commonIssues": [
+      "Expecting the 'Catch me up' sparkle always — it only appears when your workspace has summaries turned on.",
+      "Not finding Agents in the navigation — it's hidden unless your workspace enables it.",
+      "Assuming an assistant is already working — in most setups none is connected, so the Agents page is informational.",
+      "Thinking the summary covers the whole history — it focuses on the recent conversation.",
+      "Treating the summary as final — it's a recap and can miss nuance; confirm anything important in the messages."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "I don't see the 'Catch me up' sparkle button in the chat header.",
+        "solution": "This feature is enabled per workspace. If it's missing, your workspace hasn't turned it on; ask your administrator to enable conversation summaries."
+      },
+      {
+        "problem": "The summary failed with a message about the AI service being unavailable.",
+        "solution": "The AI service was temporarily unreachable. Wait a moment and click the sparkle button again to retry."
+      },
+      {
+        "problem": "The summary is taking a while.",
+        "solution": "It's still reading the conversation; you'll see 'Summarizing this conversation…' until it's ready. Larger or busier chats can take a little longer."
+      },
+      {
+        "problem": "I can't find Agents in the left navigation.",
+        "solution": "The Agents area is hidden by default. If your workspace hasn't enabled it, it won't appear in the navigation rail; ask your administrator to turn it on."
+      },
+      {
+        "problem": "The Agents page says no agents are connected.",
+        "solution": "This is normal. It means no AI assistant is set up in your workspace yet. The page explains the permissions and audit safeguards that will apply once one is connected."
+      },
+      {
+        "problem": "I'm worried about what an AI assistant could access.",
+        "solution": "Open Agents and review the Permission scopes section. An assistant only does what you've granted, anything outside that is refused, and every action is recorded in the audit trail."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "What does 'Catch me up' do?",
+        "a": "It creates a short AI-written summary of the open conversation so you can quickly understand what's been discussed without reading every message."
+      },
+      {
+        "q": "Where do I find the summary button?",
+        "a": "In the chat header at the top of an open conversation, it's the sparkle icon with the tooltip 'Catch me up'. It only shows when your workspace has the feature enabled."
+      },
+      {
+        "q": "Do AI assistants read my messages automatically?",
+        "a": "No. An assistant can only do what you've explicitly granted it, such as reading messages in permitted conversations, and any request outside those permissions is refused before it runs."
+      },
+      {
+        "q": "How do I know what an AI assistant has done?",
+        "a": "The Agents area has an audit trail that records every action an assistant takes, with a timestamp and the exact permission it used. These records can't be edited or deleted."
+      },
+      {
+        "q": "Why don't I see any agents in the Agents area?",
+        "a": "In most setups no AI assistant is connected yet, so the page is informational and shows the safeguards that will apply once one is added."
+      },
+      {
+        "q": "Can I turn these AI features off or on myself?",
+        "a": "These features are controlled at the workspace level rather than from your personal settings, so reach out to your administrator if you'd like them enabled or disabled."
+      }
+    ],
+    "related": [
+      "messaging",
+      "meetings",
+      "settings",
+      "security"
+    ]
+  },
+  {
+    "id": "admin",
+    "title": "Admin and owner controls",
+    "overview": "Admin controls live inside each group and channel — there's no company-wide control panel. The person who creates a space is its owner and can promote trusted people to admin; owners and admins together rename the space, update its description and picture, and add or remove members. Everyone else is a regular member who can chat and share but not change settings.",
+    "howTo": [
+      "Create a group or channel from the chat list — you automatically become its owner.",
+      "Open Details by clicking the conversation name or the info (circle-i) button in the chat header.",
+      "Rename, change the description, or swap the picture from the manage screen (click the picture in the header) or inline in the Details panel — owners and admins only.",
+      "Add people with Add in the Details members section (or Add people in the header).",
+      "Make someone an admin with Make admin in the members list; the owner takes it back with Remove admin.",
+      "Remove a member with Remove in the members list — they lose access right away.",
+      "Leave a space from the bottom of the Details panel."
+    ],
+    "bestPractices": [
+      "Promote at least one other admin in busy spaces so management doesn't depend on one person being online.",
+      "Give every space a clear name, short description, and recognisable picture.",
+      "Keep membership current — add new teammates promptly and remove those who no longer need access.",
+      "Reserve admin rights for people you trust, since admins can rename, add/remove members, and promote others."
+    ],
+    "commonIssues": [
+      "Expecting a single company-wide admin dashboard — controls are per group and per channel, in each conversation's Details.",
+      "Looking for edit options as a regular member — only owners and admins see rename, picture, add, and remove.",
+      "Expecting an admin to remove or demote another admin — only the owner can; admins manage regular members only.",
+      "Trying to remove the owner — the owner can't be removed by anyone.",
+      "Confusing leaving with deleting — leaving only removes you; the space stays open for everyone else."
+    ],
+    "troubleshooting": [
+      {
+        "problem": "I don't see Make admin, Remove, or the edit pencils in a group.",
+        "solution": "Those controls only appear for the owner and admins. If you're a regular member, ask the owner or an existing admin to make the change or to promote you."
+      },
+      {
+        "problem": "I can't remove or demote another admin.",
+        "solution": "Admins can only manage regular members. Ask the owner to remove that person's admin rights or to remove them from the space."
+      },
+      {
+        "problem": "I tried to rename or update the picture and it didn't stick.",
+        "solution": "The change is only allowed for owners and admins. If you have permission and still see an error message, check your connection and try again."
+      },
+      {
+        "problem": "I can't change the group name, picture, or members at all.",
+        "solution": "Make sure you're opening a group or channel, not a direct message. One-to-one chats don't have these management options."
+      },
+      {
+        "problem": "Someone keeps being added back or causing problems and I want them gone for good.",
+        "solution": "Open Details, find them in the members list, and click Remove. If they were added by another admin, consider reviewing who has admin rights as well."
+      },
+      {
+        "problem": "I want to hand the space over to someone else before I leave.",
+        "solution": "Promote the person to admin so they can manage the space, then leave. A built-in one-click ownership handoff isn't available today."
+      }
+    ],
+    "faqs": [
+      {
+        "q": "What's the difference between an owner, an admin, and a member?",
+        "a": "The owner is the person who created the space and has the most control. Admins can rename the space, edit its description and picture, add people, remove regular members, and promote members to admin. Members can chat and share but can't change these settings."
+      },
+      {
+        "q": "How do I become an admin?",
+        "a": "An owner or existing admin promotes you using Make admin in the group's Details panel. You can't promote yourself."
+      },
+      {
+        "q": "Can an admin remove the owner or another admin?",
+        "a": "No. The owner can't be removed, and only the owner can take back an admin's rights. Admins can only manage regular members."
+      },
+      {
+        "q": "Is there a company-wide admin area to manage every user and space at once?",
+        "a": "No. Controls are set inside each group and channel through its Details panel. There isn't a separate global console for all conversations."
+      },
+      {
+        "q": "What happens when I remove someone from a group or channel?",
+        "a": "They lose access to that space and its conversation. You can add them back later if needed."
+      },
+      {
+        "q": "Do these controls apply to direct messages?",
+        "a": "No. Roles, adding, and removing apply to groups and channels. Direct messages are just between the two people involved."
+      }
+    ],
+    "related": [
+      "groups",
+      "channels",
+      "messaging",
+      "workspace",
+      "security"
+    ]
+  }
+]

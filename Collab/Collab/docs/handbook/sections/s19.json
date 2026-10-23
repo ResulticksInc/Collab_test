@@ -1,0 +1,317 @@
+[
+  {"t":"h","level":1,"text":"19. Future Roadmap"},
+
+  {"t":"p","text":"This section is the forward-looking chapter of the handbook. It defines where CoLab goes over the next five years, organized as three time horizons (Phase 1 near-term, Phase 2 mid-term, Phase 3 long-term) followed by themed improvement tracks. Every item here is anchored to the **current, real state of the codebase** documented in the preceding sections: it builds on what already exists, closes the honest gaps that earlier sections called out, and never proposes a feature as though it were already shipped. The intent is that an engineer joining in year three can read this section, compare it to `git log`, and see exactly which roadmap items landed, which slipped, and why."},
+
+  {"t":"p","text":"A guiding principle threads through the whole roadmap: **CoLab today is deliberately monolithic and low-infrastructure**, and that is a feature, not an accident. The frontend is one client-rendered SPA driven by a single god-component (`CoLabV1.tsx`, ~9,039 lines). The backend is one Express process with a thin-controller / fat-service split. State is local React state with `useRef` mirrors, not Redux. E2EE is native Web Crypto with zero added infra. The MCP and Agents modules are honest scaffolds. This simplicity is what let a small team ship messaging, calls, meetings, tasks, reminders, files, and optional DM E2EE. The roadmap's job is to add capability and scale **without throwing that simplicity away prematurely** — each phase earns the next phase's complexity rather than front-loading it."},
+
+  {"t":"callout","kind":"note","title":"How to read this roadmap","text":"Phases are sequenced by dependency and risk, not by calendar quarter. \"Near / mid / long\" map roughly to 0-12 months, 12-30 months, and 30-60 months, but the real gating factor is the upstream item each depends on. Where an item closes a gap that an earlier section flagged (e.g. forward secrecy, render performance, selective subscription), that gap is named explicitly so the two read as a matched pair."},
+
+  {"t":"diagram","kind":"pipeline","title":"Phased roadmap pipeline","steps":[
+    {"label":"Phase 1 — Near term","detail":"Harden and finish what is already built: enable hidden-but-built features (search, AI summarize), provision egress recording, ship the safety-number verification UI, decompose the god-component's hottest paths, finalize the Mumbai media region."},
+    {"label":"Phase 2 — Mid term","detail":"Scale and secure: E2EE forward secrecy (Double-Ratchet on the existing prekeys), selective-subscription paging for large meetings, multi-region SFU, real agent runtime wiring, MCP spec completeness."},
+    {"label":"Phase 3 — Long term","detail":"Platform maturity: media E2EE (insertable streams), horizontal multi-instance backend, group E2EE (sender keys), full Agen-X assistant surface, MCP marketplace and external connectors."}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"19.1 Phase 1 — Near Term (Harden and Finish)"},
+
+  {"t":"p","text":"Phase 1 contains **no new product pillars**. Its entire thesis is that CoLab already has more capability built than it currently exposes, and the cheapest, lowest-risk value comes from finishing and turning on what exists. Several features are coded, tested at the code level, and gated off only by an environment flag or a missing piece of infrastructure. Phase 1 flips those on deliberately, plus pays down the two structural debts that most threaten future velocity: the god-component render path and the silent failure modes in storage and recording."},
+
+  {"t":"h","level":3,"text":"19.1.1 Activate hidden-but-built features"},
+
+  {"t":"p","text":"Three features are fully implemented (component, route, service, table) but hidden behind default-off feature flags in `frontend/app/src/lib/config.ts`. Reactivation is literally flipping an environment variable — no code change. Phase 1 promotes each from hidden to default-on, behind a short observation window, with the work being product polish and load validation rather than engineering."},
+
+  {"t":"table","headers":["Feature","Current gate","What it already has","Phase 1 action"],"rows":[
+    [
+      "Global Search",
+      "`NEXT_PUBLIC_FEATURE_GLOBAL_SEARCH` off; hidden in `Rail.tsx` HIDDEN_NAV",
+      "`SearchView.tsx`, `routes/search.ts` (GET /?q), `searchService.ts`, MySQL FULLTEXT `idx_messages_fts` (migration 0017, BOOLEAN-MODE prefix)",
+      "Enable flag, validate FTS relevance + latency at scale, add result paging"
+    ],
+    [
+      "AI Summarize (\"Catch up\")",
+      "`NEXT_PUBLIC_FEATURE_AI_SUMMARY` off; gated in `ChatView.tsx`",
+      "`routes/ai.ts` POST /summarize, `aiService.ts` (membership-checked, skips E2EE rows, last 60 msgs)",
+      "Provision an LLM endpoint (`LLM_BASE_URL`), enable flag, set rate limits + cost guardrails"
+    ],
+    [
+      "Server-side Egress Recording",
+      "`EGRESS_ENABLED` off; egress container not provisioned",
+      "`recordingService.ts`, `meeting_recordings` table (0015), LiveKit Egress + S3 upload path, honest 503 when off",
+      "Provision the `livekit/egress` container (--profile recording), enable, validate MP4 capture + webhook finalize"
+    ]
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Why these are Phase 1, not Phase 3","text":"The risk profile is inverted from normal feature work: the code already exists and is already linted/typed into the build. The unknowns are operational (FTS query plans on large message tables, LLM cost and latency, egress worker capacity), not architectural. Phase 1 buys disproportionate user-visible value for a small, well-bounded effort."},
+
+  {"t":"h","level":3,"text":"19.1.2 Ship the E2EE safety-number verification UI"},
+
+  {"t":"p","text":"In plain language: when two people have an encrypted DM, they should be able to confirm out-of-band (e.g. read a number aloud) that no attacker is sitting in the middle. In engineering terms: `frontend/app/src/lib/e2ee/safety.ts` already implements `computeSafetyNumber` (SHA-256 over the two sorted identity public keys, rendered as Signal-style five-digit groups). The cryptographic primitive is done. What is missing — verified by grep, the function is referenced **only** inside the e2ee lib and by no component — is the UI that surfaces it: a panel in the conversation that displays the safety number, lets a user mark a peer verified, and re-flags it when a pinned key changes."},
+
+  {"t":"p","text":"This matters because the underlying MITM defense already exists and is fail-closed: `manager.ts` does TOFU pinning (`storeTrustedIdentity`), and on a pinned-key change it adds the device to `changedIdentities` and **refuses to encrypt** to it. The protection is real, but today it is invisible and unactionable — a user cannot see why a message won't send, nor confirm a key is genuine. The Phase 1 deliverable is the human-facing half of a security control whose machine-facing half is already shipped."},
+
+  {"t":"ul","items":[
+    "Surface `computeSafetyNumber` output in a per-conversation security panel.",
+    "Add an explicit \"verified\" state and persist it via the existing trusted-identity store.",
+    "On a key change (`changedIdentities`), show a clear, non-alarming re-verification prompt instead of a silent send failure.",
+    "Keep E2EE itself default-off (`NEXT_PUBLIC_E2EE_ENABLED`); this only completes the experience for deployments that enable it."
+  ]},
+
+  {"t":"h","level":3,"text":"19.1.3 Render-performance decomposition of the god-component"},
+
+  {"t":"p","text":"`CoLabV1.tsx` owns nearly all application state and renders the Rail, the sidebar, and the active view. Because dozens of `useState` values and the whole socket event stream funnel through it, a single socket event (a new message, a presence flip, a reaction) can re-render a very large tree. The codebase already shows the intended mitigation pattern — `React.memo`'d children (ChatView is memo'd), frozen `EMPTY_ARR`/`EMPTY_OBJ` constants for stable identities, and `useRef` mirrors so callbacks read fresh state without unstable dependencies — but it is applied unevenly. Phase 1 extends that pattern systematically across the hottest paths."},
+
+  {"t":"callout","kind":"warning","title":"Constraint: do not rewrite the architecture in Phase 1","text":"The temptation is to introduce Redux/Zustand or split CoLabV1 into a dozen components at once. That is a Phase 2/3 conversation (see 19.7 Architecture Improvements). Phase 1 is surgical: memoize the leaf components that re-render most, route high-frequency socket events (typing, presence) through refs and targeted setState rather than broad list refetches, and measure with React Profiler before/after. The goal is to remove the worst re-render storms without a risky structural rewrite."},
+
+  {"t":"h","level":3,"text":"19.1.4 Finalize the Mumbai media region"},
+
+  {"t":"p","text":"The Mumbai work (`docker-compose.mumbai.yml`, `infrastructure/livekit/livekit.mumbai.yaml`, `docs/DEPLOY_MUMBAI_REGION.md`) already exists as a config-only relocation of the media plane. Because a LiveKit SFU is not peer-to-peer (client → SFU → client), India users hitting a US-East SFU pay ~200-300ms RTT even in the same room; moving only the SFU + coturn + a LiveKit-state Redis to asia-south1 cuts that to ~20-40ms. Phase 1 promotes this from \"prepared\" to \"live\": provision the GCP box, open the firewall ports, re-point `turncollab.resulticks.com` DNS, set `LIVEKIT_SERVER_URL` and the nginx upstream, and verify off-network calls. This is the single highest-impact latency win available and requires no app code change — see 19.10 Performance Improvements."},
+
+  {"t":"h","level":3,"text":"19.1.5 Operational hardening of silent failure modes"},
+
+  {"t":"p","text":"Two known silent-failure paths flagged in earlier sections become observable in Phase 1, because a failure no operator can see is a failure that eventually becomes data loss or a support escalation."},
+
+  {"t":"table","headers":["Silent failure today","Consequence","Phase 1 fix"],"rows":[
+    ["`fileService.create` empty catch on S3 error → bytes quietly land in MySQL `data` LONGBLOB","If MinIO is down, uploads succeed but bloat the DB with no alert","Emit a structured warn log + metric on the fallback path; surface in DiagnosticsPanel health chips"],
+    ["Default MinIO root creds (`colabminio/colabminio123`) are weak and unenforced","Object store is trivially accessible if exposed","Add a boot guard (mirror of the JWT/LiveKit secret guard in `index.ts`) that refuses production boot on bundled-default storage creds"]
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"19.2 Phase 2 — Mid Term (Scale and Secure)"},
+
+  {"t":"p","text":"Phase 2 begins once Phase 1's hidden features are live, the Mumbai region is proven, and the render path is measurably calmer. Its theme is **earning the right to scale**: the features here add genuine new capability (forward secrecy, large-meeting support, a working agent runtime, a spec-complete MCP server) but each one builds directly on a primitive the codebase already has, rather than introducing a greenfield subsystem."},
+
+  {"t":"h","level":3,"text":"19.2.1 E2EE Phase 2 — forward secrecy"},
+
+  {"t":"p","text":"Today's E2EE is custom native-WebCrypto ECIES: per-message ephemeral P-256 ECDH gives confidentiality against the server, but **not** forward secrecy against theft of a device's long-term identity key — the `manager.ts` header documents this honestly. The fix is a ratchet (Double-Ratchet / X3DH-style key agreement). Critically, the groundwork is already laid: each device generates and publishes 100 one-time prekeys that are **dormant in v1**, kept precisely so a Phase-2 ratchet can adopt them with no schema migration (`e2ee_one_time_prekeys` table, migration 0022). Phase 2 turns these from reserved storage into an active X3DH handshake plus a symmetric ratchet, so a compromised long-term key no longer retroactively decrypts past messages."},
+
+  {"t":"callout","kind":"warning","title":"Do not overclaim the current state","text":"As of today there is no X3DH, no Double-Ratchet, no sealed-sender, and `signedPreKey` is null (P-256 ECDH keys cannot ECDSA-sign; the v1 trust anchor is the identity key via TOFU). The `SignalStore.ts` filename is a naming artifact, not the Signal library. Phase 2 is exactly the work that would make the \"Signal-like\" comparison accurate — until it ships, the handbook must keep describing v1 as native ECIES."},
+
+  {"t":"h","level":3,"text":"19.2.2 Selective-subscription paging for large meetings"},
+
+  {"t":"p","text":"Plain language: in a 100-person meeting, your laptop should not try to receive 100 video streams at once. Engineering: the LiveKit client SDK supports per-track subscription control, and the room is already configured with `adaptiveStream` and `dynacast` plus simulcast layers (h180/h360) in both `MeetingStage.tsx` and the call path in `CoLabV1.tsx`. What is missing is the **paging policy**: subscribe only to the visible tile grid plus the active speaker, unsubscribe off-screen participants, and page subscriptions as the user scrolls. This is the documented pending item (\"500-scale selective-subscription paging\") and is the gate for meetings beyond a few dozen active publishers."},
+
+  {"t":"diagram","kind":"flow","title":"Selective subscription in a large meeting","nodes":[
+    {"label":"Publishers","sub":"N cameras"},
+    {"label":"LiveKit SFU","sub":"dynacast + simulcast"},
+    {"label":"Client","sub":"subscribes to visible tiles + speaker only"}
+  ]},
+
+  {"t":"ul","items":[
+    "Drive `setSubscribed`/track subscription from the rendered tile viewport, not the full participant list.",
+    "Always subscribe the active speaker and any pinned participants; lazily subscribe on scroll.",
+    "Pick the simulcast layer (180p/360p/1080p) by tile size — small tiles take the lowest layer.",
+    "Combine with the Phase 1 render work so the DOM tile list itself virtualizes."
+  ]},
+
+  {"t":"h","level":3,"text":"19.2.3 Multi-region SFU"},
+
+  {"t":"p","text":"Phase 1 ships a single relocated region (Mumbai). Phase 2 generalizes to **multiple media regions** so users route to the nearest SFU. The LiveKit configs already prove the per-region pattern (`livekit.live.yaml`, `livekit.mumbai.yaml`, `livekit.prod.yaml`, each with its own `node_ip`/`use_external_ip` and optional room-state Redis). The Phase 2 decision point is build-vs-buy: either operate several self-hosted regional SFUs with cross-region room federation, or adopt **LiveKit Cloud** (already used today in `docker-compose.cloud.yml` for the public demo) to outsource regional routing entirely. This is covered in depth in 19.8 Scalability Improvements."},
+
+  {"t":"h","level":3,"text":"19.2.4 Real agent runtime"},
+
+  {"t":"p","text":"The `agents/` module is an explicit scaffold: `companion.dailyBriefing`, `summarizeConversation`, and `workspaceInsights` all `throw new Error(\"not implemented (Sprint 6)\")`, the file is imported nowhere, and it wires to no model. Meanwhile the **real** working AI lives separately in `backend/app/src/services/aiService.ts` (branded \"Agen-X\") behind `routes/ai.ts`. Phase 2's agent work is to give the scaffold a real runtime by reusing the existing, membership-safe AI service: an execution loop that calls `aiService` for reasoning and the MCP tool layer for actions, with a memory store added. See 19.12 Agent Improvements."},
+
+  {"t":"h","level":3,"text":"19.2.5 MCP spec completeness"},
+
+  {"t":"p","text":"CoLab already ships a real hand-rolled MCP server (`mcp/app/src`) with 20 tools, 7 resources, 1 prompt, and a backend gateway that proxies to the REST API with a Bearer token. But it is a partial implementation: no `initialize` handshake, no notifications/batching, the SSE transport is discovery-only (no `tools/call`), `resources/read` has no URI-template matching, and `writeError` drops the request id. Phase 2 brings it to spec — see 19.13 MCP Improvements."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"19.3 Phase 3 — Long Term (Platform Maturity)"},
+
+  {"t":"p","text":"Phase 3 is where CoLab stops being a single-deployment product and becomes a platform. These items are the most architecturally invasive and are deliberately last, because each one is only safe once the corresponding Phase 1/2 foundation is proven. Estimating Phase 3 precisely five years out would be false precision; the items below are directional commitments, not dated promises."},
+
+  {"t":"table","headers":["Phase 3 item","Builds on","Why it is long-term"],"rows":[
+    ["Media E2EE (insertable streams)","DM E2EE crypto primitives; LiveKit SFU","SFU sees plaintext today; per-frame E2EE needs LiveKit insertable-streams + key distribution and degrades some SFU features (server-side recording, transcription)"],
+    ["Group / channel E2EE","`distributeGroupSenderKey` no-op placeholder (Phase 2 stub already in `manager.ts`)","Requires a sender-key (MLS-style) scheme and membership-change rekeying on top of forward secrecy"],
+    ["Horizontal multi-instance backend","Redis adapter + huddleStore already Redis-backed; userRoom fan-out already multi-instance-safe","In-memory state (rate limiters, callTimers, sendBuckets, recentIncoming) must move to a shared store first"],
+    ["Full Agen-X assistant surface","`api.askAgent` endpoint exists but has zero UI; aiService ask() already supports styles","Needs the Phase 2 agent runtime + MCP completeness + a real assistant UX"],
+    ["MCP marketplace + external connectors","Spec-complete MCP server (Phase 2)","Multi-tenant auth, capability sandboxing, and a trust/governance model for third-party tools"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Multi-instance readiness is already partly there","text":"A frequently-overlooked strength: the realtime layer was designed for horizontal scaling before it was needed. Per-user `user:<uid>` room fan-out (not global `io.emit`) works across the Redis adapter, the adapter swap is gated to finish before any socket joins a room, and durable huddle/hand state lives in `huddleStore` (Redis). The remaining blocker for multi-instance is the *intentionally* per-process ephemeral state (rate-limit windows, call no-answer timers, send buckets). Phase 3 backend horizontal scaling is mostly about relocating those, not re-architecting the socket layer."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"19.4 Themed Improvement Tracks — Overview"},
+
+  {"t":"p","text":"The phases above answer \"when\"; the tracks below answer \"along which axis.\" A roadmap item usually belongs to one phase and one track — for example, selective-subscription paging is Phase 2 and a Scalability item. The tracks are intentionally narrow and tied to concrete code so they cannot drift into vague aspiration."},
+
+  {"t":"diagram","kind":"grid","title":"Improvement tracks","cols":3,"boxes":[
+    {"label":"Architecture","sub":"decompose CoLabV1, state mgmt"},
+    {"label":"Scalability","sub":"multi-region SFU, meeting paging"},
+    {"label":"Security","sub":"E2EE FS, safety #, media E2EE"},
+    {"label":"Performance","sub":"Mumbai region, render"},
+    {"label":"AI + Agents","sub":"runtime, assistant surface"},
+    {"label":"MCP","sub":"spec completeness, connectors"}
+  ]},
+
+  {"t":"h","level":2,"text":"19.7 Architecture Improvements"},
+
+  {"t":"p","text":"The architectural debt is concentrated in two places: the frontend god-component and the absence of formal state management. Both are survivable today and both will become velocity bottlenecks as the team and feature set grow."},
+
+  {"t":"h","level":3,"text":"19.7.1 Decompose CoLabV1"},
+
+  {"t":"p","text":"`CoLabV1.tsx` (~9,039 lines) holds the `mode` switch, the call/meeting connect flow, two views defined inline (ActivityView ~line 5003, DashboardView ~line 5477), the incoming-call ring UI, and dozens of state slices. The decomposition is staged so it never requires a big-bang rewrite: (1) Phase 1 memoizes leaf components and stabilizes props; (2) Phase 2 extracts the inline views into their own files and lifts cross-cutting state (theme/settings, active conversation, socket wiring) into purpose-built modules; (3) Phase 3 evaluates whether a formal store is warranted."},
+
+  {"t":"h","level":3,"text":"19.7.2 State management decision"},
+
+  {"t":"p","text":"CoLab uses local React state only — no Redux/Zustand/Jotai, almost no Context (one internal scroll context in ChatView, plus the module-level pub/sub log buffer). This is a real strength for a single-author codebase and the roadmap does not casually discard it. The track instead defines an explicit **trigger condition**: introduce a formal store only when (a) prop drilling from CoLabV1 into child views demonstrably blocks a feature, or (b) the memo/ref pattern can no longer contain re-render storms after the Phase 1 work. If neither trigger fires, the architecture stays as-is — a deliberate non-goal."},
+
+  {"t":"callout","kind":"tip","title":"Architecture non-goals (kept simple on purpose)","text":"The roadmap explicitly does NOT plan: a microservices split of the Express backend, a GraphQL layer over the REST API, or replacing the same-origin Next rewrite proxy. The single-process backend with thin controllers + fat services, the REST envelope `{ok,data,error}`, and the same-origin `/api` + `/socket.io` + `/livekit` proxy model are load-bearing simplicities that fixed real bugs (cross-host attachments, realtime-only-on-refresh). They stay."},
+
+  {"t":"h","level":2,"text":"19.8 Scalability Improvements"},
+
+  {"t":"p","text":"Scalability splits cleanly into the media plane (SFU) and the application plane (backend/socket/DB). The media plane is the more urgent and the better-prepared."},
+
+  {"t":"h","level":3,"text":"19.8.1 Multi-region SFU vs LiveKit Cloud"},
+
+  {"t":"p","text":"Because a LiveKit SFU is not peer-to-peer, geographic distance to the SFU directly sets call latency. Phase 1 relocates one region (Mumbai); Phase 2 must serve users in multiple geographies. There are two viable paths, and the codebase already contains a working example of each."},
+
+  {"t":"table","headers":["Option","Evidence it is viable today","Trade-off"],"rows":[
+    ["Self-hosted multi-region SFUs","Per-region YAMLs (`livekit.live/mumbai/prod.yaml`), each with own `node_ip` + optional room-state Redis; Mumbai runbook proves the relocation","Full control + data residency, but you operate N regions, certs, firewalls, and cross-region room routing"],
+    ["LiveKit Cloud","`docker-compose.cloud.yml` already runs the public demo on LiveKit Cloud + Cloudflare Tunnel","Outsourced global routing + scale, but a third-party dependency and per-minute cost; revisit data-residency requirements"]
+  ]},
+
+  {"t":"p","text":"The recommendation is a hybrid: keep self-hosted regions where data residency or cost demands it (e.g. the corporate `collab.resulticks.com` deployment), and use LiveKit Cloud for public or burst capacity. Either way, the app code does not change — media routing is config/env only, exactly as the Mumbai work demonstrated."},
+
+  {"t":"h","level":3,"text":"19.8.2 Large-meeting client scale (selective subscription)"},
+
+  {"t":"p","text":"Covered as a Phase 2 item in 19.2.2. The scalability framing: SFU server capacity is one ceiling, but the **client** receive-side is a separate and often lower ceiling. Selective subscription paging is what lets a single laptop sit in a 100+ participant meeting without saturating its decoder and downlink. It is a prerequisite for any \"webinar / all-hands\" scale beyond a few dozen active cameras."},
+
+  {"t":"h","level":3,"text":"19.8.3 Application-plane horizontal scaling"},
+
+  {"t":"p","text":"The backend is one process today. The path to N processes behind a load balancer is mostly cleared (see the Phase 3 callout): the Redis socket adapter, userRoom fan-out, and Redis-backed huddleStore/token-blocklist already work multi-instance. The concrete remaining work is relocating per-process ephemeral state — `callTimers`, `sendBuckets`, `recentIncoming`, and the in-memory rate-limit windows — into Redis, and making the scheduled-message poller / recording-retention / stale-call sweepers leader-elected so they run on exactly one instance."},
+
+  {"t":"h","level":2,"text":"19.9 Security Improvements"},
+
+  {"t":"p","text":"Security improvements layer onto an already-honest baseline: scrypt password hashing with constant-time compare, a server-authoritative credential policy, JWT (7-day default TTL) with a Redis/in-memory token blocklist for revocation, in-memory rate limiting plus a per-user socket send bucket, a production secret boot-guard, security headers, and optional default-off DM E2EE. The roadmap extends the cryptographic story and closes the named gaps."},
+
+  {"t":"table","headers":["Security item","Phase","Current state being improved"],"rows":[
+    ["Safety-number verification UI","1","`computeSafetyNumber` implemented in `safety.ts` but wired into no component"],
+    ["E2EE forward secrecy (Double-Ratchet)","2","Per-message ephemeral ECDH only; long-term key theft is not forward-secret; 100 dormant OTPs reserved for X3DH"],
+    ["Socket-handshake blocklist re-check","2","Socket auth verifies the JWT but does NOT re-check the token blocklist (only HTTP middleware does)"],
+    ["Media E2EE (insertable streams)","3","Calls/meetings media is plaintext to the SFU; LiveKit SFU is not end-to-end encrypted"],
+    ["Group / channel E2EE (sender keys)","3","`distributeGroupSenderKey` is a no-op placeholder; E2EE is DM/self only"],
+    ["TURN credential rotation","2","A real static TURN password is hardcoded in `turnserver.conf` and `DEPLOY.md` (rotation candidate)"]
+  ]},
+
+  {"t":"h","level":3,"text":"19.9.1 Forward secrecy, in depth"},
+
+  {"t":"p","text":"Threat model: an attacker who today steals a device's non-extractable identity key cannot get it out of IndexedDB via JS/XSS (it is a non-extractable CryptoKey), but a sufficiently privileged device compromise plus captured ciphertext could decrypt past DMs because the long-term key participates in every message's key agreement. Forward secrecy breaks that link by ratcheting per-message keys forward and discarding old ones, so a key captured at time T cannot read messages from before T. The data model is ready (dormant OTPs, per-device conversation keys with `key_version`); the work is the protocol, not the schema."},
+
+  {"t":"h","level":3,"text":"19.9.2 Media E2EE, with an honest cost"},
+
+  {"t":"callout","kind":"risk","title":"Media E2EE trades features for privacy","text":"Encrypting call/meeting media end-to-end (LiveKit insertable streams) hides media from the SFU — but it also breaks any server-side feature that needs plaintext frames: server-side egress recording, future transcription, and server-side noise/quality processing. This is a genuine product trade-off, not just an engineering task. It is correctly placed in Phase 3 so the recording and AI tracks can settle first and the trade-off can be made with full information."},
+
+  {"t":"h","level":2,"text":"19.10 Performance Improvements"},
+
+  {"t":"p","text":"Two performance levers dominate: media latency (network/geographic) and UI responsiveness (render). They are independent and both already have a clear lead item."},
+
+  {"t":"h","level":3,"text":"19.10.1 Mumbai media region (latency)"},
+
+  {"t":"p","text":"This is the single biggest measured latency win and is detailed as a Phase 1 deliverable in 19.1.4. The numbers from the live debugging that motivated it: US-East SFU + India users ≈ 200-300ms even same-room (because the SFU relays, it is not P2P); asia-south1 SFU ≈ 20-40ms. The app, DB, messaging, files, and app-Redis stay on the US-East box; only the media engine (SFU + coturn + a LiveKit-state Redis) moves; signalling still flows through the US-East nginx `/livekit` proxy. Zero app code change."},
+
+  {"t":"diagram","kind":"flow","title":"Why moving the SFU cuts latency (SFU is not P2P)","nodes":[
+    {"label":"India user","sub":"sends media"},
+    {"label":"Regional SFU","sub":"asia-south1 ~20-40ms"},
+    {"label":"India user","sub":"receives media"}
+  ]},
+
+  {"t":"h","level":3,"text":"19.10.2 Render performance (responsiveness)"},
+
+  {"t":"p","text":"Detailed in 19.1.3 and 19.7.1. The user-felt symptom is jank when a high-frequency socket event (typing, presence, reactions in a busy conversation) re-renders the CoLabV1 tree. The fix combines memoization of leaf components, routing ephemeral high-frequency events through refs + targeted setState instead of broad refetches, and — for large meetings — virtualizing the participant tile list so the DOM does not hold 100 tiles. All three are additive and measurable with the React Profiler."},
+
+  {"t":"h","level":3,"text":"19.10.3 Other performance candidates"},
+
+  {"t":"ul","items":[
+    "Message-list windowing in `ChatView.tsx` for very long conversations (keyset pagination already exists server-side via `?before&limit`).",
+    "Avatar/wallpaper payload size — they are stored as downscaled JPEG data-URLs in the DB; monitor row width as adoption grows.",
+    "FTS query-plan validation when Global Search ships (Phase 1) on large `messages` tables.",
+    "S3 streaming downloads already avoid OOM by piping rather than buffering — keep this invariant when recording playback scales."
+  ]},
+
+  {"t":"h","level":2,"text":"19.11 AI Improvements"},
+
+  {"t":"p","text":"AI in CoLab today is narrow but real. The working implementation is `aiService.ts` (\"Agen-X\") behind `routes/ai.ts`, exposing `POST /ai/summarize` and `POST /ai/ask` against an OpenAI-compatible chat-completions endpoint, gated by `LLM_BASE_URL` (returns `AI_DISABLED` 503 when unset). Only summarize (\"Catch up\") is surfaced in the UI, behind the default-off `aiSummary` flag; `api.askAgent` exists in the client but is called from no component. E2EE messages are excluded from summaries by design."},
+
+  {"t":"table","headers":["AI item","Phase","From → To"],"rows":[
+    ["Enable summarize in production","1","Built + flagged off → provisioned LLM, flag on, cost/rate guardrails"],
+    ["Ship the Agen-X \"ask\" assistant UI","2-3","`api.askAgent` endpoint with zero UI → a real assistant surface (ask() already supports concise/detailed/balanced via `agentStyle`)"],
+    ["Membership-safe context expansion","2","Summarize uses last 60 messages, membership-checked → richer, still IDOR-safe, still E2EE-excluded context windows"],
+    ["AI features over encrypted DMs","3+","Skipped entirely today (server-blind) → only feasible with client-side inference; likely remains out of scope"]
+  ]},
+
+  {"t":"callout","kind":"warning","title":"AI privacy invariant must survive every phase","text":"Two invariants in `aiService.ts` are non-negotiable as AI grows: summarize/ask enforce conversation membership (no IDOR), and E2EE-encrypted rows (`encryptionVersion > 0`) are NEVER sent to the model. Any future AI feature must preserve both — an AI feature that reads messages the requester cannot see, or that exfiltrates E2EE plaintext to an LLM, is a security regression regardless of how useful it is."},
+
+  {"t":"h","level":2,"text":"19.12 Agent Improvements"},
+
+  {"t":"p","text":"Be precise about the starting line: the `agents/` module is a reserved namespace, not a functioning agent system. It is 3 files; `companion.dailyBriefing/summarizeConversation/workspaceInsights` all `throw new Error(\"not implemented (Sprint 6)\")`; it imports nothing and is imported nowhere; it has no model wiring, no memory, no execution loop, no planner. `AgentsView.tsx` is a static governance page (\"No agents connected\", \"MCP not configured\"), hidden by default behind the `agents` flag. The roadmap turns this stub into a real runtime — incrementally, reusing existing safe primitives rather than building a parallel AI stack."},
+
+  {"t":"diagram","kind":"layered","title":"Target agent runtime (reuses existing pieces)","layers":[
+    {"label":"Agent runtime (new, Phase 2)","items":["Execution loop","Memory store"]},
+    {"label":"Reasoning (exists)","items":["aiService.ts (Agen-X)","membership-safe + E2EE-excluded"]},
+    {"label":"Actions (exists)","items":["MCP tools → REST gateway","Bearer-token, audited"]}
+  ]},
+
+  {"t":"ol","items":[
+    "Phase 2: replace the `throw` stubs with a real execution loop that calls `aiService` for reasoning and the MCP tool layer for actions; add a memory store.",
+    "Phase 2: enforce the stated governance model — an agent reaches the workspace ONLY through the audited REST/MCP gateway, never direct DB or network access.",
+    "Phase 3: surface agents in `AgentsView.tsx` for real (briefings, conversation summaries, workspace insights) behind explicit per-deployment opt-in.",
+    "Throughout: keep the same membership + E2EE-exclusion invariants the AI track relies on."
+  ]},
+
+  {"t":"callout","kind":"note","title":"Honesty marker","text":"Until Phase 2 lands, the handbook must keep describing agents as ABSENT/scaffold. The roadmap is the only place agents are spoken of as a future capability; nowhere else in this document should they read as shipped."},
+
+  {"t":"h","level":2,"text":"19.13 MCP Improvements"},
+
+  {"t":"p","text":"CoLab's MCP server is further along than the agents module: `mcp/app/src` is a real, hand-rolled JSON-RPC server (not the official `@modelcontextprotocol/sdk`) with 20 tools, 7 resources, 1 prompt, two transports (stdio + SSE), and a backend gateway that proxies every call to the REST API with a Bearer token and optional tenant header. The governance model is sound: an agent never gets direct DB/network access, only the audited REST surface. But the implementation is partial, and it is wired into no running deployment (`AgentsView` reports \"No MCP server is configured\")."},
+
+  {"t":"table","headers":["MCP gap today","Phase 2 improvement"],"rows":[
+    ["No `initialize` handshake; not spec-complete","Implement the MCP initialize/capabilities handshake"],
+    ["No notifications, no batching","Add JSON-RPC notifications + batch support"],
+    ["SSE transport is discovery-only (no `tools/call`)","Add tool invocation over SSE (or adopt streamable HTTP)"],
+    ["`resources/read` is exact-URI only","Add URI-template matching for parameterized resources (e.g. `messages://threads`)"],
+    ["`writeError` always passes `id=undefined` (drops request id)","Propagate the request id in error responses"],
+    ["Not run by any compose file; no start script","Containerize as a first-class service and wire into deployment"]
+  ]},
+
+  {"t":"p","text":"Phase 3 extends a spec-complete server outward: external/third-party MCP connectors, a capability marketplace, and the multi-tenant auth and sandboxing those require. This is explicitly gated behind Phase 2 spec completeness — exposing a partial server to third parties would be a security and compatibility liability."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"19.14 Roadmap Summary Matrix"},
+
+  {"t":"p","text":"The full roadmap on one page, so a reader can see at a glance which track and phase every item lives in and what real code each one extends. This table is the canonical index; the prose above is the rationale."},
+
+  {"t":"table","headers":["Item","Track","Phase","Grounded in"],"rows":[
+    ["Enable Global Search","Scalability","1","`SearchView`, `searchService`, FTS 0017"],
+    ["Enable AI Summarize","AI","1","`aiService`, `routes/ai.ts`"],
+    ["Provision egress recording","Performance","1","`recordingService`, table 0015"],
+    ["Safety-number UI","Security","1","`e2ee/safety.ts`"],
+    ["Render decomposition (leaf memo)","Architecture/Perf","1","CoLabV1 memo pattern"],
+    ["Finalize Mumbai region","Performance","1","`docker-compose.mumbai.yml`"],
+    ["Surface silent-failure metrics","Architecture","1","fileService fallback, MinIO creds"],
+    ["E2EE forward secrecy","Security","2","dormant OTPs (0022), `manager.ts`"],
+    ["Selective-subscription paging","Scalability","2","LiveKit adaptiveStream/dynacast"],
+    ["Multi-region SFU / LiveKit Cloud","Scalability","2","per-region YAMLs, cloud compose"],
+    ["Socket blocklist re-check","Security","2","socket.ts auth middleware"],
+    ["TURN credential rotation","Security","2","`turnserver.conf` static cred"],
+    ["Real agent runtime","Agents","2","`agents/` scaffold + `aiService`"],
+    ["MCP spec completeness","MCP","2","`mcp/app/src` transports"],
+    ["CoLabV1 view extraction","Architecture","2","inline ActivityView/DashboardView"],
+    ["Media E2EE (insertable streams)","Security","3","LiveKit SFU media path"],
+    ["Group/channel E2EE","Security","3","`distributeGroupSenderKey` stub"],
+    ["Horizontal multi-instance backend","Scalability","3","Redis adapter + ephemeral-state move"],
+    ["Full Agen-X assistant surface","AI/Agents","3","`api.askAgent` (no UI yet)"],
+    ["MCP marketplace + connectors","MCP","3","spec-complete MCP server"]
+  ]},
+
+  {"t":"callout","kind":"tip","title":"The roadmap's north star","text":"Every Phase 1 item finishes something already built. Every Phase 2 item extends a primitive the code already has. Every Phase 3 item is a platform-level commitment gated behind a proven Phase 2 foundation. If a future contributor proposes work that fits none of these — a from-scratch subsystem with no anchor in the current code — that is a signal to either find the anchor or push it out a phase. CoLab earns complexity; it does not front-load it."},
+
+  {"t":"p","text":"Closing note on honesty: this section names what is missing as plainly as what is planned — no forward secrecy yet, no media E2EE, agents that throw `not implemented`, an MCP server that is real but partial and unwired, AI that is one summarize button behind a flag, and search that is built but hidden. That candor is the point. A five-year roadmap is only useful if year-three readers can trust that year-zero authors told the truth about the starting line."}
+]

@@ -1,0 +1,38 @@
+# Docker Compose OVERRIDE for the PUBLIC DEMO:
+#   • Media   → LiveKit Cloud (handles all NAT traversal: mobile, home, corporate WiFi)
+#   • Ingress → Cloudflare Tunnel (public HTTPS URL, no open ports, no VPN, no public IP)
+#   • DB      → local MySQL container from docker-compose.yml (fast)
+#
+# Usage (list services explicitly so the bundled self-hosted livekit/coturn are
+# NOT started, since LiveKit Cloud is used instead):
+#   cp .env.demo .env        # then fill in the LiveKit Cloud + Cloudflare values
+#   docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build \
+#       db redis minio backend frontend cloudflared
+#
+# If you omit the service list, the base file's livekit/coturn also start but sit
+# unused (browser + backend talk to LiveKit Cloud). Harmless, just wasteful.
+
+services:
+  backend:
+    environment:
+      # Point the backend's token minting + server SDK at LiveKit Cloud.
+      # Both come from .env (wss://<your-project>.livekit.cloud).
+      LIVEKIT_WS_URL: ${LIVEKIT_WS_URL}
+      LIVEKIT_SERVER_URL: ${LIVEKIT_SERVER_URL}
+      # The browser connects to the public tunnel URL; the Socket.IO/HTTP CORS
+      # check must allow it. Set CORS_ORIGINS to your Cloudflare URL in .env.
+      CORS_ORIGINS: ${CORS_ORIGINS}
+
+  # Cloudflare Tunnel agent. Makes an OUTBOUND connection to Cloudflare's edge and
+  # serves the app at your public https URL. In the Cloudflare Zero Trust dashboard,
+  # create a tunnel, add a public hostname, and point its service at:
+  #     http://frontend:3000
+  # (cloudflared reaches the frontend over the internal compose network).
+  # Then paste the tunnel token into CLOUDFLARE_TUNNEL_TOKEN in .env.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: colab-cloudflared
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
+    depends_on:
+      - frontend

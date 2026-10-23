@@ -1,0 +1,60 @@
+/* Accent theme → the whole refreshed UI.
+   Settings › Appearance › Accent Color sets body.accent-<key>. Everything in the
+   *-refresh.css files reads these --ax-* tokens (and the rail/chat chrome reads
+   --nav-*), so the chosen accent recolours the entire platform. Default
+   (Collab Purple / "indigo") keeps the original brand look. */
+:root, body {
+  --ax: #6d28d9;
+  --ax-2: #8b5cf6;
+  --ax-3: #c4b5fd;
+  --ax-bg: #f5f3ff;
+  --ax-bg2: #ede9fe;
+  --ax-line: #e4dcff;
+}
+body.dark {
+  --ax: #8b5cf6;
+  --ax-2: #a78bfa;
+  --ax-3: #6d4fc9;
+  --ax-bg: rgba(139,92,246,.10);
+  --ax-bg2: rgba(139,92,246,.18);
+  --ax-line: rgba(139,92,246,.28);
+}
+/* non-default accents: derive the whole family from the accent's own hue */
+body[class*="accent-"]:not(.accent-purple):not(.accent-indigo) {
+  --ax: color-mix(in srgb, var(--ac) 86%, #000);
+  --ax-2: var(--ac);
+  --ax-3: color-mix(in srgb, var(--ac) 40%, #fff);
+  --ax-bg: color-mix(in srgb, var(--ac) 7%, #fff);
+  --ax-bg2: color-mix(in srgb, var(--ac) 14%, #fff);
+  --ax-line: color-mix(in srgb, var(--ac) 24%, #fff);
+  --nav-badge: var(--ax);
+  --nav-active-fg: var(--ax);
+  --nav-active-bg: var(--ax-bg2);
+  --brand-ink: var(--ax);
+  --brand-name: var(--ax);
+  --brand-soft: var(--ax-bg2);
+}
+body.dark[class*="accent-"]:not(.accent-purple):not(.accent-indigo) {
+  --ax: color-mix(in srgb, var(--ac) 80%, #fff);
+  --ax-2: color-mix(in srgb, var(--ac) 65%, #fff);
+  --ax-3: color-mix(in srgb, var(--ac) 55%, #000);
+  --ax-bg: color-mix(in srgb, var(--ac) 12%, transparent);
+  --ax-bg2: color-mix(in srgb, var(--ac) 20%, transparent);
+  --ax-line: color-mix(in srgb, var(--ac) 30%, transparent);
+  --nav-badge: var(--ac);
+  --nav-active-fg: var(--ax);
+  --nav-active-bg: var(--ax-bg2);
+  --brand-ink: var(--ax);
+  --brand-name: var(--ax);
+  --brand-soft: var(--ax-bg2);
+}
+
+/* CTA / Join / Send buttons (v1.css "brand gradient" sweep reads --brand-cta-gradient)
+   and the default sent-message bubble follow the chosen accent. A custom bubble
+   colour (set inline on <body>) still wins over the bubble rules below. */
+body[class*="accent-"]:not(.accent-purple):not(.accent-indigo) {
+  --brand-cta-gradient: linear-gradient(90deg, var(--ax) 0%, var(--ax-2) 100%);
+  --me-bub-1: color-mix(in srgb, var(--ac) 78%, #fff);
+  --me-bub-2: var(--ac);
+  --me-bub-3: color-mix(in srgb, var(--ac) 78%, #000);
+}

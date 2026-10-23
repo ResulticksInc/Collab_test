@@ -1,0 +1,436 @@
+[
+  {"t":"h","level":1,"text":"6. Database Architecture"},
+
+  {"t":"p","text":"This section is the authoritative reference for CoLab's persistence layer. Everything described here is grounded in the real ordered DDL under `database/migrations/0001_init.sql` through `database/migrations/0047_meeting_recurrence_rule.sql` (47 files), the consolidated read-only reference at `database/schema/schema.sql`, the migration runner at `database/src/bootstrap.ts` (entry `database/src/migrate.ts`), and the first-boot provisioning script `database/initdb/01-create-databases.sql`. Where the broader recon notes disagreed with the actual files, the files win and the discrepancy is called out explicitly."},
+
+  {"t":"p","text":"CoLab uses a **single MySQL 8 / InnoDB / utf8mb4** relational database as its only durable store. There is no second database, no document store, and no separate analytics warehouse. Redis (when configured) holds *ephemeral* live state — token blocklist, huddle/hand state, the Socket.IO adapter bus — never the source of truth. MinIO/S3 holds file *bytes* (see Section on Storage), but every row of metadata, every message, every membership, and every audit record lives in MySQL. Understanding this one database is therefore the key to understanding what CoLab durably knows."},
+
+  {"t":"callout","kind":"note","title":"How to read this section","text":"Sub-section 6.2 covers engineering conventions (engine, charset, ID strategy). 6.3 explains the migration history and the idempotent runner. 6.4 explains the soft-delete model. 6.5 is the table-by-table catalog grouped by domain. 6.6 gives ER-style relationship diagrams. 6.7 covers how each major entity is stored. 6.8 documents triggers, indexes, failure modes, and troubleshooting."},
+
+  {"t":"h","level":2,"text":"6.1 Architectural Overview"},
+
+  {"t":"p","text":"In plain language: CoLab keeps one well-structured filing cabinet. Each kind of thing — a person, a conversation, a message, a meeting, a task — has its own drawer (table). Drawers are cross-referenced by stable identifiers (foreign keys) so the system can answer questions like \"which messages belong to this conversation\" or \"who is a member of this group\" without duplicating data. In engineering language: it is a normalized relational schema on MySQL 8 InnoDB, with referential integrity enforced by foreign keys, hot read paths backed by purpose-built composite indexes, message search backed by an InnoDB FULLTEXT index, and two governance/safety invariants (no past meetings, append-only audit log) enforced by database triggers as defense-in-depth on top of application checks."},
+
+  {"t":"diagram","kind":"layered","title":"Where the database sits","layers":[
+    {"label":"Application services","items":["messageService","meetingService","callService","taskService"]},
+    {"label":"DB access layer","items":["getDb(config) -> repository namespaces","mysql2/promise pool, pg-compat q() shim"]},
+    {"label":"MySQL 8 / InnoDB","items":["~35 tables","FKs + indexes + triggers","schema_migrations ledger"]}
+  ]},
+
+  {"t":"p","text":"Services never write SQL string literals scattered through route handlers. The driver `database/src/drivers/mysql.ts` exposes the database as an object of **repository namespaces** — `db.users`, `db.conversations`, `db.messages`, `db.bookmarks`, `db.meetings`, `db.folders`, `db.reminders`, `db.calls`, `db.tasks`, `db.invites`, `db.settings`, `db.meetingMessages`, `db.files`, `db.fileShares`, `db.audit`, `db.recordings`, `db.voicemails`, `db.e2ee`, `db.scheduledMessages`, `db.notifications`, `db.blocks` — plus `driver:'mysql'` and the raw `pool`. Services call methods like `db.messages.listForConversation(...)` or `db.conversations.isMember(...)`. This keeps SQL in one place and makes the membership/authorization gates (which throw `err.status = 403`) consistent across every caller."},
+
+  {"t":"h","level":2,"text":"6.2 Engine, Charset, and Conventions"},
+
+  {"t":"table","headers":["Convention","Choice","Why it matters"],"rows":[
+    ["Engine","InnoDB (all tables)","Row-level locking, transactions, and foreign keys. The atomic call busy-check relies on `SELECT ... FOR UPDATE` row locks."],
+    ["Charset / collation","utf8mb4 / utf8mb4_unicode_ci","Full Unicode including emoji in message bodies, names, and reactions. The database, the connection, and the demo DB are all created utf8mb4."],
+    ["Primary keys","Mostly `VARCHAR(36)` app-generated UUIDs","IDs are minted in the application, so a row's identity is known before INSERT (enables optimistic UI and avoids a round-trip for the generated key). Exception: `audit_log.id` is `BIGINT AUTO_INCREMENT`."],
+    ["Timestamps","`DATETIME` default `CURRENT_TIMESTAMP`; UTC","Stored and interpreted as UTC (the pool forces UTC). `messages.created_at` was widened to `DATETIME(3)` millisecond precision in migration 0042 for correct keyset ordering."],
+    ["JSON columns","Native MySQL `JSON`","Used where structure is variable: `messages.reactions_json`, `messages.file_json`, `messages.voice_json`, `user_settings.data`, `tasks.labels`, `audit_log.meta_json`, E2EE key blobs."],
+    ["Booleans","`BOOLEAN` / `TINYINT(1)`","MySQL has no native boolean; these are tinyints. The soft-delete flag is explicitly `TINYINT(1) NOT NULL DEFAULT 0`."]
+  ]},
+
+  {"t":"p","text":"**Connection layer.** `getDb(config)` (in `database/src/index.ts`) memoizes a single `createMysqlDb` instance built from `config.database.url`. The pool is `mysql2/promise`, IPv4-forced (Node resolves `localhost` to `::1` first, which Docker port-forwarding often does not answer — a classic spurious `ECONNREFUSED`), utf8mb4, UTC, with `connectionLimit` from `DB_POOL_LIMIT` (default 20). Internally a `q(sql, params)` helper provides a **PostgreSQL-compatibility shim**: `translate()` rewrites `= ANY(...)` to `IN (...)` and `ILIKE` to `LIKE`; `bind()` rewrites `$n` placeholders to `?`; `normParam` coerces ISO strings to `Date`. This shim is a legacy artifact of an earlier Postgres-flavored query style; the live database is MySQL only. Note the One API gateway client (`oneApiClient.ts`) is **inert** — all runtime SQL goes through this direct pool."},
+
+  {"t":"callout","kind":"note","title":"Two databases are created, one is used","text":"`database/initdb/01-create-databases.sql` runs ONCE on an empty data volume: it ensures the `colab_demo` database exists (the primary `colab` DB is created by the container's `MYSQL_DATABASE`), creates the `colab`@`%` application user, and grants it ALL privileges on both `colab` and `colab_demo`. The `%` host wildcard is required because Docker forwards host connections through the bridge gateway. In normal operation only one schema is live; `colab_demo` exists for `DEMO_MODE`."},
+
+  {"t":"h","level":2,"text":"6.3 The 47-Migration History and the Idempotent Runner"},
+
+  {"t":"p","text":"The schema was not authored as one big file; it grew through **47 ordered migration files** numbered `0001`..`0047`. Each file is a small, focused change — a new table, a few columns, an index, a trigger. The file `database/schema/schema.sql` is a *consolidated read-only snapshot* of the final shape and is explicitly NOT the source of truth; the ordered migrations are. This matters for the next five years: when you need to know exactly when and why a column appeared, you read its migration, not the snapshot."},
+
+  {"t":"h","level":3,"text":"6.3.1 The migration ledger and run-once tracking"},
+
+  {"t":"p","text":"MySQL has no `CREATE INDEX IF NOT EXISTS` and no `ADD COLUMN IF NOT EXISTS`, so each migration file must be applied **exactly once**. The runner (`migrate()` in `database/src/bootstrap.ts`) creates a tracking table on first use:"},
+
+  {"t":"code","lines":[
+    "CREATE TABLE IF NOT EXISTS schema_migrations (",
+    "  filename VARCHAR(255) PRIMARY KEY,",
+    "  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+    ");"
+  ]},
+
+  {"t":"p","text":"On boot it reads every applied filename into a `Set`, lists the `.sql` files sorted lexically, and for each file not yet recorded, applies it and inserts its filename. Because filenames are zero-padded (`0001`..`0047`), lexical sort equals numeric order — the dependency order (a column's table must exist before the `ALTER`) is guaranteed by the numbering."},
+
+  {"t":"h","level":3,"text":"6.3.2 Statement-by-statement, BEGIN/END-aware splitting"},
+
+  {"t":"p","text":"Migrations are applied **statement-by-statement**, not whole-file-at-once. This is deliberate: MySQL DDL auto-commits and cannot be rolled back inside a transaction, so if a file half-applies and the process dies, the only safe recovery is *idempotent replay*. A naive split on `;` would corrupt trigger bodies, because a `CREATE TRIGGER ... BEGIN ...; ...; END` contains internal semicolons. The runner's `splitSqlStatements()` therefore tracks `BEGIN`/`END` nesting and only splits on a **top-level** `;`, while also skipping string/identifier literals (`'`, `\"`, backtick) and `--` / `#` / block comments so a semicolon inside any of those never triggers a split. No migration uses a `DELIMITER` directive, so this BEGIN/END-aware pass is sufficient. The two trigger migrations (0009 and 0018) survive this splitting intact."},
+
+  {"t":"h","level":3,"text":"6.3.3 Idempotent error swallowing"},
+
+  {"t":"p","text":"When a previously-half-applied file is re-run, individual statements may fail with \"object already exists\" errors. The runner swallows a precise allow-list of MySQL errnos **per statement** so the file *completes* instead of crash-looping, while any genuine error still re-throws. On a clean first apply none of these fire, so first-run behavior is unchanged."},
+
+  {"t":"table","headers":["Errno","MySQL name","Statement it guards"],"rows":[
+    ["1050","ER_TABLE_EXISTS_ERROR","`CREATE TABLE` (table already there)"],
+    ["1060","ER_DUP_FIELDNAME","`ADD COLUMN` (column already there)"],
+    ["1061","ER_DUP_KEYNAME","`CREATE INDEX` / `ADD KEY` (index already there)"],
+    ["1826","ER_FK_DUP_NAME","`ADD CONSTRAINT FOREIGN KEY` (FK already there)"],
+    ["1359","ER_TRG_ALREADY_EXISTS","`CREATE TRIGGER` (trigger already there)"],
+    ["1304","ER_SP_ALREADY_EXISTS","`CREATE PROCEDURE`/`FUNCTION` (already there)"],
+    ["1065","ER_EMPTY_QUERY","a comment-only fragment — a no-op"]
+  ]},
+
+  {"t":"callout","kind":"warning","title":"Triggers are skipped on a non-SUPER account","text":"Creating a trigger under binary logging requires SUPER (or `log_bin_trust_function_creators`). On a restricted account MySQL raises errno 1419. The runner catches that specific errno, SKIPS the trigger statement, logs a clear warning, and CONTINUES. This is safe because both trigger-enforced rules — \"no meeting in the past\" (0009) and \"audit log is append-only\" (0018) — are ALSO enforced in the application layer. The DB triggers are defense-in-depth, not the only line of defense. If you want the DB-level guard, ask the DBA to enable `log_bin_trust_function_creators`."},
+
+  {"t":"diagram","kind":"pipeline","title":"Boot-time database provisioning sequence","steps":[
+    {"label":"ensureDatabase","detail":"Best-effort CREATE DATABASE IF NOT EXISTS (utf8mb4). Tolerates transient 'MySQL not ready yet' errors with a retry loop; permission errors are warned and skipped."},
+    {"label":"migrate","detail":"Apply unseen migration files statement-by-statement, idempotently; record each in schema_migrations."},
+    {"label":"promoteIfNeeded","detail":"Consult deploy_state to decide a one-time bundled-snapshot import (see 6.5.8)."},
+    {"label":"seedIfNeeded","detail":"Optional demo/seed data on an empty DB."},
+    {"label":"server.listen","detail":"Only after the schema is in place does the backend accept traffic (port 4000)."}
+  ]},
+
+  {"t":"p","text":"**Failure behavior.** `ensureDatabase`, `migrate`, and `promoteIfNeeded` all connect via `connectWithRetry`, which distinguishes *transient* errors (`ECONNREFUSED`, `ETIMEDOUT`, `ECONNRESET`, `ENOTFOUND`, `EAI_AGAIN`, plus errno 1130 / access-denied while grant tables load) from *configuration* errors. Transient errors are retried for up to 45 seconds (so a cold `docker compose up` where the app container starts before MySQL finishes initializing still succeeds); any non-transient error crashes loudly so the operator sees a real problem rather than a silent half-migration. The idempotent design means a retry after a crash resumes from the real failure point rather than dying on the first `ADD COLUMN`."},
+
+  {"t":"h","level":2,"text":"6.4 The Soft-Delete Model"},
+
+  {"t":"p","text":"In plain language: when a user \"deletes\" something, CoLab usually does not erase the row — it marks the row as deleted and remembers when and by whom. This makes deletes recoverable, keeps foreign-key relationships intact (so a deleted user's old messages don't orphan), and preserves an audit trail. In engineering language: migration **0046** added a uniform soft-delete trio to every table that holds durable user data and was previously hard-deleted somewhere."},
+
+  {"t":"code","lines":[
+    "deleted     TINYINT(1)  NOT NULL DEFAULT 0   -- 1 = soft-deleted, 0 = live",
+    "deleted_at  DATETIME(3) NULL                 -- when (audit)",
+    "deleted_by  VARCHAR(64) NULL                 -- actor user id (audit)"
+  ]},
+
+  {"t":"p","text":"`DEFAULT 0` makes the migration **behavior-neutral**: every existing row becomes \"live\", and the application kept hard-deleting until later phases flipped reads/writes. Per the broader recon, the soft-delete conversion is now live in production (migration 0046 applied across 24 tables), with explicit service-level cascades and a One API path that soft-deletes via `UPDATE`."},
+
+  {"t":"p","text":"The trio was added to: **users, conversations, conversation_members, meetings, meeting_attendees, meeting_recordings, meeting_messages, meeting_ejected, meeting_presence, folders, reminders, tasks, task_comments, task_deps, files, file_shares, bookmarks, notifications, scheduled_messages, user_blocks, user_reports, invites, voicemails** (24 `ALTER TABLE` statements in 0046)."},
+
+  {"t":"callout","kind":"warning","title":"Correction vs the recon notes on which meeting tables are excluded","text":"The recon summary listed `meeting_presence` among the soft-delete EXCLUSIONS. The actual migration 0046 file proves otherwise: `meeting_presence` IS given the trio (with the comment that it is keyed (meeting_id, user_id) and revived on re-join, so row count stays bounded), and `meeting_ejected` also gets the trio. The meeting live-state table that is genuinely EXCLUDED is `meeting_lobby`. This handbook follows the file."},
+
+  {"t":"p","text":"**Deliberate exclusions (no trio), with the reason from the migration's own comments:**"},
+
+  {"t":"table","headers":["Excluded table","Why it is excluded"],"rows":[
+    ["messages","Already soft-deletes via its own `deleted` content-tombstone (migration 0024); that column is reused."],
+    ["e2ee_devices","Already has its own soft-delete flag `revoked`."],
+    ["e2ee_one_time_prekeys / e2ee_conversation_keys","Rotation/consumption child tables (`consumed_at`, key versioning) — lifecycle is intrinsic."],
+    ["message_deletions","IS itself the per-user soft-delete side table."],
+    ["audit_log","Append-only by DB trigger (UPDATE/DELETE rejected) — see 6.5.8."],
+    ["user_settings","1:1 with users; cascades with the user row."],
+    ["deploy_state","Operational sentinel, not user data."],
+    ["meeting_lobby","Ephemeral live-session waiting-room state; hard-delete is correct."],
+    ["task_activity","Treated as an append-only activity log."],
+    ["schema_migrations","The migration ledger itself."]
+  ]},
+
+  {"t":"p","text":"**Soft-delete-aware composite indexes (added in 0046).** Because `deleted` alone is low-cardinality (almost everything is 0), filtering indexes are composite, leading with the hot lookup column: `idx_cm_user_deleted` on `conversation_members (user_id, deleted)`, `idx_files_conv_deleted` on `files (conversation_id, deleted)`, `idx_fshares_file_deleted` on `file_shares (file_id, deleted)`, `idx_notif_user_deleted` on `notifications (user_id, deleted)`, and `idx_reminders_user_deleted` on `reminders (user_id, deleted)`. These keep the hottest \"give me this user's live X\" reads index-served."},
+
+  {"t":"callout","kind":"risk","title":"Business impact of soft-delete","text":"Soft-delete is why an accidental deletion is recoverable and why deleting a user does not vaporize the conversation history other people still need. The trade-off is storage growth and the discipline that EVERY read path must filter `deleted = 0`. A query that forgets the filter will resurrect deleted content to users — a correctness/privacy bug class to watch for in code review."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"6.5 Table-by-Table Catalog (by Domain)"},
+
+  {"t":"p","text":"The catalog below groups tables by product domain. For each significant table: **Purpose**, **Key Columns**, **Relationships**, and **Used-By**. Column lists name the load-bearing columns, not every column. \"+trio\" means the soft-delete trio (`deleted`, `deleted_at`, `deleted_by`) was added in migration 0046."},
+
+  {"t":"h","level":3,"text":"6.5.1 Identity"},
+
+  {"t":"table","headers":["users (PK id, 0001)","Detail"],"rows":[
+    ["Purpose","Identity, authentication, and profile for every person. Referenced by nearly every other table."],
+    ["Key Columns","`email` UNIQUE, `name`, `initials`, `color`, `avatar_url` TEXT (data-URL avatars), `role` (default 'member'), `password_hash` (scrypt 'saltHex:hashHex', nullable for invited stubs — 0005), `presence` ('off' default), `manual_presence` (Active/Away/DND override, NULL=auto — 0039), `last_seen` + `share_last_seen` (0037), `about` (0032), `title`/`pronouns`/`phone`/`timezone` (0038), +trio"],
+    ["Relationships","Parent of essentially everything: messages.sender_id, conversations.created_by, members, meetings, calls, tasks, reminders, files, invites, blocks, reports, notifications, e2ee_devices."],
+    ["Used-By","authService, every service that resolves an actor; serialize.ts decides whether to expose last_seen based on share_last_seen."]
+  ]},
+
+  {"t":"table","headers":["user_settings (PK user_id, 0003)","Detail"],"rows":[
+    ["Purpose","Per-user settings as a single JSON blob."],
+    ["Key Columns","`data` JSON, `updated_at`. 1:1 with users."],
+    ["Relationships","FK user_id -> users ON DELETE CASCADE."],
+    ["Used-By","settingsService. NOTE: a frontend setting absent from the backend DEFAULTS whitelist is silently dropped on save."]
+  ]},
+
+  {"t":"table","headers":["user_blocks / user_reports (0031)","Detail"],"rows":[
+    ["Purpose","Safety. `user_blocks` (PK blocker_id+blocked_id) is the mutual block list, distinct from invite 'blocked' status. `user_reports` (PK id) records abuse reports reviewed out-of-band."],
+    ["Key Columns","blocks: blocker_id, blocked_id, reason; idx_blocks_blocked. reports: reporter_id, reported_id, reason; idx_reports_reported. Both +trio."],
+    ["Relationships","All FKs -> users ON DELETE CASCADE."],
+    ["Used-By","blockService; messageService DM block enforcement; routes/users.ts."]
+  ]},
+
+  {"t":"table","headers":["invites (PK id, 0007)","Detail"],"rows":[
+    ["Purpose","Connection-request workflow. A DM conversation is created ONLY on acceptance."],
+    ["Key Columns","`status` pending|accepted|declined|blocked, `from_user_id`/`to_user_id`, `conversation_id`, `responded_at`; idx_invites_to, idx_invites_from; +trio."],
+    ["Relationships","from/to -> users CASCADE; conversation_id -> conversations ON DELETE SET NULL."],
+    ["Used-By","inviteService; Onboarding Connect-team step."]
+  ]},
+
+  {"t":"h","level":3,"text":"6.5.2 Conversations, Channels, and Groups"},
+
+  {"t":"p","text":"CoLab does not have separate tables for DMs, groups, and channels. They are ALL `conversations` rows differentiated by the `kind` column ('dm', 'group', 'channel', plus 'self' for the self-DM). The same `conversation_members` and `messages` tables serve all three. This is why one messaging code path serves every conversation type."},
+
+  {"t":"table","headers":["conversations (PK id, 0001)","Detail"],"rows":[
+    ["Purpose","Umbrella row for DMs / groups / channels / self-DM."],
+    ["Key Columns","`kind`, `title`, `icon`, `created_by`, `description` + `avatar_url` TEXT (0032/0033), `dm_key` VARCHAR(80) deterministic sorted-member-pair key (0034) with UNIQUE `idx_conversations_dm_key` (0035), +trio."],
+    ["Relationships","created_by -> users. Parent of conversation_members, messages, files, calls (SET NULL), meetings, scheduled_messages, e2ee_conversation_keys."],
+    ["Used-By","conversationService; ChatView/ConversationSidebar; the dm_key unique index enforces one-DM-per-pair at the database level."]
+  ]},
+
+  {"t":"callout","kind":"tip","title":"One DM per pair, enforced by the database","text":"Migration 0034 adds `dm_key` (a deterministic key built from the two member IDs sorted); 0035 adds a UNIQUE index on it. MySQL unique indexes allow multiple NULLs, so non-DM rows (dm_key NULL) never collide. The unique index was added in 0035 AFTER a one-time dedup so existing duplicate DMs don't block index creation. Result: it is structurally impossible to create two DM conversations for the same pair — a race that previously produced split conversations is now caught by the database."},
+
+  {"t":"table","headers":["conversation_members (PK conversation_id+user_id, 0001)","Detail"],"rows":[
+    ["Purpose","Membership join table. Drives unread, mute, star, hide, and per-member read state."],
+    ["Key Columns","`role`, `starred`, `muted`, `last_read_at`, `hidden` + `unread` INT (0006), `history_visible_from` DATETIME(3) (0043; per-member history cutoff, NULL=full history), +trio."],
+    ["Relationships","Composite FK -> conversations + users, both ON DELETE CASCADE. idx_members_user, idx_cm_user_deleted."],
+    ["Used-By","conversationService.isMember (the 403 authorization gate), unread/badge logic, history-cutoff filtering when someone joins a group without prior history."]
+  ]},
+
+  {"t":"table","headers":["messages (PK id, 0001)","Detail"],"rows":[
+    ["Purpose","Chat messages for ALL conversation kinds (DM, group, channel, self)."],
+    ["Key Columns","`conversation_id`, `sender_id`, `body` TEXT (rich HTML), `file_json` JSON, `reactions_json` JSON (reactions inline, NOT a separate table), `forwarded` + `forward_count` (0036), `edited` (0006), `parent_message_id` self-FK for threads (0011), `type` + `voice_json` (0023), `deleted` tombstone (0024), `pinned`/`pinned_by`/`pinned_at` (0029), `encryption_version` + `ciphertext_json` (0022), `created_at` widened to `DATETIME(3)` (0042)."],
+    ["Relationships","conversation_id -> conversations CASCADE; sender_id -> users; parent_message_id self-FK CASCADE."],
+    ["Used-By","messageService (send/history/edit/react/pin); bookmarks and message_deletions reference message id."]
+  ]},
+
+  {"t":"p","text":"**Message indexes:** `idx_messages_conversation (conversation_id, created_at)` for the keyset history scan; `idx_messages_parent` for thread lookups; `idx_messages_type`; `idx_msg_pinned (conversation_id, pinned, created_at)` for the pinned panel; and the **FULLTEXT** `idx_messages_fts` on `body` (0017) for search. Note `messages` is NOT given the 0046 trio — it has its own `deleted` tombstone from 0024."},
+
+  {"t":"table","headers":["message_deletions (PK user_id+message_id, 0025) / bookmarks (PK user_id+message_id, 0002)","Detail"],"rows":[
+    ["Purpose","`message_deletions` is the per-user 'delete for me' side table (the original message stays visible to everyone else). `bookmarks` is saved/starred messages."],
+    ["Key Columns","message_deletions: idx_msgdel_message. bookmarks: +trio."],
+    ["Relationships","Both FK -> users + messages ON DELETE CASCADE."],
+    ["Used-By","messageService 'delete for me'; BookmarksPanel. Reactions have NO dedicated table — they live in `messages.reactions_json`."]
+  ]},
+
+  {"t":"h","level":3,"text":"6.5.3 Calls and Meetings"},
+
+  {"t":"table","headers":["calls (PK id, 0003)","Detail"],"rows":[
+    ["Purpose","1:1 / huddle call history (live media is LiveKit; live huddle state is Redis)."],
+    ["Key Columns","`conversation_id` (SET NULL), `initiator_id`, `peer_id` (SET NULL), `kind` audio|video, `direction` in|out, `status` ringing/.../ended, `duration_sec`, `started_at`."],
+    ["Relationships","initiator_id -> users CASCADE; peer_id -> users SET NULL; conversation_id -> conversations SET NULL."],
+    ["Used-By","callService. NO soft-delete trio (excluded — call history is operational)."]
+  ]},
+
+  {"t":"p","text":"**Call indexes:** `idx_calls_started` plus two guarded indexes from migration 0041 — `idx_calls_active_peer (peer_id, status)` and `idx_calls_active_init (initiator_id, status)`. These support the atomic busy-check `SELECT ... FOR UPDATE` in `calls.requestAtomic`. Correctness comes from the InnoDB row lock; the indexes only keep that lock index-served instead of scanning. Because MySQL lacks `CREATE INDEX IF NOT EXISTS`, 0041 guards each index via an `information_schema` existence check and a prepared `IF` statement."},
+
+  {"t":"table","headers":["meetings (PK id, 0002)","Detail"],"rows":[
+    ["Purpose","Scheduled video meetings. The Calendar view is a read over this table (there is no separate calendar table)."],
+    ["Key Columns","`title`, `starts_at`, `duration_min`, `created_by`, `conversation_id`, `status` (0010), `lobby_enabled` (0026), `locked` + legacy `recurrence` enum (0030), `recurrence_rule` TEXT/JSON Outlook-style structured rule (0047), +trio."],
+    ["Relationships","created_by -> users; conversation_id -> conversations. Parent of attendees, presence, lobby, ejected, messages, recordings."],
+    ["Used-By","meetingService; CalendarView/MeetingsView. INDEX idx_meetings_start. TRIGGERS (0009) reject a start time more than 2 minutes in the past."]
+  ]},
+
+  {"t":"p","text":"**Meeting recurrence evolution.** Migration 0030 added a legacy `recurrence VARCHAR(16)` enum kept for back-compat and display fallback. Migration 0047 added `recurrence_rule TEXT` (JSON) for the real Outlook-style rule — frequency + interval, weekly day selection, monthly day-vs-nth-weekday, yearly, and end conditions (never / after N / on date). Both are nullable and additive, so existing meeting rows are unaffected."},
+
+  {"t":"table","headers":["Meeting child tables","Purpose / Key columns"],"rows":[
+    ["meeting_attendees (PK meeting+user, 0002)","Invitees. `status`, `role` participant|cohost (0026), +trio. FK CASCADE."],
+    ["meeting_presence (PK meeting+user, 0010)","Who is CURRENTLY in the room. `joined_at`, `last_seen`; idx_meeting_presence_seen; +trio (revived on rejoin)."],
+    ["meeting_lobby (PK meeting+user, 0026)","Waiting room. `status` waiting|admitted, `decided_at`/`decided_by`; idx_lobby_status. NO trio (ephemeral)."],
+    ["meeting_ejected (PK meeting+user, 0045)","Host-eject that persists across token re-mint. `ejected_at`/`ejected_by`; idx_meeting_ejected_meeting; +trio. Cleared when the meeting ends."],
+    ["meeting_messages (PK id, 0040)","Persisted in-meeting chat. `sender_id`, `body`, `file_json`; idx_meeting_messages_meeting; +trio."],
+    ["meeting_recordings (PK id, 0015)","LiveKit Egress recordings. `status`, `storage_key`, `playback_url`, `egress_id`, `duration_sec`, `size_bytes`; idx_recordings_meeting / idx_recordings_created; +trio."]
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Why meeting_ejected exists","text":"Without a persisted eject list, a host-removed participant could simply re-POST /api/calls/token (their JWT is still valid) and be re-admitted instantly, because the only join checks were membership + lock + lobby. Migration 0045 adds `meeting_ejected`, and `meetingService.enterRoom` now consults it FIRST and returns 403 'You were removed from this meeting'. It is cleared when the meeting status becomes 'ended' so a brand-new meeting with the same attendees does not carry over yesterday's ejections."},
+
+  {"t":"table","headers":["voicemails (PK id, 0016)","Detail"],"rows":[
+    ["Purpose","Voicemail metadata; the audio bytes live in the `files` store. The row is owned by the recipient."],
+    ["Key Columns","`call_id` (SET NULL), `from_user`/`to_user` (CASCADE), `file_id` (CASCADE), `duration_sec`, `listened`; idx_voicemails_to; +trio."],
+    ["Relationships","file_id -> files CASCADE; from/to -> users CASCADE; call_id -> calls SET NULL."],
+    ["Used-By","voicemailService; access is voicemail-scoped (sender or recipient)."]
+  ]},
+
+  {"t":"h","level":3,"text":"6.5.4 Tasks"},
+
+  {"t":"table","headers":["Task tables","Purpose / Key columns"],"rows":[
+    ["tasks (PK id, 0004 + 0012)","Native kanban work-items. `title`, `status` (todo default), `priority`, `due_label`, `assignee_id` (SET NULL), and from 0012: `description`, `labels` JSON, `due_at`, `updated_at`, `reporter_id`, `project`; +trio. Indexes idx_tasks_status, idx_tasks_due."],
+    ["task_activity (PK id, 0012)","Append-only activity log. `kind`, `detail` JSON; idx_task_activity_task. NO trio (append-only)."],
+    ["task_comments (PK id, 0013)","Comments. idx_task_comments_task; +trio."],
+    ["task_deps (PK task+depends_on, 0012)","Dependency graph. idx_task_deps_dep; +trio. Both endpoints FK -> tasks CASCADE."]
+  ]},
+
+  {"t":"h","level":3,"text":"6.5.5 Reminders, Folders, and Calendar"},
+
+  {"t":"table","headers":["Reminder tables","Purpose / Key columns"],"rows":[
+    ["folders (PK id, 0003)","Reminder folders. `user_id` (CASCADE), `name`, `icon`; +trio."],
+    ["reminders (PK id, 0003 + 0014)","User reminders. `user_id`, `folder_id` (SET NULL), `text`, `done`, `due_label`, and from 0014: `description`, `due_at`, `priority`, `status` (open default), `updated_at`, `recurrence`; +trio. Indexes idx_reminders_user, idx_reminders_due (user_id,due_at), idx_reminders_status (user_id,status), idx_reminders_user_deleted."]
+  ]},
+
+  {"t":"p","text":"There is no `calendar` table. The Calendar view is composed at read time from `meetings.starts_at` and `reminders.due_at`. This is why \"Calendar\" and \"Meetings\" share a render branch in the frontend and the same backend route."},
+
+  {"t":"h","level":3,"text":"6.5.6 Files"},
+
+  {"t":"table","headers":["files (PK id, 0008 + 0027)","Detail"],"rows":[
+    ["Purpose","File store. Originally bytes in `data` LONGBLOB; 0027 added object-storage support."],
+    ["Key Columns","`conversation_id` (CASCADE), `uploader_id`, `name`, `mime`, `size` BIGINT, `data` LONGBLOB (made NULL-able by 0027), `storage_key` TEXT (0027; S3/object key), `starred` (0019), `share_token` + `link_permission` (0021), `encryption_version` + `ciphertext_meta` (0022), +trio."],
+    ["Relationships","conversation_id -> conversations CASCADE; uploader_id -> users."],
+    ["Used-By","fileService + storageService. Indexes idx_files_uploader, idx_files_conversation, idx_files_starred, idx_files_share_token, idx_files_conv_deleted."]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Exactly one of data or storage_key is populated","text":"Migration 0027 made `data` NULL-able and added `storage_key`. New uploads go to MinIO/S3 and store only the `storage_key` (data NULL). If S3 is unavailable, fileService silently falls back to storing bytes in the `data` LONGBLOB (storage_key NULL). The two columns are never both populated. Avatars and wallpapers do NOT use this table at all — they are compact downscaled JPEG data-URLs stored directly in `users.avatar_url` / `conversations.avatar_url` (TEXT), so an `<img>` renders without an auth header."},
+
+  {"t":"table","headers":["file_shares (PK id, 0021)","Detail"],"rows":[
+    ["Purpose","Share a file with a user or a conversation at a permission level."],
+    ["Key Columns","`file_id`, `subject_type` ('user'|'conversation'), `subject_id`, `permission` ('view'|'comment'|'edit'); UNIQUE (file_id, subject_type, subject_id); +trio."],
+    ["Relationships","file_id -> files CASCADE; created_by -> users."],
+    ["Used-By","fileService.permissionFor (effective permission resolved by rank owner>edit>comment>view). Indexes idx_file_shares_subject, idx_fshares_file_deleted."]
+  ]},
+
+  {"t":"h","level":3,"text":"6.5.7 Presence, Notifications, Scheduling, and E2EE"},
+
+  {"t":"p","text":"There is no standalone global presence table. Automatic presence lives on `users.presence` ('off' default; the socket layer writes 'on' on connect and 'off' on disconnect). A manual override lives on `users.manual_presence` (NULL = fall back to auto; DND serialized as 'busy') — kept in a SEPARATE column (0039) precisely so the socket's connect/disconnect writes to `presence` never erase the user's manual choice. `users.last_seen` is stamped on going offline, with `users.share_last_seen` as the privacy mirror (0037). In-meeting live presence is the `meeting_presence` table."},
+
+  {"t":"table","headers":["notifications (PK id, 0028)","Detail"],"rows":[
+    ["Purpose","Per-user feed with read/unread state (the Activity module)."],
+    ["Key Columns","`user_id`, `type` (mention|reply|call_missed|meeting_invite|meeting_starting|file_shared|reaction), `title`, `body`, `actor_id` (SET NULL), `target_type`/`target_id`, `conversation_id`, `is_read`; +trio."],
+    ["Relationships","user_id -> users CASCADE; actor_id -> users SET NULL."],
+    ["Used-By","notificationService; live unread count pushed via socket. Indexes idx_notif_user (user_id,created_at), idx_notif_unread (user_id,is_read,created_at), idx_notif_user_deleted. NOTE: in-app only; no web-push."]
+  ]},
+
+  {"t":"table","headers":["scheduled_messages (PK id, 0020)","Detail"],"rows":[
+    ["Purpose","Compose now, deliver later. A backend poller claims due rows and posts them through the normal message path."],
+    ["Key Columns","`conversation_id`, `sender_id`, `body`, `send_at`, `status` scheduled|sending|sent|failed, `sent_message_id`, `error`; +trio."],
+    ["Relationships","conversation_id + sender_id -> CASCADE."],
+    ["Used-By","scheduledMessageService.runDue. Indexes idx_sched_due (status,send_at), idx_sched_conv_sender."]
+  ]},
+
+  {"t":"table","headers":["E2EE tables (0022)","Purpose / Key columns"],"rows":[
+    ["e2ee_devices (PK id VARCHAR(64))","Per-device identity. `identity_key`, `signed_pre_key` JSON, `one_time_pre_key_count`, `trusted`, `revoked` (its own soft-delete); idx_e2ee_devices_user. FK user CASCADE."],
+    ["e2ee_one_time_prekeys (PK id)","`device_id` (CASCADE), `key_id`, `public_key`, `consumed_at`; UNIQUE (device_id, key_id)."],
+    ["e2ee_conversation_keys (PK conversation+device+key_version)","Per-device encrypted conversation key. `encrypted_key`, `algorithm` 'x25519-aes-gcm'; idx_e2ee_conv_keys_user; FKs CASCADE."]
+  ]},
+
+  {"t":"p","text":"The server stores only PUBLIC keys and OPAQUE encrypted blobs in these tables — a database dump cannot read DM content. E2EE is OFF by default, DM-only, and server-blind. These tables exist and the routes are registered but dormant unless `E2EE_ENABLED` is true. Messages carry `encryption_version` + `ciphertext_json`; files carry `encryption_version` + `ciphertext_meta`."},
+
+  {"t":"h","level":3,"text":"6.5.8 Audit and Operational Tables"},
+
+  {"t":"table","headers":["audit_log (PK id BIGINT AUTO_INCREMENT, 0001)","Detail"],"rows":[
+    ["Purpose","Tamper-evident governance trail."],
+    ["Key Columns","`id` BIGINT auto-increment (the ONLY non-UUID PK), `actor_id`, `action`, `target` TEXT, `meta_json` JSON, `created_at`."],
+    ["Relationships","Logical actor_id reference to users; intentionally NO declared FK so a deleted actor never blocks an audit insert."],
+    ["Used-By","auditService.record. APPEND-ONLY: triggers trg_audit_log_no_update / trg_audit_log_no_delete (0018) SIGNAL 45000 on any UPDATE or DELETE — even from raw SQL. EXCLUDED from soft-delete."]
+  ]},
+
+  {"t":"table","headers":["deploy_state (PK phase, 0044) / schema_migrations","Detail"],"rows":[
+    ["Purpose","`deploy_state` is the sentinel for the one-time auto data-promotion on live cutover. `schema_migrations` is the migration ledger (runner-created)."],
+    ["Key Columns","deploy_state: `phase` (NULL=first boot decides; 'migrated'/'fresh'/'existing'/'error'), `migrated_at`, `source_checksum`, `source_rows`, `target_rows_pre`/`target_rows_post`, `notes`. ENGINE=InnoDB utf8mb4."],
+    ["Relationships","None (operational)."],
+    ["Used-By","bootstrap.promoteIfNeeded(). Both EXCLUDED from soft-delete."]
+  ]},
+
+  {"t":"p","text":"**The promotion path (`promoteIfNeeded`).** On the live cutover the deploy bundle ships a snapshot of the localhost-era data (`database/dumps/colab_full.sql`) because the live server ran `DB_PROFILE=local` for weeks and the real signups + messages are in that volume, not the corporate DB. On first boot the backend consults `deploy_state` and decides exactly once whether to import that dump. The decision matrix is idempotent and safe to re-run every boot:"},
+
+  {"t":"table","headers":["Condition","Action / resulting phase"],"rows":[
+    ["phase = 'migrated'","No-op — snapshot already imported."],
+    ["phase = 'existing'","No-op — target had data; auto-import was refused."],
+    ["phase = 'fresh'","No-op — started empty without a snapshot."],
+    ["row missing, target users = 0, dump present","IMPORT the dump, then re-run migrate(), stamp 'migrated'."],
+    ["row missing, target users > 0","Stamp 'existing', refuse to clobber existing data."],
+    ["row missing, dump absent","Stamp 'fresh', warn."]
+  ]},
+
+  {"t":"callout","kind":"risk","title":"Data-safety guards in promotion","text":"The import runs only if the target `users` count is 0 — a populated production DB can NEVER be silently clobbered. Overriding requires the explicit, logged `COLAB_FORCE_REIMPORT=yes` (destructive — back up first). `COLAB_FRESH_START=yes` skips the dump import on an EMPTY target but is IGNORED if the target already has users, so a populated DB cannot be 'factory reset' by leaving the flag on. If the dump imports but yields zero users, the code stamps phase='error' and throws loudly rather than silently bricking. Operational rule from the deploy runbook: NEVER `docker compose down -v` (that deletes the data volume); always `mysqldump` before deploy."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"6.6 Relationship (ER) Diagrams"},
+
+  {"t":"p","text":"The diagrams below show the most load-bearing relationships. Read each left-to-right box chain as a foreign-key path. CoLab's core graph is small and deliberately centered on two hubs: `users` (the identity hub that almost everything references) and `conversations` (the messaging hub)."},
+
+  {"t":"diagram","kind":"flow","title":"Messaging core (one-to-many fan-out)","nodes":[
+    {"label":"users","sub":"sender_id"},
+    {"label":"messages","sub":"N per conversation"},
+    {"label":"conversations","sub":"dm / group / channel"}
+  ]},
+
+  {"t":"p","text":"`users` 1—N `messages` (a user sends many messages); `messages` N—1 `conversations` (many messages belong to one conversation); `conversations` 1—N `conversation_members` N—1 `users` (the many-to-many membership join). Threads add a self-relationship: `messages.parent_message_id` 1—N `messages`."},
+
+  {"t":"diagram","kind":"grid","title":"users as the identity hub","cols":3,"boxes":[
+    {"label":"messages","sub":"sender_id"},
+    {"label":"conversation_members","sub":"user_id"},
+    {"label":"meetings","sub":"created_by"},
+    {"label":"calls","sub":"initiator_id / peer_id"},
+    {"label":"tasks","sub":"assignee_id / reporter_id"},
+    {"label":"notifications","sub":"user_id / actor_id"}
+  ]},
+
+  {"t":"diagram","kind":"flow","title":"Meeting graph","nodes":[
+    {"label":"meetings","sub":"PK id"},
+    {"label":"meeting_attendees","sub":"+presence / lobby / ejected"},
+    {"label":"meeting_recordings","sub":"+meeting_messages"}
+  ]},
+
+  {"t":"p","text":"All five meeting child tables (`meeting_attendees`, `meeting_presence`, `meeting_lobby`, `meeting_ejected`, `meeting_messages`, `meeting_recordings`) are keyed by `meeting_id` and FK -> meetings ON DELETE CASCADE, so deleting a meeting tears down its entire live and recorded state cleanly."},
+
+  {"t":"h","level":3,"text":"6.6.1 Foreign-key delete semantics"},
+
+  {"t":"p","text":"The choice of `ON DELETE CASCADE` vs `ON DELETE SET NULL` encodes intent. CASCADE means the child has no meaning without the parent (delete the conversation, delete its messages). SET NULL means the child outlives the parent with a hole (delete a user, their old call rows keep the history but lose the peer pointer)."},
+
+  {"t":"table","headers":["Relationship","On delete","Rationale"],"rows":[
+    ["messages.conversation_id -> conversations","CASCADE","A message has no meaning outside its conversation."],
+    ["conversation_members.* -> conversations / users","CASCADE","Membership is meaningless without both endpoints."],
+    ["messages.parent_message_id -> messages","CASCADE","Deleting a thread root removes its replies."],
+    ["calls.peer_id / conversation_id -> users / conversations","SET NULL","Call history survives even if the peer or conversation is removed."],
+    ["tasks.assignee_id / reporter_id -> users","SET NULL","A task outlives the person assigned to it."],
+    ["reminders.folder_id -> folders","SET NULL","Deleting a folder un-files its reminders rather than deleting them."],
+    ["notifications.actor_id -> users","SET NULL","The feed item remains; the actor pointer is cleared."],
+    ["audit_log.actor_id","No FK","Audit inserts must never be blocked by a missing/deleted actor."]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Soft-delete vs FK cascade","text":"These FK semantics describe HARD deletes. With the soft-delete model (6.4) most user-facing deletes now set `deleted = 1` instead of issuing a SQL DELETE, so the cascades largely do not fire in normal operation — they remain the correct fallback for genuine row removal (account deletion, retention purges, recording cleanup) and as the integrity backstop."},
+
+  {"t":"h","level":2,"text":"6.7 How the Major Entities Are Stored"},
+
+  {"t":"h","level":3,"text":"6.7.1 Users"},
+
+  {"t":"p","text":"A user is one `users` row. Authentication state is the nullable `password_hash` (scrypt, `saltHex:hashHex` — nullable so an invited stub exists before it sets a password). Identity display is `name`/`initials`/`color`/`avatar_url` (avatar as a data-URL so it renders without an auth header). Presence is split across `presence` (automatic, socket-driven) and `manual_presence` (user override) precisely so the two never fight. Profile depth (`about`, `title`, `pronouns`, `phone`, `timezone`) was added incrementally (0032, 0038). Settings are NOT on the user row — they are a separate `user_settings` JSON blob."},
+
+  {"t":"h","level":3,"text":"6.7.2 Messages"},
+
+  {"t":"p","text":"A message is one `messages` row. The body is **rich HTML** in `body` (sanitized on render; all previews must go through `lib/messageText.ts`). Attachments ride inline as `file_json`; voice notes as `voice_json` with `type='voice'`. Reactions are stored as `reactions_json` ON the message row — there is no reactions table, which is why a reaction is a single-row UPDATE and a re-render of one bubble. Threads are a self-reference via `parent_message_id`. Deletion is nuanced: 'delete for everyone' sets the `deleted` tombstone (content cleared, row kept so 'This message was deleted' renders in place); 'delete for me' inserts into `message_deletions` (filters the message from one user's view only). Ordering uses millisecond `created_at` (0042) plus the UUID id as a keyset tie-breaker."},
+
+  {"t":"h","level":3,"text":"6.7.3 Meetings"},
+
+  {"t":"p","text":"A meeting is one `meetings` row plus a constellation of child tables for its lifecycle: who is invited (`meeting_attendees`), who is in the room right now (`meeting_presence`), who is waiting (`meeting_lobby`), who was kicked (`meeting_ejected`), what was said (`meeting_messages`), and what was recorded (`meeting_recordings`). The 'no meeting in the past' rule is enforced both in the app and by the 0009 triggers (with a 2-minute grace for clock skew and 'start now')."},
+
+  {"t":"h","level":3,"text":"6.7.4 Tasks"},
+
+  {"t":"p","text":"A task is one `tasks` row (kanban status, priority, assignee, due date, labels JSON, project) with three satellites: an append-only `task_activity` log, threaded `task_comments`, and a `task_deps` dependency graph (a self-referential many-to-many between tasks). The activity log is intentionally append-only (no soft-delete trio) so a task's history cannot be quietly rewritten."},
+
+  {"t":"h","level":3,"text":"6.7.5 Audit"},
+
+  {"t":"p","text":"An audit entry is one `audit_log` row. It is the only table with a `BIGINT AUTO_INCREMENT` PK (monotonic ordering is the point) and the only table whose immutability is enforced by the database itself: BEFORE UPDATE and BEFORE DELETE triggers raise SQLSTATE 45000, so even a direct SQL UPDATE/DELETE is rejected. Combined with no FK on `actor_id` (so an audit write can never be blocked by a deleted user), this makes the trail both append-only and unblockable."},
+
+  {"t":"h","level":2,"text":"6.8 Triggers, Error Mapping, Failure Modes, and Troubleshooting"},
+
+  {"t":"h","level":3,"text":"6.8.1 The two triggers"},
+
+  {"t":"table","headers":["Trigger (migration)","Event","Effect"],"rows":[
+    ["trg_meetings_reject_past_ins / _upd (0009)","BEFORE INSERT / UPDATE on meetings","SIGNAL 45000 if starts_at < NOW() - 2 minutes. Separate INSERT and UPDATE triggers because MySQL triggers are single-event; the UPDATE variant only fires when starts_at actually changes."],
+    ["trg_audit_log_no_update / _no_delete (0018)","BEFORE UPDATE / DELETE on audit_log","SIGNAL 45000 unconditionally — audit_log is append-only even to raw SQL."]
+  ]},
+
+  {"t":"p","text":"Both triggers are defense-in-depth: the same rules are enforced in the application layer, so on a non-SUPER database account where the runner skips trigger creation (errno 1419), the invariants still hold via the app — you simply lose the DB-level backstop."},
+
+  {"t":"h","level":3,"text":"6.8.2 Database error to HTTP mapping"},
+
+  {"t":"p","text":"The backend's central error handler translates raw MySQL integrity errors into friendly client responses so a constraint violation does not leak a 500. SIGNAL 45000 (from the triggers) and the 23000 SQLSTATE class map to a 400; anything 500+ is masked as a generic message."},
+
+  {"t":"table","headers":["MySQL signal","Meaning","Client result"],"rows":[
+    ["errno 1062","Duplicate unique key (e.g. duplicate DM dm_key, duplicate email)","Friendly 400"],
+    ["errno 1451 / 1452","FK constraint (child rows exist / parent missing)","Friendly 400"],
+    ["errno 1048 / 1264 / 1366","NULL / out-of-range / wrong value for column","Friendly 400"],
+    ["SQLSTATE 23000 / 45000","Integrity violation / trigger SIGNAL (past meeting, audit immutability)","Friendly 400"],
+    [">= 500","Unexpected server/DB error","Masked as 'Something went wrong'"]
+  ]},
+
+  {"t":"h","level":3,"text":"6.8.3 Failure modes and troubleshooting"},
+
+  {"t":"table","headers":["Symptom","Likely cause","First checks"],"rows":[
+    ["Backend logs 'waiting for MySQL to accept connections'","DB container still initializing (cold start) — transient","Normal for up to ~45s on first boot; if it persists, MySQL is genuinely down or the DATABASE_URL host/port is wrong."],
+    ["Boot crashes on a migration","A genuine (non-idempotent) error re-thrown by the runner","Read the failing statement in the named migration file; the idempotent swallow handles 'already exists', so a re-throw is a real schema problem."],
+    ["'[migrate] skipped DB trigger'","Non-SUPER DB account; errno 1419","Expected on restricted DBs; rules still enforced in-app. Enable log_bin_trust_function_creators for the DB-level guard."],
+    ["Deleted content reappears for users","A read path missing the `deleted = 0` filter","Audit the offending query/repository method; soft-delete requires every read to filter."],
+    ["'Meeting start time must be in the future'","0009 trigger or app check fired","Client sent starts_at in the past (beyond the 2-minute grace); fix the client clock or the requested time."],
+    ["Live DB empty after cutover","promoteIfNeeded refused import (phase='existing'), or dump missing/<1KB","Check deploy_state.phase and that database/dumps/colab_full.sql shipped; do NOT force-reimport without a backup."],
+    ["Two DMs for the same pair (legacy data)","Rows created before the 0035 unique index","The unique index now prevents new duplicates; legacy dups were deduped before 0035 ran."]
+  ]},
+
+  {"t":"h","level":3,"text":"6.8.4 Backup, rollback, and operational discipline"},
+
+  {"t":"ol","items":[
+    "Always back up before any deploy: `docker exec colab-db mysqldump -u colab -pcolab --single-transaction --routines --triggers colab > backup_<stamp>.sql`.",
+    "NEVER run `docker compose down -v` — the `-v` deletes the named data volume (colab_mysqldata) and is total data loss. Use `down` or `up -d --build`.",
+    "Migrations are additive and idempotent; a failed migration is safe to re-run because the runner resumes from the real failure point.",
+    "The bundled-snapshot import is one-time and guarded by deploy_state; forcing it (COLAB_FORCE_REIMPORT=yes) is destructive (--add-drop-table semantics) and must be preceded by a backup.",
+    "The named data volume persists across rebuilds; initdb/*.sql only runs on an empty volume, so the app user and demo DB are created exactly once."
+  ]},
+
+  {"t":"callout","kind":"note","title":"Business impact summary","text":"The database design optimizes for three things a 5-year enterprise tool needs: durability (soft-delete + persistent volume + idempotent additive migrations make data loss structurally unlikely), integrity (FK cascades, the dm_key unique index, and two DB triggers prevent whole classes of corruption), and operability (a self-provisioning, crash-loop-resistant migration runner means a junior operator can deploy by running one `docker compose up`). The main standing risks to manage are query discipline around the new soft-delete filter and the weak default credentials on the bundled MySQL/MinIO that must be overridden for production."}
+]

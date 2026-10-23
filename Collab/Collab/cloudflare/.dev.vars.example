@@ -1,0 +1,8 @@
+# Copy to cloudflare/.dev.vars (gitignored) for `npm run dev`.
+# Where the CoLab application API runs (reverse-proxy target + External Data API host).
+API_ORIGIN=https://collab-uat.resulticks.com
+# External Data API key (docs/EXTERNAL_DATA_API.html §02) with the read scopes:
+# users:read, conversations:read, messages:read, tables:read. Never commit it.
+COLAB_API_KEY=colab_replace_me
+# Only for a platform key: narrow /api/edge/* reads to one organization.
+# COLAB_ORG_ID=org_…

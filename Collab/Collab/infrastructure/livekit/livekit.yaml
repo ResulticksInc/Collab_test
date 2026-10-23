@@ -1,0 +1,41 @@
+# LiveKit SFU configuration (self-hosted, MIT, free) — LOCAL / direct-connect.
+# All ports live in the 7530-7536 range (the range IT freed for deployment).
+#   7534  signalling (ws/http)   |  7531  ICE/TCP media
+#   7532  ICE/UDP media          |  7533  TURN relay (UDP)
+# The matching docker-compose.yml publishes each of these 1:1.
+port: 7534 # signalling (ws/http)
+rtc:
+  # Single muxed UDP + TCP media ports (NOT a range). This is what works with
+  # Docker Desktop port publishing on Windows/macOS. Clients fall back to
+  # tcp_port if UDP is blocked. Both ports are published in docker-compose.yml.
+  udp_port: 7532
+  tcp_port: 7531
+  use_external_ip: false
+  # node_ip: the IP LiveKit advertises in ICE candidates.
+  # ── THE SINGLE MOST IMPORTANT SETTING FOR MEDIA TO WORK ──
+  # LOCALHOST (Docker Desktop): 127.0.0.1 (published ports map to 127.0.0.1).
+  # PRODUCTION: use livekit.prod.yaml instead (use_external_ip / public IP).
+  node_ip: 127.0.0.1
+  
+keys:
+  # Placeholder only — OVERRIDDEN at runtime by LIVEKIT_KEYS (from
+  # LIVEKIT_API_KEY / LIVEKIT_API_SECRET in .env). Set the real secret in .env.
+  colab-prod: devsecret-overridden-by-env-do-not-use-in-prod
+turn:
+  # LiveKit's built-in TURN relay — advertised to clients via signalling, used as
+  # a fallback when direct (host/srflx) ICE candidates fail. Port 7533 (UDP).
+  enabled: true
+  udp_port: 7533
+# Redis — REQUIRED for meeting recording (Egress). The SFU and the separate
+# `livekit/egress` worker coordinate egress jobs over this shared bus; without
+# it, startRoomCompositeEgress has no worker to dispatch to. Reachable on the
+# compose network as redis:6379. Harmless when egress is unused.
+redis:
+  address: redis:6379
+# Webhook — LiveKit POSTs room/egress lifecycle events (egress_ended) here so
+# the backend can finalize a recording row to status "ready" with its storage
+# key + playback URL. Signature is verified with the API key/secret.
+webhook:
+  api_key: colab-prod
+  urls:
+    - http://backend:4000/api/livekit/webhook

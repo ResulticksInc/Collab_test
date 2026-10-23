@@ -1,0 +1,405 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   SHARED UI PRIMITIVES — consumed by components/ui/*.
+   Reads only tokens from tokens.css, never raw values, so restyling to the
+   Figma spec is a token edit. Every primitive covers hover / active / focus /
+   disabled / loading and respects prefers-reduced-motion.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Button ──────────────────────────────────────────────────────────────── */
+.ui-btn {
+  --_h: 36px;
+  --_px: var(--sp-4);
+  --_fs: var(--fs-md);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  height: var(--_h);
+  padding: 0 var(--_px);
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: var(--_fs);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  text-decoration: none;
+  transition:
+    background-color var(--dur-fast) var(--ease-in-out),
+    border-color var(--dur-fast) var(--ease-in-out),
+    color var(--dur-fast) var(--ease-in-out),
+    box-shadow var(--dur-fast) var(--ease-in-out),
+    transform var(--dur-fast) var(--ease-in-out);
+}
+.ui-btn:active:not(:disabled):not([aria-disabled="true"]) {
+  transform: translateY(1px);
+}
+.ui-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.ui-btn:disabled,
+.ui-btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.ui-btn[data-loading="true"] {
+  cursor: progress;
+}
+.ui-btn[data-loading="true"] > .ui-btn-label {
+  visibility: hidden;
+}
+.ui-btn > .ui-btn-spin {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* sizes */
+.ui-btn[data-size="sm"] { --_h: 30px; --_px: var(--sp-3); --_fs: var(--fs-sm); }
+.ui-btn[data-size="lg"] { --_h: 42px; --_px: var(--sp-5); --_fs: var(--fs-base); }
+.ui-btn[data-icon-only="true"] { --_px: 0; width: var(--_h); }
+.ui-btn[data-block="true"] { display: flex; width: 100%; }
+
+/* variants */
+.ui-btn[data-variant="primary"] {
+  background: var(--accent-gradient);
+  color: var(--fg-on-accent);
+}
+.ui-btn[data-variant="primary"]:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.ui-btn[data-variant="secondary"] {
+  background: var(--surface-chrome);
+  border-color: var(--line-subtle);
+  color: var(--fg-secondary);
+}
+.ui-btn[data-variant="secondary"]:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+}
+.ui-btn[data-variant="ghost"] {
+  background: transparent;
+  color: var(--fg-secondary);
+}
+.ui-btn[data-variant="ghost"]:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg-primary);
+}
+.ui-btn[data-variant="danger"] {
+  background: var(--danger);
+  color: var(--fg-on-accent);
+}
+.ui-btn[data-variant="danger"]:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.ui-btn[data-variant="danger-soft"] {
+  background: var(--danger-soft);
+  color: var(--fg-danger);
+}
+.ui-btn[data-variant="danger-soft"]:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+.ui-btn[data-variant="accent-soft"] {
+  background: var(--surface-accent-soft);
+  color: var(--fg-accent);
+}
+.ui-btn[data-variant="accent-soft"]:hover:not(:disabled) {
+  background: var(--surface-accent-muted);
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────────── */
+.ui-spinner {
+  --_s: 20px;
+  --_w: 2px;
+  display: inline-block;
+  width: var(--_s);
+  height: var(--_s);
+  border-radius: 50%;
+  border: var(--_w) solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: ui-spin 0.8s linear infinite;
+  flex: none;
+}
+.ui-spinner[data-size="sm"] { --_s: 14px; --_w: 2px; }
+.ui-spinner[data-size="lg"] { --_s: 32px; --_w: 3px; }
+.ui-spinner[data-tone="accent"] { color: var(--accent); }
+.ui-spinner[data-tone="muted"] { color: var(--fg-muted); }
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+
+/* Full-area centered loading block */
+.ui-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-10) var(--sp-4);
+  color: var(--fg-muted);
+  font-size: var(--fs-md);
+  min-height: 120px;
+}
+
+/* ── Skeleton ────────────────────────────────────────────────────────────── */
+.ui-skel {
+  display: block;
+  background: var(--surface-hover);
+  border-radius: var(--r-xs);
+  position: relative;
+  overflow: hidden;
+}
+.ui-skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--fg-primary) 6%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: ui-shimmer 1.4s var(--ease-in-out) infinite;
+}
+.ui-skel[data-shape="circle"] { border-radius: 50%; }
+.ui-skel[data-shape="text"] { height: 12px; border-radius: var(--r-xs); }
+@keyframes ui-shimmer { to { transform: translateX(100%); } }
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+.ui-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: var(--sp-2);
+  padding: var(--sp-10) var(--sp-6);
+  color: var(--fg-muted);
+  min-height: 160px;
+}
+.ui-empty[data-size="compact"] { padding: var(--sp-5) var(--sp-4); min-height: 0; }
+.ui-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-lg);
+  background: var(--surface-accent-soft);
+  color: var(--fg-accent);
+  margin-bottom: var(--sp-1);
+}
+.ui-empty[data-size="compact"] .ui-empty-icon { width: 36px; height: 36px; }
+.ui-empty-title {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-primary);
+  line-height: var(--lh-snug);
+}
+.ui-empty[data-size="compact"] .ui-empty-title { font-size: var(--fs-base); }
+.ui-empty-desc {
+  font-size: var(--fs-md);
+  line-height: var(--lh-normal);
+  max-width: 34ch;
+}
+.ui-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+/* ── Toast stack (replaces the single-slot .cv-toast) ────────────────────── */
+.cv-toast-stack {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: var(--z-toast, 4000);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  pointer-events: none;
+}
+.cv-toast-stack .cv-toast {
+  position: static;
+  pointer-events: auto;
+}
+@media (max-width: 560px) {
+  .cv-toast-stack {
+    right: 12px;
+    left: 12px;
+    bottom: 12px;
+    align-items: stretch;
+  }
+}
+
+/* ── Motion opt-out ──────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .ui-btn { transition: none; }
+  .ui-spinner { animation-duration: 1.6s; }
+  .ui-skel::after { animation: none; }
+  .ui-select-popup { animation: none; }
+  .ui-select-trigger { transition: none; }
+}
+
+/* ── Select ──────────────────────────────────────────────────────────────── */
+.ui-select-trigger {
+  --_h: 38px;
+  width: 100%;
+  height: var(--_h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2, 8px);
+  padding: 0 12px;
+  border: 1px solid var(--g200, var(--line-subtle, #e5e7eb));
+  border-radius: 10px;
+  background: var(--sb, var(--surface-raised, #fff));
+  background-image: none !important;
+  color: var(--g900, var(--fg-primary, #111827));
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  box-sizing: border-box;
+  transition:
+    border-color var(--dur-fast, 0.15s) ease,
+    box-shadow var(--dur-fast, 0.15s) ease,
+    background-color var(--dur-fast, 0.15s) ease;
+}
+
+.ui-select-trigger:hover:not(:disabled) {
+  border-color: var(--g300, var(--line-strong, #d1d5db));
+  background: var(--g50, var(--surface-hover, #f9fafb));
+}
+
+.ui-select-trigger:focus-visible,
+.ui-select-trigger.open {
+  border-color: var(--brand-500, var(--ac, #8b29be));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500, var(--ac, #8b29be)) 16%, transparent);
+}
+
+.ui-select-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ui-select-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-select-chev {
+  color: var(--g400, var(--fg-muted, #9ca3af));
+  flex-shrink: 0;
+  transition: transform var(--dur-fast, 0.18s) ease;
+}
+
+.ui-select-trigger.open .ui-select-chev {
+  transform: rotate(180deg);
+}
+
+.ui-select-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+
+.ui-select-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* sizes */
+.ui-select-trigger[data-size="sm"] { --_h: 30px; font-size: 12px; padding: 0 8px; border-radius: 8px; }
+.ui-select-trigger[data-size="lg"] { --_h: 44px; font-size: 14px; padding: 0 14px; border-radius: 12px; }
+
+/* ── Select Portal Popup (matches Chat More / FloatingMenu dropdown) ─────── */
+.ui-select-popup {
+  position: fixed;
+  z-index: 9999;
+  background: var(--sb, #fff);
+  border: 1px solid var(--g200, #e5e7eb);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  box-sizing: border-box;
+  max-height: 280px;
+  overflow-y: auto;
+  outline: none;
+  animation: fm-slide-in 0.12s ease-out;
+}
+
+.ui-select-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--g800, #1f2937);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background var(--dur-fast, 0.1s), color var(--dur-fast, 0.1s);
+}
+
+.ui-select-item:hover:not(:disabled),
+.ui-select-item.focused:not(:disabled) {
+  background: var(--g100, #f3f4f6);
+  color: var(--g900, #111827);
+}
+
+.ui-select-item.selected {
+  background: var(--g100, #f3f4f6);
+  color: var(--brand-500, var(--ac, #8b29be));
+  font-weight: 600;
+}
+
+.ui-select-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ui-select-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-select-item-check {
+  color: var(--brand-500, var(--ac, #8b29be));
+  flex-shrink: 0;
+}
+
+/* ── Brand logo theming (components/brand/Logo.tsx) ─────────────────────────────
+   The wordmark and loading glyph are painted with the brand gradient on light
+   surfaces and flip to solid white on dark ones. Dark mode = `body.dark` (also set
+   for OLED). theme="dark" on the component forces white; theme="light" keeps the
+   gradient even in dark mode. CSS beats the SVG `fill` attribute, so no JS needed. */
+.cb-svg { display: block; flex-shrink: 0; }
+.cb-svg[data-theme="dark"] .cb-adapt,
+body.dark .cb-svg[data-theme="auto"] .cb-adapt { fill: #fff; }

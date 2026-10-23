@@ -1,0 +1,6 @@
+# Production override — DEPRECATED
+# Use the profile approach instead:
+#   docker compose --profile production up -d
+#
+# This is only a wrapper that enables the production profile.
+# See docker-compose.yml for the nginx service definition (profile: production).

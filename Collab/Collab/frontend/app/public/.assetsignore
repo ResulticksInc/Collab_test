@@ -1,0 +1,7 @@
+# Workers assets cap at 25 MiB — desktop installers are served from R2 instead.
+desktop/*.exe
+desktop/*.dmg
+desktop/*.zip
+desktop/*.blockmap
+desktop/mac
+.DS_Store

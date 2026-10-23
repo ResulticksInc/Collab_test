@@ -1,0 +1,1014 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   CALENDAR — Figma "Collab Screens" › Calender-view 116:3227.
+   Month grid with card-style events, single-row toolbar, and the upcoming
+   meetings column. Overrides the legacy .cal-* rules in v1.css.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#vcal .cal-wrap {
+  grid-template-columns: 1fr 340px;
+  position: relative;
+}
+
+#vcal .cal-wrap.sidebar-closed {
+  grid-template-columns: 1fr;
+}
+
+#vcal .cal-wrap.sidebar-closed .cal-sidebar {
+  display: none;
+}
+
+#vcal .cal-wrap.sidebar-closed .cal-main {
+  border-right: none;
+}
+
+#vcal .cal-main {
+  border-right: 1px solid var(--rail-line);
+}
+
+/* ── Toolbar: [Meeting ID · Join]  [‹ May 2026 ›]  [Monthly ▾] [Schedule +] ── */
+#vcal .cal-nav {
+  padding: 21px 20px 24px;
+  border-bottom: none;
+  gap: 0;
+}
+
+#vcal .cal-nav-single {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  gap: 16px;
+  row-gap: 12px;
+}
+
+#vcal .cal-nav-center {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  justify-content: center;
+}
+
+#vcal .cal-nav h3 {
+  font-size: 20px;
+  font-weight: var(--fw-medium);
+  color: var(--fg-primary);
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+#vcal .cal-nav h3 .cal-year {
+  font-weight: var(--fw-regular);
+  margin-left: 6px;
+}
+
+#vcal .cal-nav-btns button {
+  border: none;
+  background: transparent;
+  color: var(--fg-primary);
+  opacity: 0.7;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+}
+
+#vcal .cal-nav-btns button:hover {
+  opacity: 1;
+  background: var(--surface-hover);
+}
+
+#vcal .cal-nav-btns .cal-today-btn {
+  font-size: 11px;
+  font-weight: var(--fw-medium);
+}
+
+#vcal .cal-join {
+  height: 35px;
+  border-radius: 7px;
+  border: 1px solid var(--cal-line);
+  background: var(--surface-raised);
+  padding: 0 5px 0 12px;
+  gap: 6px;
+}
+
+#vcal .cal-join-input {
+  font-size: 11px;
+  flex: 0 1 108px;
+  color: var(--fg-primary);
+}
+
+#vcal .cal-join-input::placeholder {
+  color: var(--group-hdr);
+}
+
+#vcal .cal-join-btn {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+}
+
+#vcal .cal-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Upcoming meetings toggle button */
+#vcal .cal-upc-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 33px;
+  padding: 0 12px;
+  border: 1px solid var(--cal-line);
+  border-radius: 8px;
+  background-color: var(--surface-raised);
+  color: var(--fg-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+#vcal .cal-upc-toggle:hover {
+  background-color: var(--surface-hover);
+  border-color: var(--g300);
+}
+
+#vcal .cal-upc-toggle.active {
+  background-color: var(--surface-hover);
+  color: var(--brand-text);
+  border-color: var(--brand-text);
+}
+
+#vcal .cal-upc-badge {
+  background: var(--brand-cta-gradient);
+  color: #fff;
+  font-size: 10px;
+  font-weight: var(--fw-bold);
+  min-width: 17px;
+  height: 17px;
+  line-height: 17px;
+  border-radius: 10px;
+  padding: 0 4px;
+  text-align: center;
+  display: inline-block;
+}
+
+#vcal .cal-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+#vcal .cal-sidebar-header h3 {
+  font-size: 12px;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-muted);
+  margin: 0;
+}
+
+#vcal .cal-sidebar-close {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+#vcal .cal-sidebar-close:hover {
+  color: var(--fg-primary);
+  background: var(--surface-hover);
+}
+
+#vcal .cal-sidebar-backdrop {
+  display: none;
+}
+
+/* "Monthly ▾" select replaces the 3-button toggle. */
+#vcal .cal-viewsel {
+  height: 33px;
+  padding: 0 12px;
+  border: 1px solid var(--cal-line);
+  border-radius: 8px;
+  background-color: var(--surface-raised);
+  color: var(--fg-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: none !important;
+}
+
+body.dark #vcal .cal-viewsel {
+  background-image: none !important;
+}
+
+#vcal .cal-sched-btn {
+  height: 35px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--brand-cta-gradient);
+
+}
+
+#vcal .cal-sched-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ── Month grid ─────────────────────────────────────────────────────── */
+#vcal .cal-grid-area {
+  border-top: 1px solid var(--cal-grid-line);
+}
+
+#vcal .cal-dh {
+  border-bottom: 1px solid var(--cal-grid-line);
+}
+
+#vcal .cal-dn {
+  text-align: left;
+  padding: 12px 14px 13px;
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--cal-dow);
+  border-right: 1px solid var(--cal-grid-line);
+}
+
+#vcal .cal-dn:last-child {
+  border-right: none;
+}
+
+/* Fixed 121px rows as drawn (6 rows = 726px); the grid area scrolls if the
+   viewport is shorter. */
+#vcal .cal-cells {
+  grid-auto-rows: 121px;
+  flex: 0 0 auto;
+}
+
+#vcal .cal-cell {
+  padding: 5px 5px 6px;
+  border-right: 1px solid var(--cal-grid-line);
+  border-bottom: 1px solid var(--cal-grid-line);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: transparent;
+}
+
+#vcal .cal-cell:nth-child(7n) {
+  border-right: none;
+}
+
+#vcal .cal-cell:hover {
+  background: var(--surface-hover);
+}
+
+#vcal .cal-cell.today {
+  background: transparent;
+}
+
+#vcal .cal-cell.is-past {
+  opacity: 1;
+  background: transparent;
+}
+
+#vcal .cal-cell.is-past .cal-ev,
+#vcal .cal-cell.is-past .cal-more {
+  opacity: 0.5;
+}
+
+#vcal .cal-dt {
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  font-size: 10.5px;
+  font-weight: var(--fw-bold);
+  color: var(--cal-date);
+  flex-shrink: 0;
+}
+
+#vcal .cal-cell.om .cal-dt,
+#vcal .cal-cell.is-past .cal-dt {
+  color: var(--cal-date-muted);
+}
+
+#vcal .cal-cell.today .cal-dt {
+  background: var(--brand-text);
+  color: #fff;
+}
+
+/* Event card: grey tile, 2px colour bar, title + time range. */
+#vcal .cal-ev {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 0;
+  padding: 6px 6px 6px 13px;
+  border-radius: 3px;
+  background: var(--cal-ev-bg);
+  border: 1px solid var(--cal-ev-line);
+  color: var(--brand-ink);
+  white-space: normal;
+  font-weight: var(--fw-medium);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+#vcal .cal-ev::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 10px;
+  background: currentColor;
+}
+
+#vcal .cal-ev:hover {
+  transform: none;
+  box-shadow: var(--sh);
+  filter: none;
+}
+
+#vcal .cal-ev-t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#vcal .cal-ev-time {
+  font-size: 8.5px;
+  font-weight: var(--fw-regular);
+  color: var(--fg-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#vcal .cal-ev.st-upcoming {
+  background: var(--cal-ev-bg);
+  color: var(--brand-ink);
+}
+
+#vcal .cal-ev.st-live,
+#vcal .cal-ev.st-soon {
+  background: var(--cal-ev-bg);
+  color: var(--cal-green);
+}
+
+#vcal .cal-ev.st-ended {
+  background: var(--cal-ev-bg);
+  color: var(--cal-date-muted);
+}
+
+#vcal .cal-ev.conflict {
+  box-shadow: none;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+#vcal .cal-more {
+  display: block;
+  width: 100%;
+  margin-top: 0;
+  padding: 7px 12px;
+  border-radius: 3px;
+  background: var(--cal-ev-bg);
+  color: var(--cal-more);
+  font-size: 10px;
+  font-weight: var(--fw-medium);
+  box-sizing: border-box;
+}
+
+#vcal .cal-more:hover {
+  background: var(--surface-hover);
+  color: var(--cal-more);
+}
+
+/* ── Upcoming meetings column ────────────────────────────────────────── */
+#vcal .cal-sidebar {
+  background: var(--surface-base);
+  padding: 14px 20px;
+}
+
+#vcal .cal-sidebar>h3 {
+  font-size: 12px;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-muted);
+  margin-bottom: 8px;
+}
+
+#vcal .upc-sec-hd {
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg-primary);
+  opacity: 0.7;
+  margin: 8px 0 10px;
+}
+
+#vcal .upc-sec-n {
+  display: none;
+}
+
+#vcal .meet-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  background: var(--cal-card-bg);
+  border: 1px solid var(--cal-card-line);
+  border-radius: 10px;
+  padding: 15px 14px;
+  margin-bottom: 10px;
+}
+
+#vcal .meet-card:hover {
+  border-color: var(--cal-card-line);
+  background: var(--cal-card-bg);
+  box-shadow: var(--sh);
+}
+
+#vcal .meet-card>* {
+  grid-column: 1 / -1;
+}
+
+#vcal .mc-hd {
+  margin-bottom: 7px;
+}
+
+#vcal .mc-hd h4 {
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-primary);
+}
+
+#vcal .mc-time {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+  color: var(--fg-primary);
+}
+
+#vcal .mc-desc {
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--fg-primary);
+  opacity: 0.7;
+  margin: 0 0 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+#vcal .mc-p {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: var(--fw-light, 300);
+  color: var(--fg-primary);
+  margin: 0;
+}
+
+#vcal .mc-p svg {
+  width: 16px;
+  height: 16px;
+}
+
+#vcal .join-btn {
+  grid-column: 2;
+  justify-self: end;
+  width: auto;
+  height: 26px;
+  padding: 0 8px;
+  margin-top: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: var(--fw-semibold);
+  background: var(--brand-cta-gradient);
+}
+
+#vcal .join-btn.live {
+  background: var(--cal-green);
+}
+
+#vcal .join-btn.soon {
+  background: var(--brand-cta-gradient);
+}
+
+#vcal .mc-participants-block {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+}
+
+#vcal .mc-badge {
+  margin-left: 0;
+}
+
+@media (max-width: 1180px) {
+  #vcal .cal-nav {
+    padding: 16px 18px 18px;
+  }
+
+  #vcal .cal-nav-single {
+    flex-wrap: wrap;
+    row-gap: 12px;
+  }
+
+  #vcal .cal-nav-center {
+    order: 1;
+    flex: 0 0 auto;
+  }
+
+  #vcal .cal-nav-right {
+    order: 2;
+    margin-left: auto;
+    gap: 10px;
+  }
+
+  #vcal .cal-join {
+    order: 3;
+    width: 100%;
+    max-width: 360px;
+  }
+}
+
+@media (max-width: 1024px) {
+  #vcal .cal-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  #vcal .cal-main {
+    border-right: none;
+  }
+
+  #vcal .cal-sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 340px;
+    max-width: 88vw;
+    z-index: 250;
+    background: var(--surface-base);
+    box-shadow: -6px 0 24px rgba(0, 0, 0, 0.2);
+    border-left: 1px solid var(--rail-line);
+    transform: translateX(100%);
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 16px 20px;
+  }
+
+  #vcal .cal-sidebar.open {
+    transform: translateX(0);
+    display: flex;
+  }
+
+  #vcal .cal-sidebar.closed {
+    display: none;
+  }
+
+  #vcal .cal-sidebar-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #vcal .cal-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 240;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+}
+
+@media (max-width: 768px) {
+  #vcal .cal-dn {
+    padding: 8px 4px;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  #vcal .cal-cells {
+    grid-auto-rows: minmax(80px, 1fr);
+  }
+
+  #vcal .cal-cell {
+    padding: 4px 3px 5px;
+    gap: 2px;
+  }
+
+  #vcal .cal-dt {
+    width: 18px;
+    height: 18px;
+    font-size: 10px;
+    line-height: 18px;
+  }
+
+  #vcal .cal-ev {
+    padding: 3px 4px 3px 8px;
+    font-size: 10px;
+    gap: 1px;
+  }
+
+  #vcal .cal-ev::before {
+    left: 3px;
+    top: 3px;
+    bottom: 3px;
+    width: 2px;
+  }
+
+  #vcal .cal-ev-t {
+    font-size: 10px;
+  }
+
+  #vcal .cal-ev-time {
+    font-size: 8px;
+  }
+
+  #vcal .cal-more {
+    padding: 3px 6px;
+    font-size: 9px;
+  }
+}
+
+@media (max-width: 640px) {
+  #vcal .cal-nav {
+    padding: 12px 14px 14px;
+  }
+
+  #vcal .cal-nav-single {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  #vcal .cal-nav-center {
+    order: 1;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  #vcal .cal-nav h3 {
+    font-size: 16px;
+    padding: 0 4px;
+  }
+
+  #vcal .cal-nav-right {
+    order: 2;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-left: 0;
+  }
+
+  #vcal .cal-viewsel {
+    flex: 1;
+    min-width: 0;
+    padding: 0 10px;
+  }
+
+  #vcal .cal-upc-toggle {
+    padding: 0 8px;
+  }
+
+  #vcal .cal-upc-toggle .cal-upc-toggle-txt {
+    display: none;
+  }
+
+  #vcal .cal-sched-btn {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    padding: 0 10px;
+    gap: 6px;
+  }
+
+  #vcal .cal-join {
+    order: 3;
+    width: 100%;
+    max-width: none;
+  }
+
+  #vcal .cal-join-input {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  #vcal .cal-grid-area {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #vcal .cal-dh,
+  #vcal .cal-cells {
+    min-width: 460px;
+  }
+}
+/* ── Schedule-meeting dialog (Figma "New meeting") ─────────────────────────
+   Two columns: the form on the left, "Your day so far" on the right — an
+   hour strip of the chosen day with the meetings already on it and the one
+   being scheduled highlighted. Overrides the single-column .sm-* rules in
+   v1.css; the dialog body is edge-to-edge (Modal bodyStyle) so the divider
+   runs from the header to the footer. */
+.sm-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.sm-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 14px 22px 22px;
+  overflow-y: auto;
+}
+
+.sm-day {
+  flex: 0 0 300px;
+  box-sizing: border-box;
+  border-left: 1px solid var(--g200);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sm-day-head {
+  flex: none;
+  padding: 18px 20px 0;
+}
+
+/* Only the hour strip scrolls; the day heading stays put. */
+.sm-day-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 20px 20px;
+  scrollbar-width: thin;
+}
+
+.sm-day-dow {
+  font-size: 12.5px;
+  color: var(--g500);
+}
+
+.sm-day-h {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--g900);
+  margin: 2px 0 14px;
+}
+
+.sm-day-tl {
+  position: relative;
+}
+
+.sm-day-hour {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 16px;
+}
+
+.sm-day-hour::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--g200);
+}
+
+.sm-day-hour-lbl {
+  font-size: 11.5px;
+  color: var(--g500);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-day-ev {
+  position: absolute;
+  left: 40px;
+  right: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--g200);
+  border-radius: 8px;
+  background: var(--g50);
+  padding: 8px 10px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.sm-day-ev-t {
+  font-weight: 600;
+  color: var(--g900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sm-day-ev-when {
+  color: var(--g500);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-day-ev.new {
+  border-color: transparent;
+  background: var(--brand-cta-gradient, linear-gradient(135deg, #6d28d9, #3b0764));
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--ac) 30%, transparent);
+  z-index: 1;
+}
+
+.sm-day-ev.new .sm-day-ev-t,
+.sm-day-ev.new .sm-day-ev-when {
+  color: #fff;
+}
+
+.sm-day-ev.new .sm-day-ev-when {
+  opacity: 0.85;
+}
+
+/* Header icon: a round lavender badge. */
+.sm-title-ico {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ac) 12%, transparent);
+}
+
+/* People row is the one underlined row; when / where / agenda have no icon
+   gutter so they line up with the title. */
+.sm-row.sm-people {
+  padding: 10px 0 10px;
+  border-bottom: 1px solid var(--g200);
+  align-items: center;
+}
+
+.sm-row.sm-people .sm-row-ico {
+  margin-top: 0;
+}
+
+.sm-row.sm-plain {
+  gap: 0;
+}
+
+/* When card: flat grey panel, fields in one line with the zone at the end. */
+.sm-when {
+  margin-top: 18px;
+  padding: 14px 16px 16px;
+  border-radius: 12px;
+  background: var(--g50);
+}
+
+.sm-when-head {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+}
+
+.sm-when-fields .sm-when-in {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 40px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.sm-when-fields {
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.sm-when-fields .sm-when-in[type="date"] {
+  width: 136px;
+}
+
+.sm-when-fields .sm-when-in[type="time"] {
+  /* Wide enough for a 12-hour "10:29 PM" in locales that render one. */
+  width: 118px;
+}
+
+.sm-durs,
+.sm-when-btns {
+  padding-left: 0;
+}
+
+.sm-durs {
+  margin-top: 12px;
+}
+
+.sm-dur {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 16px;
+  border-radius: 10px;
+}
+
+/* Repeat + reminder: two equal, full-width selects with the caret on the right. */
+.sm-when-btns {
+  margin-top: 12px;
+  gap: 10px;
+}
+
+.sm-when-btns > .sm-pick {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 40px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  padding: 0 12px;
+  font-size: 13.5px;
+  gap: 10px;
+}
+
+.sm-when-btns > button.sm-pick > svg:last-child {
+  margin-left: auto;
+  color: var(--g500);
+}
+
+.sm-when-btns .sm-pick .ui-select-trigger {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  --_h: auto;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Where: the "Collab call" pill then the underlined room/link field. */
+.sm-loc-head {
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+.sm-loc-pill {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border-color: transparent;
+}
+
+/* Agenda: a boxed field instead of an underline. */
+.sm-desc-in {
+  border: 1px solid var(--g200);
+  border-radius: 12px;
+  padding: 12px 14px;
+  min-height: 84px;
+  background: var(--w);
+}
+
+.sm-desc-in:focus {
+  border-color: var(--ac);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac) 14%, transparent);
+}
+
+@media (max-width: 760px) {
+  .sm-split {
+    flex-direction: column;
+  }
+
+  .sm-day {
+    display: none;
+  }
+}

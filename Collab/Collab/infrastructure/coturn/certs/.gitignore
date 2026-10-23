@@ -1,0 +1,8 @@
+# Real TLS material for coturn (turns:) — NEVER commit private keys or certs.
+# Drop fullchain.pem + privkey.key here on the live box before bringing coturn up.
+# They must be valid for turncollab.resulticks.com (the host in TURN_URLS).
+*.pem
+*.crt
+*.key
+!.gitignore
+!README.md

@@ -1,0 +1,25 @@
+{
+  "version": "1.0.3",
+  "url": "/desktop/Collab%20Setup%201.0.3.exe",
+  "sha256": "e6c3960436f5434e33eb55ebbab83633a7cdeb337526218ea5430c65055b9dd7",
+  "notes": "What's new in 1.0.3 \u2014 the \"Back to sign in\" button on the single sign-on screen now lines up with the macOS window controls, and the Windows and macOS installers are refreshed. Installed copies update in place; your sign-in and data are kept.",
+  "channels": {
+    "windows": {
+      "x64": {
+        "installer": "/desktop/Collab%20Setup%201.0.3.exe",
+        "size": 85620188,
+        "sha256": "e6c3960436f5434e33eb55ebbab83633a7cdeb337526218ea5430c65055b9dd7",
+        "portable": "/desktop/Collab%20Portable%201.0.3.exe",
+        "available": true
+      }
+    },
+    "mac": {
+      "universal": {
+        "installer": "/desktop/mac/Collab-1.0.3.pkg",
+        "size": 185778589,
+        "sha256": "2b42cf9933ad2ba80281897cc68e12fdf1e499dfeb1d943f8b664086abfee261",
+        "available": true
+      }
+    }
+  }
+}

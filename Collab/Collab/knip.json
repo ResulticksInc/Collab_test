@@ -1,0 +1,33 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "ignoreDependencies": [
+    "@next/bundle-analyzer",
+    "@secretlint/secretlint-rule-preset-recommend",
+    "eslint",
+    "tsx"
+  ],
+  "workspaces": {
+    "config": {
+      "project": ["src/**/*.ts"]
+    },
+    "shared": {
+      "project": ["src/**/*.ts"]
+    },
+    "database": {
+      "project": ["src/**/*.ts", "seeds/**/*.ts"]
+    },
+    "backend": {
+      "project": ["app/src/**/*.ts"]
+    },
+    "frontend/app": {
+      "project": ["src/**/*.{ts,tsx}"]
+    },
+    "mcp": {
+      "project": ["app/src/**/*.ts"]
+    },
+    "agents": {
+      "project": ["app/src/**/*.ts"]
+    }
+  },
+  "ignoreBinaries": ["tsx"]
+}

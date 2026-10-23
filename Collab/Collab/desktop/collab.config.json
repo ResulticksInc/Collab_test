@@ -1,0 +1,7 @@
+{
+  "env": "production",
+  "webUrl": "https://collab.resulticks.com",
+  "apiUrl": "https://collab.resulticks.com/api",
+  "socketUrl": "https://collab.resulticks.com",
+  "livekitUrl": "wss://collab.resulticks.com/livekit"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@colab/agents",
+  "version": "1.0.1",
+  "private": true,
+  "main": "app/src/index.ts",
+  "description": "AI Workspace Companion + future agents (scaffold)."
+}

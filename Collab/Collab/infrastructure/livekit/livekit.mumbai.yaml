@@ -1,0 +1,29 @@
+# LiveKit SFU — regional MEDIA SERVER (asia-south1 / Mumbai).
+#
+# Same media config as livekit.live.yaml, plus a redis: block so this node keeps
+# its room state in the co-located Redis and can scale to multiple SFU nodes
+# later with no re-architecting. use_external_ip:true auto-discovers THIS box's
+# public IP via STUN — nothing region-specific to hand-edit.
+#
+# Browsers reach the media ports directly (open udp:7532 + tcp:7531 at the GCP
+# firewall on this box's public IP). Signalling (7534) is proxied from the
+# US-East nginx (/livekit), so it stays on collab.resulticks.com — no cert here.
+port: 7534
+rtc:
+  udp_port: 7532
+  tcp_port: 7531
+  # Advertise BOTH the local host candidate AND the STUN-discovered public IP, so
+  # same-region/VPN clients pair locally and off-network clients pair on the
+  # public IP. Do NOT pin node_ip — let STUN discover this box's public IP.
+  use_external_ip: true
+keys:
+  # Overridden at runtime by LIVEKIT_KEYS (LIVEKIT_API_KEY / _SECRET in .env.mumbai),
+  # which MUST match the US-East backend so its minted tokens validate here.
+  colab-prod: devsecret-overridden-by-env-do-not-use-in-prod
+turn:
+  enabled: true
+  udp_port: 7533
+# This node's OWN Redis (co-located, internal). NOT the app's huddleStore Redis
+# (that stays on US-East with the backend). Enables multi-node SFU scaling.
+redis:
+  address: redis:6379

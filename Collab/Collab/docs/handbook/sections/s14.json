@@ -1,0 +1,382 @@
+[
+  {"t":"h","level":1,"text":"14. DevOps Handbook"},
+
+  {"t":"p","text":"This section is the operational source of truth for deploying, releasing, monitoring, and securing CoLab. It is grounded in the real deployment artifacts in the repository: the root `DEPLOY.md` live runbook, the `docker-compose.live.yml` / `docker-compose.yml` compose files, the `infrastructure/` config tree (nginx, livekit, coturn, caddy), and the `scripts/` automation. Every command, port, and checklist item below is CoLab-specific. Where the prompt's recon notes and the real files disagree, the real files win and the discrepancy is flagged inline."},
+
+  {"t":"p","text":"**Plain-language summary.** CoLab ships as a set of Docker containers behind a reverse proxy. A single build runs everywhere; the environment file (`.env.live`, `.env.teams`, `.env.local`) is what changes between tiers. The database is a long-lived MySQL store that must never be wiped on redeploy, calls flow through a LiveKit media server that must advertise a reachable IP, and the whole thing only works over HTTPS because browsers refuse camera/microphone access on insecure origins."},
+
+  {"t":"callout","kind":"warning","title":"The one mistake that loses all data","text":"Never run `docker compose ... down -v` on a tier that uses the bundled MySQL container. The `-v` flag deletes the `colab_mysqldata` volume — every user, message, meeting, and file metadata row is gone. Use `down` (no `-v`) or `up -d --build`. The named volume survives image rebuilds; `initdb/*.sql` only runs on an empty volume."},
+
+  {"t":"h","level":2,"text":"14.1 Deployment Topology Overview"},
+
+  {"t":"p","text":"CoLab has three running tiers plus a regional media variant, all built from one image set. The environment file selects the tier; the same frontend and backend code run in each. The corporate load balancer terminates TLS on 443 and forwards to the server's published nginx port; nginx inside the container then fans traffic out to the frontend, backend, LiveKit signalling, and MinIO over the internal Docker network."},
+
+  {"t":"diagram","kind":"flow","title":"Request path (web + signalling)","nodes":[
+    {"label":"Browser","sub":"https 443"},
+    {"label":"Corporate LB","sub":"TLS terminate"},
+    {"label":"nginx","sub":":7530 in container"},
+    {"label":"Frontend / Backend","sub":"3000 / 4000"}
+  ]},
+
+  {"t":"p","text":"Media (RTP/ICE/UDP) does not follow the web path. The browser sends media straight to the LiveKit SFU's published media ports on the server's node IP, and off-network clients relay through coturn. This split — signalling over WSS through nginx, media direct to the SFU — is the single most important mental model for debugging calls."},
+
+  {"t":"diagram","kind":"flow","title":"Media path (calls/meetings)","nodes":[
+    {"label":"Browser","sub":"ICE/RTP"},
+    {"label":"coturn relay","sub":"if off-LAN"},
+    {"label":"LiveKit SFU","sub":"node_ip media ports"},
+    {"label":"Browser","sub":"other party"}
+  ]},
+
+  {"t":"p","text":"**Tier matrix.** The values below come from `DEPLOY.md`, `docker-compose.live.yml`, and the env-profile docs. Note the port nuance: `docker-compose.live.yml` defaults `NGINX_PORT` to `7524`, but `DEPLOY.md` documents the canonical live deploy via `docker-compose.yml --profile production` with the LB forwarding to `:3002`. Both are valid deploy paths for the live box; always pass `--env-file .env.live` so the right `NGINX_PORT` and DB profile are applied, and confirm which compose file the operator is using before assuming the host port."},
+
+  {"t":"table","headers":["Tier","Origin","Server / SFU IP","Host web port","DB","LiveKit config"],"rows":[
+    ["local","localhost (port 3002)","127.0.0.1","3002","bundled MySQL colab:colab","livekit.yaml (node_ip 127.0.0.1)"],
+    ["teams/test","collab.resul.com / collab.resul.team","10.205.11.8","7520","res_apdev2945 internal","livekit.test.yaml (10.205.11.8)"],
+    ["live/prod","collab.resulticks.com","10.200.3.17","3002 (DEPLOY.md) / 7524 (compose default)","shared corp MySQL 10.101.3.2:3603, DB_PROFILE=live","livekit.live.yaml (use_external_ip true)"],
+    ["mumbai","media engine only (asia-south1)","GCP public IP","n/a (media only)","n/a (app stays US-East)","livekit.mumbai.yaml"]
+  ]},
+
+  {"t":"p","text":"**Container inventory (live/base, `colab-*` prefix):** `colab-db` (mysql:8), `colab-redis` (redis:7-alpine), `colab-minio`, `colab-livekit` (livekit/livekit-server:v1.9), `colab-coturn` (profile-gated OFF in live), `colab-nginx` (digest-pinned), `colab-backend`, `colab-frontend`. The Caddy-fronted `docker-compose.production.yml` uses a `collab-*` prefix and adds `collab-caddy`. The egress recording worker (`colab-egress`) is profile-gated and not enabled by default."},
+
+  {"t":"callout","kind":"note","title":"Promotion path","text":"Changes flow localhost → teams/test → (manager approval) → live. Because URLs are derived from the request origin at runtime, the exact same image promotes across tiers — only the `.env.<profile>` file changes. Use `scripts/use-profile.ps1` (or `.sh`) to copy `.env.<profile>` → `.env`; it warns on leftover `REPLACE_WITH_*` / `CHANGE_ME_*` placeholders."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"14.2 Pre-Deployment Checklist"},
+
+  {"t":"p","text":"Run this before touching the server. It catches the failure modes that have actually bitten this deployment: blank env values, non-idempotent assumptions, un-backed-up databases, and secret mismatches between the backend and the SFU."},
+
+  {"t":"ol","items":[
+    "Confirm you are deploying the intended commit: `git log -1 --oneline` matches the release tag, and the working tree is clean.",
+    "Confirm the env file exists and is filled: `.env.live` is present with REAL values (DB password, AUTH_JWT_SECRET, LIVEKIT_API_SECRET, TURN_USERNAME/PASSWORD). No blanks, no `CHANGE_ME_*`, no `REPLACE_WITH_*`. A deployment zip must ship with real values filled in — never blank.",
+    "Confirm DB_PROFILE is correct for the tier (`DB_PROFILE=live` on the live box → uses `DATABASE_URL_LIVE`). A wrong profile silently writes to the bundled container instead of corporate MySQL.",
+    "Verify the production secret guard will pass: AUTH_JWT_SECRET is >= 32 chars and not the dev default `dev-only-change-me`; LIVEKIT_API_SECRET is not the bundled default. The backend refuses to boot in production with weak/default secrets.",
+    "Verify migrations are idempotent and additive: every file in `database/migrations/` (0001–0047) is tracked in `schema_migrations`, the runner is statement-level idempotent (swallows errnos 1050/1060/1061/1826/1359/1304/1065), and no migration drops or renames a column in place.",
+    "BACK UP THE DATABASE before any redeploy that could touch data (see the backup command in 14.9). On live, `scripts/migrate-local-to-prod.sh` takes a prod backup first as its own rollback — but take an independent one anyway.",
+    "Confirm LiveKit secret agreement: the `LIVEKIT_KEYS` env passed to the SFU container is derived from the same `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` the backend signs tokens with. A mismatch produces `invalid token / cryptographic primitive` on every call.",
+    "Confirm the LiveKit yaml for this tier advertises a reachable IP: live uses `livekit.live.yaml` with `use_external_ip: true` and `node_ip` UNSET (advertises both the 10.200.3.17 host candidate AND a STUN-discovered public IP).",
+    "Confirm TURN config matches byte-for-byte: `TURN_USERNAME`/`TURN_PASSWORD` in `.env.live` exactly equal the `user=` line in `infrastructure/coturn/turnserver.conf` (static lt-cred-mech, NOT HMAC).",
+    "Confirm firewall rules are (or will be) open for media: 7531/tcp, 7532/udp, 7533/udp for the SFU, plus 3478/udp+tcp and 49152-49251/udp for coturn (see 14.10).",
+    "Confirm TLS is terminated upstream (corporate LB on 443) — nginx never holds a cert and honors `X-Forwarded-Proto`. Without HTTPS, browsers block getUserMedia and wss, so calls cannot work."
+  ]},
+
+  {"t":"callout","kind":"risk","title":"Idempotency is load-bearing","text":"The migration runner resumes from its failure point on the next boot because every statement is idempotent. If you author a migration that is NOT safe to re-run (e.g. an unguarded `INSERT` without `ON DUPLICATE KEY`, or a destructive `ALTER`), a transient DB blip on boot can crash-loop the backend or duplicate data. Guard new index/column adds via `information_schema` checks or rely on the swallowed dup-errnos, and keep all DDL additive."},
+
+  {"t":"h","level":2,"text":"14.3 Deployment Checklist"},
+
+  {"t":"p","text":"The canonical live deploy from `DEPLOY.md`. All commands run from the unzipped bundle root on the server. The first form (base compose + `--profile production`) is what `DEPLOY.md` documents as primary; the `docker-compose.live.yml` form is the alternate that only publishes the two externally-reachable surfaces (nginx + LiveKit media)."},
+
+  {"t":"h","level":3,"text":"Clean deploy from scratch (keeps the DB)"},
+
+  {"t":"code","lines":[
+    "# remove any old containers — KEEPS the database volume:",
+    "docker compose --env-file .env.live -f docker-compose.yml --profile production down",
+    "",
+    "# build images + start ALL services fresh:",
+    "docker compose --env-file .env.live -f docker-compose.yml --profile production up -d --build"
+  ]},
+
+  {"t":"p","text":"That second command builds the frontend/backend images, starts db + redis + minio + livekit + coturn + backend + frontend, runs DB migrations + seed on boot, and brings up nginx (via `--profile production`), which proxies `/livekit` with the WebSocket upgrade. The corporate LB forwards `https://collab.resulticks.com` (443) to this server's `:3002`."},
+
+  {"t":"h","level":3,"text":"Alternate: docker-compose.live.yml (minimal host surface)"},
+
+  {"t":"code","lines":[
+    "docker compose --env-file .env.live -f docker-compose.live.yml up -d --build"
+  ]},
+
+  {"t":"p","text":"This file publishes ONLY the two ports that must be reachable from outside the Docker host: nginx (`${NGINX_PORT:-7524}:7530`) and LiveKit media (7531/tcp, 7532/udp, 7533/udp). Everything else (db:3306, backend:4000, frontend:3000, minio:9000, livekit:7534 signalling) stays internal-only to avoid host-port collisions on the shared box. coturn is profile-gated OFF here because the live TURN relay runs on a dedicated public box; add `--profile coturn` only to run TURN co-located."},
+
+  {"t":"h","level":3,"text":"Other deploy targets"},
+
+  {"t":"table","headers":["Target","Command"],"rows":[
+    ["Production (Caddy HTTPS)","`docker compose --env-file .env -f docker-compose.production.yml up -d --build`"],
+    ["Cloud demo (LiveKit Cloud + Cloudflare Tunnel)","`docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build db redis minio backend frontend cloudflared`"],
+    ["Mumbai regional media node","`docker compose --env-file .env.mumbai -f docker-compose.mumbai.yml up -d`"]
+  ]},
+
+  {"t":"diagram","kind":"pipeline","title":"Deploy execution sequence","steps":[
+    {"label":"Select profile","detail":"use-profile.ps1 copies .env.<tier> → .env (or pass --env-file directly)"},
+    {"label":"Back up DB","detail":"mysqldump the current data before any redeploy"},
+    {"label":"Build + up","detail":"docker compose ... up -d --build brings images current"},
+    {"label":"Boot bootstrap","detail":"backend runs ensureDatabase → migrate → promoteIfNeeded → seedIfNeeded"},
+    {"label":"Verify","detail":"run the post-deploy checks in 14.5 before declaring success"}
+  ]},
+
+  {"t":"callout","kind":"warning","title":"Always pass --env-file","text":"If you omit `--env-file .env.live`, compose falls back to defaults: `NGINX_PORT` resolves to the wrong host port, `DB_PROFILE` defaults to `local` (writing to the bundled container instead of corporate MySQL), and secrets fall back to dev defaults that the production guard rejects. The deploy will either fail to bind, or worse, silently serve the wrong database."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"14.4 Release Checklist"},
+
+  {"t":"p","text":"A 'release' is promoting a verified build up the tier chain. Because one image runs everywhere, releasing is mostly about discipline around the env file, the database, and verification — not about rebuilding per environment."},
+
+  {"t":"ol","items":[
+    "Tag the release commit and confirm CI/build is green (tsc gates the build even though eslint is set to `ignoreDuringBuilds`).",
+    "Run the full pre-deployment checklist (14.2) for the target tier.",
+    "Diff the env file against `.env.example` to confirm no new required variable was added without a value (e.g. a new `LLM_BASE_URL` or `S3_*` key).",
+    "If the release includes new migrations, dry-run them against a copy of the target DB or confirm they are additive/idempotent; never ship a migration that drops data in place.",
+    "Announce a maintenance window if the release recreates the backend (active calls and socket connections drop; the client auto-reconnects and resyncs, but in-flight media calls end).",
+    "Deploy to teams/test first; smoke-test login, send a message, start a 1:1 call, and start a meeting before promoting.",
+    "Obtain manager approval for the live promotion (per the documented promotion gate).",
+    "Deploy to live using the exact command in 14.3 with `--env-file .env.live`.",
+    "Run the post-deployment checklist (14.5) immediately after the live deploy.",
+    "Record the release: commit SHA, timestamp, which migrations ran, and the rollback point (the pre-deploy backup filename)."
+  ]},
+
+  {"t":"callout","kind":"note","title":"Secret rotation is a release event","text":"If a release rotates `LIVEKIT_API_SECRET`, you MUST recreate the `livekit` container (the `up -d` command does this) so the SFU and backend agree on the signing secret — otherwise every call fails with `invalid token`. After rotation, verify both sides match: `docker exec colab-livekit env | grep LIVEKIT_KEYS`."},
+
+  {"t":"h","level":2,"text":"14.5 Post-Deployment Checklist"},
+
+  {"t":"p","text":"Run these immediately after every live deploy. They are taken directly from the `DEPLOY.md` verify section and extended with the application-level smoke tests that prove the deploy is actually serving users."},
+
+  {"t":"h","level":3,"text":"Infrastructure verification"},
+
+  {"t":"code","lines":[
+    "# all containers Up:",
+    "docker compose --env-file .env.live -f docker-compose.yml --profile production ps",
+    "",
+    "# signalling reaches LiveKit (expect HTTP 400 'join_request is required'):",
+    "curl -sk https://collab.resulticks.com/livekit/rtc/v1/validate -o /dev/null -w '%{http_code}\\n'",
+    "",
+    "# SFU advertises the right IP (must be 10.200.3.17, never 127.0.0.1):",
+    "docker logs colab-livekit 2>&1 | grep -i publishercandidates | tail -1",
+    "",
+    "# coturn healthy — NO 'error resolving'; listening on 3478, relay-ip 10.200.3.17:",
+    "docker logs --tail=10 colab-coturn",
+    "",
+    "# LiveKit + backend share the same secret (after any rotation):",
+    "docker exec colab-livekit env | grep LIVEKIT_KEYS"
+  ]},
+
+  {"t":"h","level":3,"text":"Application smoke tests"},
+
+  {"t":"ol","items":[
+    "Open `https://collab.resulticks.com` in a browser; confirm the app loads (not the nginx default page or a 502).",
+    "Log in with a known account; confirm the dashboard renders and conversations list populates.",
+    "Send a message in a DM; confirm it appears optimistically and the MESSAGE_NEW echo reconciles it (no duplicate, no stuck 'sending' state).",
+    "Verify realtime works WITHOUT a refresh: have a second account send a message and confirm it arrives live (proves the socket and Redis adapter are healthy).",
+    "Start a 1:1 call from a clean LAN machine; in `chrome://webrtc-internals` confirm the selected ICE candidate pair reaches `connected` with a `host` pair (direct to 10.200.3.17:7532).",
+    "Start a call from a VPN / virtual-adapter machine; confirm it reaches `connected` via a `relay` pair (through coturn at 10.200.3.17:3478). Either host or relay success is acceptable.",
+    "Smoke-test a CROSS-NETWORK call (one party off-LAN) — this is the single highest-value test because the media plane is the most fragile surface.",
+    "Open and download a file attachment; confirm it loads (proves the same-origin `/api/files/:id/download` proxy and MinIO are wired).",
+    "Schedule a meeting and join it; confirm the LiveKit room connects and in-meeting chat replays history."
+  ]},
+
+  {"t":"callout","kind":"tip","title":"If the very first login fails on live","text":"On `DB_PROFILE=live`, the corporate MySQL starts empty. If you intend to carry localhost data over, run `CONFIRM=yes bash scripts/migrate-local-to-prod.sh` ONCE before users log in — it backs up prod, dumps the local `colab-db` container, and imports it into corporate MySQL. For a fresh empty schema instead, run `node scripts/fresh-prod-migrate.js` (drops all prod tables and re-applies the migrations). Never run both."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"14.6 Monitoring Checklist"},
+
+  {"t":"p","text":"CoLab does not ship an external metrics stack (no Prometheus/Grafana in the compose files). Monitoring is built from container logs, the in-app diagnostics layer, and a small set of health endpoints. Treat the client-side diagnostics as a first-class observability tool — they were purpose-built to surface the live media-plane problems."},
+
+  {"t":"h","level":3,"text":"What to monitor and how"},
+
+  {"t":"table","headers":["Signal","Where","Healthy state"],"rows":[
+    ["Container liveness","`docker compose ... ps`","every service Up; backend not restart-looping"],
+    ["Backend health","`GET /api/health` (routes/health.ts)","200 OK"],
+    ["DB connectivity","backend boot logs","ensureDatabase → migrate completes without re-throw"],
+    ["Redis adapter","backend/socket logs","adapter swap completes < 3s; else falls back to in-memory (logged)"],
+    ["LiveKit ICE","`docker logs colab-livekit | grep publishercandidates`","advertises 10.200.3.17 (+ public IP on live), never 127.0.0.1"],
+    ["coturn","`docker logs colab-coturn`","listening on 3478, relay-ip set, no 'error resolving'"],
+    ["MinIO","backend boot log","'[boot] S3 bucket check' passes (or skip is logged — see risk below)"],
+    ["Rate limiting","backend logs / 429 responses","429 RATE_LIMITED only under genuine load, not steady-state"],
+    ["Client errors","DiagnosticsPanel / `window.colabLogs`","no recurring error-category entries in the 400-entry ring buffer"]
+  ]},
+
+  {"t":"h","level":3,"text":"Built-in diagnostics (use these in incidents)"},
+
+  {"t":"ul","items":[
+    {"text":"**Client logger** (`lib/logger.ts`): a zero-dep structured logger with a 400-entry ring buffer and pub/sub. Levels info/success/warn/error; categories app|auth|server|realtime|call|meeting|media|data. Every error carries a plain-English hint. Access via `window.colabLogs` (open/copy/dump/errors/clear/help).","items":[]},
+    {"text":"**DiagnosticsPanel** (`DiagnosticsPanel.tsx`): a user-facing overlay with health chips grouped by subsystem and a copyable `buildReport()`. Open via Ctrl+Alt+D, `?diag=1`, the floating error pill, or `window.__colabDiag()`. Ask users to copy this report when filing call issues.","items":[]},
+    {"text":"**Call diagnostics** (`lib/callDiagnostics.ts` + `CallDebugPanel.tsx`): WebRTC observability that polls `getStats()` every 1500ms and emits grep-able `[CALLDIAG <label>]` lines tracking ICE state, selected candidate-pair type (host/srflx/prflx/relay), protocol, `turnUsed`, `turnAdvertised`, RTT, packet loss, and in/out kbps. Always on in dev; enable in staging/prod via `localStorage colab_call_debug=1` or `?calldebug=1`.","items":[]}
+  ]},
+
+  {"t":"ol","items":[
+    "After deploy, watch `docker compose ... logs -f backend` for one full minute; confirm no error re-throws and the boot sequence (ensureDatabase → migrate → promoteIfNeeded → seedIfNeeded → listen) completes.",
+    "Confirm the scheduled-message poller, recording-retention purge, and stale-ringing-call sweep timers start without error.",
+    "Spot-check `GET /api/health` returns 200.",
+    "Grep LiveKit logs for `publishercandidates` and confirm the advertised IP is correct.",
+    "Keep a `?calldebug=1` browser session open during the first cross-network call to catch ICE failures with their TURN-aware hints.",
+    "Periodically check for 429 spikes (rate limiting) and `message:rate_limited` / `message:send_failed` advisory events that indicate abuse or a misbehaving client.",
+    "Watch for the silent MinIO fallback (see the risk callout) — files quietly landing in MySQL is invisible without checking storage_key population."
+  ]},
+
+  {"t":"callout","kind":"risk","title":"Silent failure modes to watch","text":"Two failures are silent by design. (1) If MinIO is down, file uploads silently fall back to storing bytes in the MySQL `data` LONGBLOB (empty catch in `fileService.create`) — no operator alert. (2) If Redis is unavailable, the socket adapter and token blocklist fall back to in-memory per-instance behavior; on a single instance this is fine, but multi-instance fan-out and revocation break silently. Add explicit checks for both to your monitoring routine."},
+
+  {"t":"h","level":2,"text":"14.7 Security Checklist"},
+
+  {"t":"p","text":"CoLab's security posture is: scrypt password hashing, stateless HS256 JWTs with a Redis-backed blocklist for revocation, resource-membership authorization, in-memory rate limiting, hardening response headers, and optional DM-only E2EE that is OFF by default. The checklist below verifies these are actually in force in the deployed environment."},
+
+  {"t":"ol","items":[
+    "Confirm the production secret guard passed: AUTH_JWT_SECRET >= 32 chars and not `dev-only-change-me`; LIVEKIT_API_SECRET not the bundled default. The backend refuses to boot in production otherwise.",
+    "Confirm `NODE_ENV=production` so HSTS (`Strict-Transport-Security`) is sent and the `/api/debug` raw-DB-dump routes are NOT mounted.",
+    "Verify response security headers on `/api`: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off`, `Permissions-Policy` (geolocation/payment/usb disabled), and `x-powered-by` removed.",
+    "Confirm CORS is restricted to the intended origins (`CORS_ORIGINS`) with credentials enabled — not a wildcard.",
+    "Confirm TLS is terminated upstream and all client traffic is HTTPS/WSS (insecure origins break both security and getUserMedia).",
+    "Verify rate limits are active: auth limiter 30 req / 15 min / IP on `/auth/login` + `/auth/signup`; global API limiter 600 req / 60s / IP; file upload 60/min; link-preview 60/min; socket MESSAGE_SEND token-bucket (cap 20, refill 5/s) per user.",
+    "Confirm token revocation works: Redis is reachable so the blocklist (`jwt:block:` prefix) persists; verify a logged-out token's signature segment is rejected on the next request. Note the socket handshake does NOT re-check the blocklist — only HTTP middleware does.",
+    "Rotate the hardcoded coturn static TURN password (it is committed in `infrastructure/coturn/turnserver.conf` and referenced in DEPLOY.md) — a known rotation candidate; remember it must match `.env.live` byte-for-byte after rotation.",
+    "Rotate the default/weak MinIO root credentials (`colabminio/colabminio123` or `colab/colab`); the 'change for production' guidance is a comment, not enforced.",
+    "Confirm signup credential policy is enforced server-side (`credentialPolicy.ts`: email shape + disposable-domain block, password min 9 with complexity + common-password rejection) — the client mirror is non-authoritative and cannot be relied on.",
+    "If E2EE is intended ON, confirm BOTH `NEXT_PUBLIC_E2EE_ENABLED=true` (frontend) and `E2EE_ENABLED=true` (backend); understand it is DM/self-only, has no forward secrecy yet, and the safety-number UI is not wired (verification is genuinely pending).",
+    "Confirm the LiveKit room-token IDOR guards are in place: `/calls/token` resolves callId→call_<id> with an initiator/peer check, conversationId→conv_<id> with a membership check, and meetingId→meeting_<id> through `enterRoom` (eject/lock/lobby gate)."
+  ]},
+
+  {"t":"callout","kind":"risk","title":"Honest security limits — do not overclaim","text":"CoLab's E2EE is custom native-WebCrypto ECIES (P-256 ECDH + HKDF + AES-GCM), NOT the Signal protocol — no X3DH, no Double Ratchet, no forward secrecy, and the safety-number UI is unwired. It is OFF by default and DM/self-only; calls, meetings, groups, and channels are never E2EE. JWTs are long-lived (7d default) with no refresh/remint — revocation depends entirely on the blocklist, and the socket handshake skips it. Document these honestly; never market what the code does not do."},
+
+  {"t":"callout","kind":"note","title":"JWT TTL correction","text":"The session JWT default TTL is `7d` (env `AUTH_TOKEN_TTL`), not ~1h. The 3600s / 1h TTL belongs to the SEPARATE LiveKit room token (`LIVEKIT_TOKEN_TTL_SEC`), not the session JWT. Do not conflate the two when reasoning about session lifetime."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"14.8 Performance Checklist"},
+
+  {"t":"p","text":"Performance in CoLab spans three planes: the database (keyset pagination + indexes), realtime (Redis fan-out and refetch-driven updates), and media (SFU placement and codec/bitrate tuning). The dominant real-world performance issue observed in production was call latency caused by SFU geography, not application code."},
+
+  {"t":"ol","items":[
+    "Confirm message history uses keyset pagination (`GET /:id/messages?before=&limit<=100`) and the `idx_messages_conversation` and `idx_messages_fts` indexes exist — full-table scans on `messages` will dominate at scale.",
+    "Confirm the soft-delete-aware composite indexes from migration 0046 exist (idx_cm_user_deleted, idx_files_conv_deleted, idx_fshares_file_deleted, idx_notif_user_deleted, idx_reminders_user_deleted).",
+    "Confirm Redis is up so socket fan-out uses the Redis adapter (multi-instance) and presence fan-out stays scoped per-user-room rather than global `io.emit`.",
+    "Confirm the DB pool limit (`DB_POOL_LIMIT`, default 20) is sized for concurrency; watch for pool exhaustion under load.",
+    "Confirm media bitrate caps are tier-appropriate: 1:1/group calls cap videoEncoding maxBitrate at 3 Mbps; meetings cap at 1.7 Mbps; both capture at 1080p@30 with simulcast layers down to 180p/360p for weak viewers (vp9 primary, vp8 backup, dtx on).",
+    "Measure call RTT on a real cross-region call; if India users hit a US-East SFU, expect ~200–300ms even same-room because the SFU is not P2P (client→SFU→client). The fix is the Mumbai regional media node (asia-south1), which cuts RTT to ~20–40ms.",
+    "Confirm adaptiveStream and dynacast are enabled on the LiveKit Room (they are, in both call and meeting paths) so the SFU only forwards needed layers.",
+    "On large displays, confirm the auto zoom-ramp (CSS `zoom` at 2100/2560/3200/3840px breakpoints) keeps the UI crisp without re-layout thrash.",
+    "Watch for the CoLabV1 re-render storm: it is a god-component where every socket event can re-render the whole tree. Confirm memo'd shells (ChatView/Rail) and ref-mirrored stable props are intact; regressions here cause visible jank under message load."
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Latency is geography, not code","text":"The SFU relays media (client → SFU → client); it is not peer-to-peer. Two users in the same room on different continents still route through the SFU's region. If calls are laggy but connect, do NOT debug application code first — check where the SFU lives relative to the users and consider the Mumbai (asia-south1) media node. This relocation is env/config only, with no app code change: move only LiveKit + coturn + a LiveKit-state Redis; the app, DB, messaging, files, and app-Redis stay on US-East."},
+
+  {"t":"h","level":2,"text":"14.9 Backup, Migration, and Rollback"},
+
+  {"t":"p","text":"Data safety rests on three properties: migrations are additive and idempotent, the `colab_mysqldata` volume persists across rebuilds, and signups are durable. The audit verdict is that data loss is NOT a risk under normal operation — the residual risk is human error (`down -v`) and the two silent footguns (MinIO fallback, Redis fallback)."},
+
+  {"t":"h","level":3,"text":"Backup before every redeploy"},
+
+  {"t":"code","lines":[
+    "docker exec colab-db mysqldump -u colab -pcolab --single-transaction --routines --triggers colab > backup_$(date +%Y%m%d-%H%M%S).sql"
+  ]},
+
+  {"t":"h","level":3,"text":"Migration tooling"},
+
+  {"t":"table","headers":["Script","Purpose","Safety"],"rows":[
+    ["`scripts/migrate-local-to-prod.sh`","Back up prod, dump local colab-db, import into corporate MySQL (makes prod mirror local)","DESTRUCTIVE (--add-drop-table); takes a prod backup first as rollback; run ONCE before first login; needs CONFIRM=yes"],
+    ["`scripts/fresh-prod-migrate.js`","Drop all prod tables and re-apply migrations clean (empty schema, no local data)","DESTRUCTIVE; hardcoded prod URL; alternative to migrate-local-to-prod (never run both)"],
+    ["`scripts/migrate-db.ts`","Local-only truncate + reimport","Guarded to refuse non-loopback hosts"],
+    ["boot bootstrap","ensureDatabase → migrate → promoteIfNeeded → seedIfNeeded, auto-run on backend start","Idempotent, statement-level, resumes from failure point"]
+  ]},
+
+  {"t":"h","level":3,"text":"Rollback procedure"},
+
+  {"t":"ol","items":[
+    "Stop the new containers: `docker compose --env-file .env.live -f docker-compose.yml --profile production down` (NO `-v`).",
+    "If the database was altered destructively, restore the pre-deploy backup: `docker exec -i colab-db sh -c 'exec mysql -u colab -pcolab colab' < backup_<stamp>.sql`. On a destructive prod migration, the `colab-prod-backup-<stamp>.sql` that the migration script took first IS the rollback.",
+    "Redeploy the previous image/commit with `up -d --build`.",
+    "For a Mumbai media rollback: revert the nginx upstream to `livekit:7534`, restore `LIVEKIT_SERVER_URL`, restart livekit + nginx, and re-point `turncollab` DNS. coturn/TURN changes are additive — stop coturn and drop the `TURN_URLS` entries to revert; internal direct calls are unaffected.",
+    "Verify with the post-deployment checklist (14.5) before reopening to users."
+  ]},
+
+  {"t":"callout","kind":"warning","title":"Volume hygiene","text":"`initdb/*.sql` only runs on an EMPTY volume, so a normal rebuild never re-seeds. The only way to lose the live DB by accident is `down -v` (deletes `colab_mysqldata`) or pointing `DB_PROFILE` at the wrong target. Both are operator errors, not code risks — guard against them with discipline and backups."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"14.10 Calls & Media Operations Runbook"},
+
+  {"t":"p","text":"Calls fail in characteristic ways, and the failure plane (signalling vs media) determines the fix. Signalling problems show as 'can't reach media server' or a failed WSS handshake; media problems show as a call that connects in the UI but has no audio/video or never reaches `connected` in webrtc-internals. The grounding recon's central finding holds: a healthy `/livekit` signalling response does NOT mean media works — media is a separate ICE/DTLS plane."},
+
+  {"t":"diagram","kind":"grid","title":"Call failure triage","cols":2,"boxes":[
+    {"label":"Signalling fails","sub":"WSS handshake / 'media server' error"},
+    {"label":"Media fails","sub":"connects in UI, no audio/video"},
+    {"label":"Fix: nginx /livekit proxy, TLS, secret match","sub":"curl validate → 400"},
+    {"label":"Fix: firewall ports, node_ip, TURN reachability","sub":"webrtc-internals candidate pair"}
+  ]},
+
+  {"t":"h","level":3,"text":"Required open ports (server firewall + any network firewall in between)"},
+
+  {"t":"table","headers":["Port","Protocol","Purpose"],"rows":[
+    ["7531","tcp","LiveKit ICE/TCP media fallback"],
+    ["7532","udp","LiveKit ICE/UDP media"],
+    ["7533","udp","LiveKit built-in TURN relay"],
+    ["3478","udp + tcp","coturn plain-TURN control"],
+    ["49152–49251","udp","coturn relay media range (must match turnserver.conf min/max-port)"],
+    ["5349","tcp","coturn TURN-over-TLS (turns:)"],
+    ["443","tcp","coturn TURN-over-TLS for strict 443-only networks (needs a 2nd public IP if the LB also uses 443)"]
+  ]},
+
+  {"t":"code","lines":[
+    "firewall-cmd --permanent --add-port=7531/tcp",
+    "firewall-cmd --permanent --add-port=7532/udp",
+    "firewall-cmd --permanent --add-port=7533/udp",
+    "firewall-cmd --permanent --add-port=3478/udp --add-port=3478/tcp",
+    "firewall-cmd --permanent --add-port=49152-49251/udp",
+    "firewall-cmd --reload"
+  ]},
+
+  {"t":"h","level":3,"text":"Call troubleshooting decision list"},
+
+  {"t":"ol","items":[
+    "Are the containers up? `docker ps` first — 'Unable to reach media server' is most often the LiveKit/backend containers simply not running.",
+    "Does signalling reach LiveKit? `curl -sk https://collab.resulticks.com/livekit/rtc/v1/validate -w '%{http_code}'` should return 400 ('join_request is required'). A 502/timeout means the nginx `/livekit` proxy (WS upgrade + prefix strip) is broken.",
+    "Does the SFU advertise a reachable IP? `docker logs colab-livekit | grep publishercandidates` must show 10.200.3.17 (and the public IP on live), never 127.0.0.1.",
+    "Do backend and SFU share the secret? `docker exec colab-livekit env | grep LIVEKIT_KEYS` — a mismatch yields `invalid token / cryptographic primitive`.",
+    "Is coturn healthy? `docker logs colab-coturn` — no 'error resolving', listening on 3478, relay-ip set. Confirm TURN creds match `.env.live` byte-for-byte.",
+    "In `chrome://webrtc-internals`, what is the selected candidate pair? `host` = direct LAN to the SFU (success); `relay` = via coturn (success for VPN/off-LAN); never reaching `connected` = a firewall/ICE problem.",
+    "For external callers, confirm the public-IP provisioning is complete (DNS A records, TLS on the LiveKit subdomain, UDP open, and TURN-over-TLS-443 for hotel/strict-corporate networks).",
+    "Use `?calldebug=1` to read the `[CALLDIAG]` trail — it distinguishes 'TURN advertised but not reachable (check 3478/5349/443)' from 'no TURN advertised', which tells you exactly where to look."
+  ]},
+
+  {"t":"callout","kind":"warning","title":"node_ip and use_external_ip are correct as-is on live","text":"`livekit.live.yaml` uses `use_external_ip: true` with `node_ip` UNSET so the SFU advertises BOTH the 10.200.3.17 host candidate (internal/VPN) AND a STUN-discovered public IP (off-network). An earlier `false` setting advertised only 10.200.3.17 and made off-network calls hang. Do NOT 'fix' this back to false. Only set an explicit `node_ip` when IT assigns a dedicated public IP to the SFU box (then `use_external_ip: false` + `node_ip: PUBLIC_SFU_IP`)."},
+
+  {"t":"h","level":2,"text":"14.11 Environment Variable Reference"},
+
+  {"t":"p","text":"Variables are grouped by subsystem (from `config/src/index.ts`). The frontend `NEXT_PUBLIC_*` vars and `BACKEND_INTERNAL_URL` / `LIVEKIT_INTERNAL_URL` are baked at BUILD time in `Dockerfile.frontend`; backend vars are read at runtime. Leave `NEXT_PUBLIC_API_BASE_URL` / `NEXT_PUBLIC_SOCKET_URL` BLANK to keep the browser same-origin through the Next rewrites."},
+
+  {"t":"table","headers":["Group","Key variables","Notes"],"rows":[
+    ["auth","AUTH_JWT_SECRET, AUTH_TOKEN_TTL (7d)","secret guarded in prod; >= 32 chars"],
+    ["database","DB_PROFILE, DATABASE_URL_LOCAL/LIVE/DEMO, DATABASE_URL","DB_PROFILE picks DATABASE_URL_<PROFILE>; DEMO_MODE=yes forces demo"],
+    ["livekit","LIVEKIT_WS_URL, LIVEKIT_SERVER_URL, LIVEKIT_API_KEY/SECRET, LIVEKIT_TOKEN_TTL_SEC (3600)","blank WS_URL auto-derives wss://<host>/livekit behind nginx"],
+    ["turn","TURN_URLS, TURN_USERNAME, TURN_PASSWORD","blank = LAN-only; must match turnserver.conf byte-for-byte"],
+    ["storage","S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID/SECRET (← MINIO_ROOT_USER/PASSWORD)","internal http://minio:9000; rotate default creds"],
+    ["redis","REDIS_URL","enables socket adapter + token blocklist + huddle store"],
+    ["e2ee","E2EE_ENABLED (false), NEXT_PUBLIC_E2EE_ENABLED (false)","both must be true to enable; DM/self-only"],
+    ["ai","LLM_BASE_URL, LLM_API_KEY, LLM_MODEL","AI disabled (503 AI_DISABLED) when LLM_BASE_URL unset"],
+    ["oneApi","ONE_API_ENABLED, ONE_API_URL, ONE_API_KEY","INERT at runtime — direct DB pool is used; safe no-op when ON"],
+    ["coturn/caddy","COTURN_PUBLIC_IP, COTURN_BIND_IP, PUBLIC_HOST, CADDY_ACME_EMAIL","external-ip/relay-ip passed on coturn command line, not in conf"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"One API is a safe no-op","text":"`ONE_API_ENABLED=true` is set on live but the One API client (`database/src/oneApiClient.ts`) is inert at runtime — CoLab's SQL executor connects directly to the prod DB and routes no runtime queries through the gateway (the structured payload format can't express the FULLTEXT / window-function / upsert / FOR UPDATE queries CoLab needs). 'Live DB' (10.101.3.2:3603, direct) and 'One API' (10.101.1.4:7988) are two separate endpoints; leaving the switch ON does nothing until a specific call is wired through the client."},
+
+  {"t":"h","level":2,"text":"14.12 Reverse-Proxy & TLS Operations"},
+
+  {"t":"p","text":"Two proxy fronts exist: nginx (live/base, TLS terminated upstream by the corporate LB) and Caddy (`docker-compose.production.yml`, TLS terminated by Caddy itself). Both strip the `/livekit` prefix before forwarding to the SFU, carry the WebSocket upgrade for `/socket.io` and `/livekit`, and set a 100 MB body limit for uploads."},
+
+  {"t":"table","headers":["Path","nginx (live)","Caddy (production)"],"rows":[
+    ["/","→ frontend:3000","→ frontend:3000"],
+    ["/api/*","→ backend:4000","→ backend:4000"],
+    ["/socket.io/*","→ backend:4000 (WS upgrade)","→ backend:4000"],
+    ["/livekit*","→ livekit:7534 (strip prefix, WS, 86400s timeout)","handle_path → livekit:7534 (strip prefix)"],
+    ["/minio/*","→ minio:9000 (admin console only)","→ minio:9000"],
+    ["TLS","none (LB on 443, honors X-Forwarded-Proto)","tls internal (self-signed) or Let's Encrypt via PUBLIC_HOST + CADDY_ACME_EMAIL"]
+  ]},
+
+  {"t":"callout","kind":"warning","title":"nginx refuses to boot if an upstream is missing","text":"nginx resolves ALL upstreams (including minio) at startup and refuses to start if any is missing — so it must start AFTER every proxied service. This is why `depends_on` lists frontend, backend, livekit, AND minio. A crash-looping minio will take nginx (and therefore the whole web surface) down with it; check minio health first if the site returns nothing."},
+
+  {"t":"h","level":2,"text":"14.13 Critical Gotchas Summary"},
+
+  {"t":"p","text":"The recurring, high-cost operational traps for CoLab, collected for quick reference. Most are silent or counter-intuitive — they are the failures that cost the most time when not anticipated."},
+
+  {"t":"ul","items":[
+    "`down -v` deletes the database volume — total data loss. Use `down` or `up -d --build`.",
+    "Omitting `--env-file .env.live` resolves wrong NGINX_PORT, wrong DB_PROFILE (writes to the bundled container), and dev-default secrets the prod guard rejects.",
+    "A healthy `/livekit` signalling response does NOT mean media works — media is a separate ICE/DTLS plane gated by firewall ports and node_ip advertisement.",
+    "`use_external_ip: true` with unset node_ip on live is CORRECT — reverting to false breaks off-network calls.",
+    "LIVEKIT_API_SECRET rotation requires recreating the livekit container or every call fails with invalid token.",
+    "MinIO down → uploads silently land in MySQL (no alert). Redis down → adapter/blocklist silently degrade to per-instance memory.",
+    "The socket handshake does not re-check the JWT blocklist (only HTTP does) — a revoked token can keep an existing socket alive until disconnect.",
+    "Settings absent from the backend DEFAULTS whitelist are silently dropped on save.",
+    "Latency on connected calls is SFU geography, not app code — consider the Mumbai media node.",
+    "Hardcoded coturn TURN password and weak default MinIO creds are committed and should be rotated."
+  ]},
+
+  {"t":"p","text":"This concludes the DevOps Handbook. Treat the checklists in 14.2–14.8 as living gates for every deploy and release, and the runbooks in 14.9–14.12 as the first reference during incidents. When the code and this document disagree, the code is authoritative — update this section to match."}
+]

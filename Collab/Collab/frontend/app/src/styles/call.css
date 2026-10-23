@@ -1,0 +1,2663 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   IN-CALL — Figma "Collab Screens" › Video-call-View / Record / React /
+   Invite / share / chart(chat) / Participants (116:4044 … 116:6612) and the
+   participant tile component (116:4651).
+   Overrides the .ms-* / .cv-* rules in v1.css for BOTH the meeting stage and
+   the ad-hoc call stage (they share the .ms-dock markup).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Light theme: plain white shell; the design has no gradient behind tiles. */
+body:not(.dark) {
+  --meet-bg: var(--call-surface);
+  --meet-bar: var(--call-surface);
+  --meet-bar-line: transparent;
+  --meet-sub: var(--call-sub);
+  --meet-btn-fg: var(--call-blue);
+  --meet-pop: var(--call-panel-bg);
+  --meet-pop-line: var(--call-panel-line);
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────────── */
+.ms-topbar-v2 {
+  min-height: 76px;
+  padding: 14px 20px;
+}
+
+.ms-topbar-left {
+  gap: 12px;
+}
+
+.ms-topbar-title {
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+  max-width: 420px;
+}
+
+.ms-topbar-people,
+.ms-topbar-timer {
+  font-size: 12.8px;
+  font-weight: var(--fw-regular);
+  color: var(--call-sub);
+}
+
+.ms-topbar-btn.ms-topbar-menu {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--meet-fg);
+}
+
+/* Call stage top chrome (CallModal) — class-driven now, same geometry. */
+.call-chrome.call-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* 16px sides — same inset as the stage tiles and the dock. */
+  padding: 10px 16px;
+  min-height: 60px;
+  background: var(--meet-bar);
+  border-bottom: 1px solid var(--meet-bar-line);
+  flex-shrink: 0;
+}
+
+.call-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.call-topbar-titlewrap {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.call-topbar-title {
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+  color: var(--meet-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Recording badge: dark pill, white disc with red core, timer, stop square. */
+.ms-topbar-badge.ms-badge-rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 16px 0 12px;
+  border-radius: 69px;
+  background: var(--call-rec-bg);
+  color: #fff;
+  font-size: 18px;
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.ms-topbar-badge.ms-badge-rec .ms-rec-dot {
+  position: relative;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  animation: none;
+}
+
+.ms-topbar-badge.ms-badge-rec .ms-rec-dot::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: var(--call-on-fg);
+  animation: ms-rec-blink 1.2s ease-in-out infinite;
+}
+
+/* ── Tiles (116:4651) ────────────────────────────────────────────────── */
+.ms-tile,
+.cv-tile {
+  border-radius: 10px;
+  border-color: transparent;
+  box-shadow: none;
+  /* Call tiles used to rely on an INLINE position:relative set at creation.
+     Leaving the strip (clearRailTile resets inline position) dropped it, so a
+     self tile moving strip → Gallery grid became static and its avatar/name
+     pill positioned against the whole stage. Own the position in CSS, like
+     .ms-tile does; the PiP class still overrides with absolute !important. */
+  position: relative;
+}
+
+.ms-stage,
+.cv-stage {
+  gap: 20px;
+  padding: 0 16px 16px;
+}
+
+/* Name pill: 43px tall, 30% black, 17.6/500 white, r79. */
+.ms-label,
+.cv-tile-label {
+  left: 10px;
+  bottom: 10px;
+  padding: 8px 20px;
+  border-radius: 79px;
+  background: var(--call-overlay);
+  border: none;
+  box-shadow: none;
+  font-size: 15px;
+  font-weight: var(--fw-medium);
+  letter-spacing: 0;
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+
+/* Hover controls (⋮ ⛶ pin) and popout: sleek translucent discs with proper spacing and alignment */
+.ms-expand-btn,
+.ms-fullscreen-btn,
+.ms-tile-menu-btn,
+.ms-popout-btn,
+.cv-pin-btn,
+.cv-fs-btn,
+.cv-menu-btn,
+.cv-popout-btn {
+  --tile-btn-sz: 38px;
+  --tile-btn-gap: 8px;
+  --tile-btn-pad: 12px;
+  position: absolute;
+  top: var(--tile-btn-pad);
+  width: var(--tile-btn-sz);
+  height: var(--tile-btn-sz);
+  border-radius: 50%;
+  background: var(--call-overlay);
+  color: #fff;
+  border: none;
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 3;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.ms-expand-btn:hover,
+.ms-fullscreen-btn:hover,
+.ms-tile-menu-btn:hover,
+.ms-popout-btn:hover,
+.cv-pin-btn:hover,
+.cv-fs-btn:hover,
+.cv-menu-btn:hover,
+.cv-popout-btn:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+/* Slot 1: Pin / Expand (rightmost) */
+.cv-pin-btn,
+.ms-expand-btn {
+  right: var(--tile-btn-pad);
+}
+
+/* Slot 2: Fullscreen */
+.cv-fs-btn,
+.ms-fullscreen-btn {
+  right: calc(var(--tile-btn-pad) + var(--tile-btn-sz) + var(--tile-btn-gap));
+}
+
+/* Slot 3: More options menu / Popout */
+.cv-menu-btn,
+.ms-tile-menu-btn,
+.cv-popout-btn,
+.ms-popout-btn {
+  right: calc(var(--tile-btn-pad) + (var(--tile-btn-sz) + var(--tile-btn-gap)) * 2);
+}
+
+/* Slot 4: Popout when menu is also present on tile */
+.ms-tile:has(.ms-tile-menu-btn) .ms-popout-btn,
+.cv-tile:has(.cv-menu-btn) .cv-popout-btn {
+  right: calc(var(--tile-btn-pad) + (var(--tile-btn-sz) + var(--tile-btn-gap)) * 3);
+}
+
+.ms-tile-pinned,
+.cv-tile-pinned {
+  outline-color: var(--call-blue);
+}
+
+/* ── Dock ────────────────────────────────────────────────────────────── */
+.ms-dock {
+  padding: 12px 20px 10px;
+  gap: 8px;
+  box-shadow: none;
+  border-top: 1px solid var(--meet-bar-line);
+}
+
+.ms-dock-left {
+  justify-content: flex-start;
+}
+
+.ms-dock-right {
+  justify-content: flex-end;
+}
+
+.ms-dock-group {
+  gap: 10px;
+}
+
+/* Leave is the LAST control, at the far right of the row (calls + meetings):
+   the right cluster right-aligns as one group — Chat … More, then a slightly
+   wider gap, then Leave — mirroring the collab cluster flush-left, so the two
+   edges balance around the centred media pill. */
+.ms-dock-right>.ms-leave-wrap,
+.ms-dock-right>.ms-dock-leave {
+  order: 0;
+  margin-left: 10px;
+  margin-right: 0;
+}
+
+/* Dock button = 52px disc + 12px label below. */
+.ms-dock-btn {
+  gap: 6px;
+  padding: 0;
+  min-width: 62px;
+  min-height: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--call-blue);
+}
+
+.ms-dock-btn:hover,
+.ms-dock-btn.on,
+.ms-dock-btn:focus-visible,
+.ms-dock-btn.off,
+.ms-dock-btn.rec-on {
+  background: transparent;
+  color: var(--call-blue);
+  animation: none;
+}
+
+.ms-dock-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--call-btn-bg);
+  color: var(--call-blue);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.ms-dock-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.8;
+}
+
+.ms-dock-btn:hover .ms-dock-icon {
+  background: color-mix(in srgb, var(--call-blue) 22%, var(--call-surface));
+}
+
+.ms-dock-btn.on .ms-dock-icon,
+.ms-dock-btn.off .ms-dock-icon,
+.ms-dock-btn.rec-on .ms-dock-icon {
+  background: var(--call-on-bg);
+  color: var(--call-on-fg);
+}
+
+.ms-dock-label,
+.ms-dock-btn.on .ms-dock-label,
+.ms-dock-btn.off .ms-dock-label,
+.ms-dock-btn.rec-on .ms-dock-label {
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+  color: var(--meet-fg);
+  max-width: 90px;
+}
+
+.ms-dock-badge {
+  top: -2px;
+  right: 2px;
+  background: var(--call-on-fg);
+}
+
+/* Media pill: mic + camera (+ screen) in one 56px blue pill. */
+.ms-dock-media {
+  height: 56px;
+  margin: 0 8px;
+  padding: 0 8px;
+  gap: 2px;
+  border: none;
+  border-radius: 28px;
+  background: #8B29BE;
+}
+
+.ms-dock-media .ms-dock-btn-wrap {
+  background: transparent;
+  padding: 0;
+  gap: 0;
+}
+
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn,
+.ms-dock-media .ms-dock-btn-wrap.cam-on>.ms-dock-btn {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  background: transparent;
+  color: #fff;
+}
+
+.ms-dock-media .ms-dock-btn .ms-dock-icon {
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  color: #fff;
+}
+
+.ms-dock-media .ms-dock-btn .ms-dock-label {
+  display: none;
+}
+
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn.off .ms-dock-icon,
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn.on .ms-dock-icon {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn:hover .ms-dock-icon {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.ms-dock-media .ms-dock-chevron {
+  color: #fff;
+  width: 18px;
+  height: 44px;
+}
+
+.ms-dock-media .ms-dock-chevron:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* Leave: same anatomy as every other dock button — a disc with a label row
+   under it — so the red disc sits on the SAME baseline as its neighbours. The
+   label row is kept but blank (the button's aria-label carries the name), which
+   is what lines the disc up; the old bare 56px disc sat ~9px lower. */
+.ms-dock-leave {
+  width: auto !important;
+  min-width: 62px !important;
+  height: auto !important;
+  padding: 0 !important;
+  border-radius: 12px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ms-dock-leave:hover,
+.ms-dock-leave:active {
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none;
+}
+
+.ms-dock-leave .ms-dock-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--call-red) !important;
+  color: #fff;
+}
+
+.ms-dock-leave .ms-dock-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.ms-dock-leave:hover .ms-dock-icon {
+  background: color-mix(in srgb, var(--call-red) 88%, #000) !important;
+}
+
+/* Label row: "Leave" sits under the red disc exactly like "Chat" / "More"
+   sit under theirs. It used to be a BLANK (visibility:hidden) row, which left
+   the red disc as the only unlabelled control in the dock. */
+.ms-dock-leave .ms-dock-label {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  visibility: visible;
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+  color: var(--meet-fg);
+}
+
+/* Host split control: ONE red pill (disc + chevron cap joined, rounded ends,
+   a translucent hairline at the seam) with the "Leave" caption centred under
+   the whole pill. Previously the chevron was a separate 40×52 oval floating
+   next to the disc, so the control read as two unrelated buttons. */
+.ms-leave-split {
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0;
+  /* Room for the caption row (12px text + 6px gap): 52 + 18 = 70px, the
+     same overall height as the other buttons, so the pill shares their
+     baseline instead of sitting a pixel high. */
+  padding-bottom: 18px;
+}
+
+.ms-leave-split .ms-leave-main {
+  min-width: 52px !important;
+  position: static;
+  /* v1.css draws the seam as a border on this (transparent) button, which
+     shows as a 1px gap of dock background between the halves — dark in dark
+     mode. The seam is the toggle's translucent border-left instead. */
+  border-right: 0 !important;
+}
+
+.ms-leave-split .ms-leave-main .ms-dock-icon {
+  border-radius: 26px 0 0 26px;
+}
+
+/* Caption spans the full pill (disc + cap) so it is centred under the pill,
+   not under the disc alone. */
+.ms-leave-split .ms-leave-main .ms-dock-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 58px;
+  text-align: center;
+  display: block;
+}
+
+.ms-leave-split .ms-leave-toggle {
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 52px !important;
+  padding: 0 !important;
+  border-radius: 0 26px 26px 0 !important;
+  background: var(--call-red) !important;
+  color: #fff;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.35) !important;
+  flex-direction: row;
+  gap: 0;
+  transform: none !important;
+}
+
+.ms-leave-split .ms-leave-toggle svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  transition: transform 0.15s ease;
+}
+
+.ms-leave-split .ms-leave-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+/* Hovering either half darkens the WHOLE pill, so it still behaves as one. */
+.ms-leave-split:hover .ms-leave-main .ms-dock-icon,
+.ms-leave-split:hover .ms-leave-toggle,
+.ms-leave-split .ms-leave-toggle:hover {
+  background: color-mix(in srgb, var(--call-red) 88%, #000) !important;
+}
+
+.ms-leave-split:hover .ms-leave-main {
+  transform: none;
+}
+
+/* ── Reactions ───────────────────────────────────────────────────────── */
+.ms-reaction-picker-v2,
+.cv-reaction-picker {
+  gap: 10px;
+  padding: 10px 22px;
+  border-radius: 80px;
+  background: var(--call-surface);
+  border: 1px solid var(--group-hdr);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  backdrop-filter: none;
+}
+
+.ms-reaction-btn-v2,
+.cv-reaction-btn {
+  font-size: 26px;
+}
+
+/* ── Side panel (chat / participants) ────────────────────────────────── */
+.ms-panel-v2,
+.cv-people-panel {
+  background: var(--call-panel-bg);
+  border: 1.5px solid var(--call-panel-line);
+  border-radius: 10px;
+  margin: 0 16px 16px 0;
+}
+
+.ms-panel-head,
+.cv-people-head {
+  padding: 10px 14px 0;
+  border-bottom: 1.5px solid var(--call-panel-line);
+}
+
+.ms-panel-tab {
+  padding: 10px 6px 12px;
+  font-size: 17px;
+  font-weight: var(--fw-semibold);
+  color: var(--meet-fg);
+  border-bottom-width: 1.5px;
+}
+
+.ms-panel-tab.active {
+  color: var(--call-blue);
+  border-bottom-color: var(--call-blue);
+}
+
+.ms-panel-count {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--call-blue);
+  color: #fff;
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ms-panel-close,
+.cv-people-close {
+  color: var(--meet-fg);
+}
+
+/* Chat messages: peer = light-blue tiles left, mine = blue tiles right. */
+.ms-chat-messages-v2 {
+  padding: 14px 16px;
+}
+
+.ms-chat-msg-v2 {
+  padding: 4px 0;
+}
+
+.ms-chat-msg-v2:hover {
+  background: transparent;
+}
+
+.ms-chat-msg-avatar {
+  width: 40px;
+  height: 40px;
+  font-size: 13px;
+}
+
+.ms-chat-msg-sender {
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+  color: color-mix(in srgb, var(--meet-fg) 70%, transparent);
+}
+
+.ms-chat-msg-time {
+  font-size: 11.5px;
+  color: var(--meet-fg);
+}
+
+.ms-chat-msg-text {
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--call-bub-peer);
+  color: var(--meet-fg);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.ms-chat-msg-v2.mine {
+  flex-direction: row-reverse;
+}
+
+.ms-chat-msg-v2.mine .ms-chat-msg-body {
+  align-items: flex-end;
+}
+
+.ms-chat-msg-v2.mine .ms-chat-msg-meta {
+  flex-direction: row-reverse;
+}
+
+.ms-chat-msg-v2.mine .ms-chat-msg-text {
+  background: var(--call-bub-me);
+  color: #fff;
+}
+
+/* Composer: white pill with a blue round send button. */
+.ms-chat-composer {
+  padding: 12px 16px 16px;
+  border-top: none;
+}
+
+.ms-chat-composer-input {
+  height: 53px;
+  padding: 0 16px;
+  border-radius: 77px;
+  background: var(--call-surface);
+  border: none;
+  font-size: 14px;
+  font-weight: var(--fw-medium);
+}
+
+.ms-chat-composer-send {
+  width: 43px;
+  height: 43px;
+  border-radius: 50%;
+  background: var(--call-blue);
+  color: #fff;
+  border: none;
+}
+
+.ms-chat-composer-btn {
+  color: var(--meet-fg);
+}
+
+/* Participants: white cards, 60px tall, 14/500. */
+.ms-people-list,
+.cv-people-list {
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ms-person-row {
+  min-height: 60px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: var(--call-row-bg);
+  gap: 14px;
+}
+
+.ms-person-row:hover {
+  background: var(--call-surface);
+}
+
+.ms-person-row.speaking {
+  background: color-mix(in srgb, var(--call-blue) 10%, var(--call-surface));
+}
+
+.ms-person-avatar,
+.cv-person-avatar {
+  width: 47px;
+  height: 47px;
+}
+
+.ms-person-name {
+  font-size: 14px;
+  font-weight: var(--fw-medium);
+  color: var(--call-row-fg);
+}
+
+.ms-person-muted,
+.ms-person-camoff {
+  color: var(--call-on-fg);
+}
+
+.ms-person-action.on {
+  color: var(--call-blue);
+}
+
+/* ── Invite popover (116:5269) ───────────────────────────────────────── */
+.mr-invite-pop {
+  background: var(--call-panel-bg);
+  border: 1px solid var(--call-panel-line);
+  border-radius: 13px;
+  width: 507px;
+  max-width: calc(100vw - 32px);
+}
+
+.mr-invite-pop-title {
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+}
+
+.mr-invite-pop .mr-share-search {
+  height: 56px;
+  border-radius: 10px;
+  background: var(--search-bg);
+  border: 1px solid var(--search-line);
+}
+
+.mr-invite-pop .mr-inv-row {
+  min-height: 63px;
+  border-radius: 10px;
+}
+
+.mr-invite-pop .mr-inv-name {
+  font-size: 16px;
+  font-weight: var(--fw-medium);
+  color: var(--call-row-fg);
+}
+
+.mr-inv-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid var(--meet-fg);
+}
+
+.mr-inv-check.on {
+  background: transparent;
+  border-color: var(--nav-active-fg);
+  color: var(--nav-active-fg);
+}
+
+.mr-invite-send {
+  height: 36px;
+  padding: 0 18px;
+  border-radius: 10px;
+  background: var(--call-blue);
+  color: #fff;
+}
+
+/* ── Screen share chooser + presenter banner ─────────────────────────── */
+.ms-share-chip.active {
+  background: var(--call-blue);
+  color: #fff;
+  border-color: var(--call-blue);
+}
+
+.ms-spotlight-banner {
+  background: var(--call-blue);
+  color: #fff;
+  border-radius: 10px;
+}
+
+.ms-spotlight-return {
+  background: #fff;
+  color: var(--meet-fg);
+  border-radius: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   In-call layout pass (reference: "Creative team meeting" mock) — header with
+   avatar + subtitle + duration pill + View; black tiles with pastel initials,
+   name pill bottom-left and a round mic chip bottom-right; dock regrouped as
+   Invite · Record · Participants · Whiteboard | mic/cam pill · hang-up |
+   Chat · React · Share · More. Applies to meetings AND calls (shared .ms-*).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.ms-topbar-v2 {
+  min-height: 60px;
+  padding: 10px 16px;
+}
+
+.ms-topbar-left {
+  gap: 10px;
+}
+
+.ms-topbar-avatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ms-topbar-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ms-topbar-titlewrap {
+  gap: 2px;
+}
+
+.ms-topbar-titlerow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ms-topbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  max-width: 360px;
+}
+
+/* The (i): a small filled accent disc with a white glyph (reference header),
+   in both the meeting header (inline after the name) and the call header. */
+.ms-topbar-btn.ms-info-btn {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: var(--call-blue);
+  box-shadow: none;
+  color: #fff;
+  padding: 0;
+  align-self: center;
+}
+
+.ms-topbar-btn.ms-info-btn svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.4;
+}
+
+.ms-topbar-btn.ms-info-btn:hover,
+.ms-topbar-btn.ms-info-btn.on {
+  background: color-mix(in srgb, var(--call-blue) 82%, #000);
+  transform: none;
+}
+
+/* "3 of 3 in the call | 11:11" */
+.ms-topbar-people {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--meet-sub);
+  padding: 0;
+  gap: 5px;
+}
+
+.ms-topbar-people:hover {
+  background: transparent;
+  color: var(--meet-fg);
+}
+
+.ms-topbar-sep {
+  opacity: 0.6;
+}
+
+.ms-topbar-right {
+  gap: 14px;
+}
+
+/* Duration pill — dark, with a red dot while recording. */
+.ms-topbar-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 20px;
+  background: #4a4a4a;
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.ms-topbar-timer .ms-rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--call-red);
+  animation: ms-rec-blink 1.2s ease-in-out infinite;
+}
+
+/* "▦ View" */
+.ms-view-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--meet-fg);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.ms-view-btn:hover,
+.ms-view-btn.on {
+  background: var(--meet-btn-hover, rgba(140, 150, 170, 0.18));
+}
+
+.ms-layout-wrap-top .ms-more-menu {
+  top: calc(100% + 6px);
+  bottom: auto;
+  right: 0;
+  left: auto;
+}
+
+/* ── Stage & tiles ───────────────────────────────────────────────────── */
+/* One 16px inset everywhere: header padding, stage sides and dock sides line up,
+   and the rail column copies these insets (layoutRail reads them). */
+.ms-stage,
+.cv-stage {
+  gap: 16px;
+  padding: 0 16px 12px;
+}
+
+.ms-tile,
+.cv-tile {
+  background: #000;
+  border: none;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.ms-tile:hover,
+.cv-tile:hover {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--call-blue) 45%, transparent);
+}
+
+.ms-avatar-ph {
+  background: #000;
+}
+
+/* Call tiles: .cv-avatar-ph IS the disc (sized inline) — pastel + accent. */
+.cv-avatar-ph {
+  width: 88px !important;
+  height: 88px !important;
+  font-size: 30px !important;
+  font-weight: 600 !important;
+  background: color-mix(in srgb, var(--av, #6d28d9) 24%, #fff) !important;
+  color: var(--av, #6d28d9) !important;
+}
+
+/* Pastel disc + accent initials (the accent arrives on --av from the tile code). */
+.ms-avatar-circle {
+  width: clamp(64px, 24%, 118px);
+  font-size: clamp(22px, 9%, 40px);
+  font-weight: 600;
+  background-color: color-mix(in srgb, var(--av, #6d28d9) 24%, #fff);
+  color: var(--av, #6d28d9);
+  box-shadow: none;
+}
+
+/* Name pill: bottom-left, translucent light grey on the black tile. */
+.ms-label,
+.cv-tile-label {
+  left: 16px;
+  bottom: 16px;
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.16);
+  border: none;
+}
+
+/* Mic chip: round, bottom-right; mic glyph live, slashed when muted. */
+.ms-tile>.ms-tile-mic {
+  display: inline-flex;
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #fff;
+  z-index: 2;
+}
+
+.ms-tile>.ms-tile-mic svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ms-tile>.ms-tile-mic .mic-off,
+.ms-tile>.ms-tile-mic.muted .mic-on {
+  display: none;
+}
+
+.ms-tile>.ms-tile-mic.muted .mic-off {
+  display: block;
+}
+
+/* Screen-share tiles carry no mic chip. */
+.ms-tile-screen>.ms-tile-mic {
+  display: none;
+}
+
+/* ── Dock ────────────────────────────────────────────────────────────── */
+.ms-dock {
+  padding: 10px 16px 8px;
+}
+
+.ms-dock-group {
+  gap: 4px;
+}
+
+.ms-dock-btn {
+  min-width: 58px;
+  gap: 5px;
+}
+
+.ms-dock-icon {
+  width: 42px;
+  height: 42px;
+}
+
+.ms-dock-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.7;
+}
+
+.ms-dock-label,
+.ms-dock-btn.on .ms-dock-label,
+.ms-dock-btn.off .ms-dock-label,
+.ms-dock-btn.rec-on .ms-dock-label {
+  font-size: 11px;
+}
+
+/* Share is a labelled button with the presentation-mode chevron beside it
+   (it sat inside the purple media pill before). */
+.ms-dock-btn-wrap.ms-share-wrap {
+  background: transparent;
+  align-items: flex-start;
+}
+
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn {
+  flex-direction: column;
+  gap: 6px;
+  /* same icon→label gap as every other dock button, so the labels sit on one baseline */
+  width: auto;
+  min-width: 58px;
+  height: auto;
+  padding: 0;
+  border-radius: 12px;
+}
+
+.ms-dock-btn-wrap.ms-share-wrap .ms-dock-label {
+  display: block;
+}
+
+.ms-dock-btn-wrap.ms-share-wrap .ms-dock-chevron {
+  height: 42px;
+  width: 16px;
+  margin-left: -6px;
+}
+
+/* Hang-up: a plain red circle right after the media pill, no caption. */
+.ms-dock-center .ms-leave-wrap,
+.ms-dock-center>.ms-dock-leave {
+  margin-left: 4px;
+}
+
+.ms-dock-center .ms-dock-leave .ms-dock-icon {
+  width: 46px;
+  height: 46px;
+}
+
+.ms-dock-center .ms-dock-leave .ms-dock-label {
+  display: none;
+}
+
+.ms-dock-center .ms-dock-leave {
+  min-width: 46px !important;
+}
+
+/* Call tiles: the same bottom-right mic chip as meeting tiles. */
+.cv-tile>.cv-tile-mic {
+  display: inline-flex;
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #fff;
+  z-index: 2;
+}
+
+.cv-tile>.cv-tile-mic svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cv-tile>.cv-tile-mic .mic-off,
+.cv-tile>.cv-tile-mic.muted .mic-on {
+  display: none;
+}
+
+.cv-tile>.cv-tile-mic.muted .mic-off {
+  display: block;
+}
+
+/* Call tiles set their look INLINE at creation (useCallSessionMedia), so the
+   black tile + light name pill need !important to match the meeting tiles. */
+.cv-tile {
+  background: #000 !important;
+  border-radius: 10px !important;
+}
+
+.cv-tile-label {
+  left: 16px !important;
+  bottom: 16px !important;
+  padding: 8px 14px !important;
+  border-radius: 20px !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  background: rgba(255, 255, 255, 0.16) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* v1.css drops the dock captions below 1180px; the regrouped dock (4 + pill +
+   hang-up + 4) fits with captions down to ~900px, and the reference shows them
+   at ~1070px — keep them until then. */
+@media (max-width: 1180px) and (min-width: 901px) {
+  .ms-dock-btn {
+    min-width: 54px;
+    min-height: 0;
+    padding: 0;
+  }
+
+  .ms-dock-btn .ms-dock-label {
+    display: block;
+  }
+
+  .ms-dock-center .ms-dock-leave .ms-dock-label {
+    display: none;
+  }
+}
+
+/* Small tiles (speaker-view column / self PiP): compact avatar, name pill and
+   mic chip so they never overlap each other. Container query on the tile. */
+.ms-tile,
+.cv-tile {
+  container-type: inline-size;
+}
+
+@container (max-width: 360px) {
+
+  .ms-label,
+  .cv-tile-label {
+    left: 10px !important;
+    bottom: 10px !important;
+    padding: 5px 10px !important;
+    font-size: 12px !important;
+    max-width: calc(100% - 60px) !important;
+  }
+
+  .ms-tile>.ms-tile-mic,
+  .cv-tile>.cv-tile-mic {
+    right: 10px;
+    bottom: 10px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .ms-tile>.ms-tile-mic svg,
+  .cv-tile>.cv-tile-mic svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .ms-avatar-circle {
+    width: 52px;
+    font-size: 18px;
+  }
+
+  .cv-avatar-ph {
+    width: 52px !important;
+    height: 52px !important;
+    font-size: 18px !important;
+  }
+}
+
+/* ═══ Reference metrics (image 8, 1074px frame) — sizes tuned to the pixel. ═══ */
+/* Header: 60px tall, 12px sides. */
+.ms-topbar-v2,
+.call-chrome.call-topbar {
+  min-height: 60px;
+  padding: 8px 12px;
+}
+
+.ms-topbar-left,
+.call-topbar-left {
+  gap: 10px;
+}
+
+/* ☰ — bare 16px glyph, no box. */
+.ms-topbar-btn.ms-topbar-menu {
+  width: 28px;
+  height: 28px;
+  margin-right: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--meet-fg);
+}
+
+.ms-topbar-btn.ms-topbar-menu svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ms-topbar-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+.ms-topbar-titlewrap,
+.call-topbar-titlewrap {
+  gap: 2px;
+  line-height: 1.2;
+}
+
+.call-topbar-titlewrap .ms-topbar-titlerow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ms-topbar-title,
+.call-topbar-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.ms-topbar-people {
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
+.ms-topbar-btn.ms-info-btn {
+  width: 16px;
+  height: 16px;
+}
+
+.ms-topbar-btn.ms-info-btn svg {
+  width: 10px;
+  height: 10px;
+}
+
+.ms-topbar-right {
+  gap: 12px;
+}
+
+.ms-topbar-timer {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+  gap: 7px;
+}
+
+.ms-topbar-timer .ms-rec-dot {
+  width: 9px;
+  height: 9px;
+}
+
+.ms-view-btn {
+  height: 30px;
+  padding: 0 6px;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.ms-view-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Stage: 10px insets, 16px between tiles. */
+.ms-stage,
+.cv-stage {
+  gap: 16px;
+  padding: 0 10px 5px;
+}
+
+.ms-avatar-circle {
+  width: clamp(72px, 23%, 118px);
+  font-size: clamp(24px, 9%, 40px);
+}
+
+.ms-label,
+.cv-tile-label {
+  font-size: 13px !important;
+  padding: 6px 14px !important;
+  left: 14px !important;
+  bottom: 14px !important;
+}
+
+.ms-tile>.ms-tile-mic,
+.cv-tile>.cv-tile-mic {
+  width: 34px;
+  height: 34px;
+  right: 14px;
+  bottom: 14px;
+}
+
+/* Dock: 40px lavender discs, 10px captions, 42px media pill, 40px hang-up. */
+.ms-dock {
+  padding: 8px 20px 6px;
+}
+
+.ms-dock-group {
+  gap: 8px;
+}
+
+.ms-dock-btn {
+  min-width: 54px;
+  gap: 4px;
+}
+
+.ms-dock-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.ms-dock-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ms-dock-label,
+.ms-dock-btn.on .ms-dock-label,
+.ms-dock-btn.off .ms-dock-label,
+.ms-dock-btn.rec-on .ms-dock-label {
+  font-size: 10px;
+}
+
+.ms-dock-media {
+  height: 42px;
+  border-radius: 21px;
+  margin: 0 6px;
+  padding: 0 6px;
+}
+
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn,
+.ms-dock-media .ms-dock-btn-wrap.cam-on>.ms-dock-btn {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+}
+
+.ms-dock-media .ms-dock-btn .ms-dock-icon {
+  width: 36px;
+  height: 36px;
+}
+
+.ms-dock-media .ms-dock-chevron {
+  width: 14px;
+  height: 36px;
+}
+
+.ms-dock-media .ms-dock-chevron svg {
+  width: 10px;
+  height: 10px;
+}
+
+.ms-dock-center .ms-dock-leave .ms-dock-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.ms-dock-center .ms-dock-leave .ms-dock-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn {
+  min-width: 54px;
+  gap: 6px;
+  /* match .ms-dock-btn so the Share label shares its neighbours' baseline */
+}
+
+.ms-dock-btn-wrap.ms-share-wrap .ms-dock-chevron {
+  height: 40px;
+}
+
+/* Pixel nudges against the reference: ☰ is a 20px hit-area glyph so the avatar
+   lands at x=41; View hugs its text; first dock icon starts at x≈22. */
+.ms-topbar-btn.ms-topbar-menu {
+  width: 20px;
+  padding: 0;
+}
+
+.ms-view-btn {
+  padding: 0 9px;
+}
+
+.ms-dock {
+  padding: 8px 14px 6px;
+}
+
+/* Media pill: no state disc behind the mic/camera glyphs (muted / camera-off
+   read from the slashed icon alone, matching the reference). */
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn.off .ms-dock-icon,
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn.on .ms-dock-icon,
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn:hover .ms-dock-icon {
+  background: transparent;
+}
+
+/* …and no fill on the BUTTON either: v1.css tints the muted button
+   (.off, 4-class selector) and the camera-on button (.cam-on) inside the pill,
+   which is the disc that was still showing. */
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn.off,
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn.on,
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn.off:hover,
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn:hover,
+.ms-dock-media .ms-dock-btn-wrap.cam-on>.ms-dock-btn,
+.ms-dock-media .ms-dock-btn-wrap.cam-on>.ms-dock-btn:hover {
+  background: transparent;
+  color: #fff;
+  box-shadow: none;
+}
+
+/* Device-dropdown chevrons beside the mic and camera: larger glyph, wider
+   hit-area, and no hover fill (the pill stays one flat purple shape). */
+.ms-dock-media .ms-dock-chevron {
+  width: 22px;
+  height: 36px;
+  color: #fff;
+  opacity: 0.95;
+}
+
+.ms-dock-media .ms-dock-chevron svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.2;
+}
+
+.ms-dock-media .ms-dock-chevron:hover,
+.ms-dock-media .ms-dock-chevron:focus-visible,
+.ms-dock-media .ms-dock-chevron[aria-expanded="true"] {
+  background: transparent;
+  color: #fff;
+  box-shadow: none;
+}
+
+/* Dock breathing room: taller bar and every control +3px. */
+.ms-dock {
+  padding: 14px 14px 12px;
+}
+
+.ms-dock-btn {
+  gap: 6px;
+}
+
+.ms-dock-icon {
+  width: 43px;
+  height: 43px;
+}
+
+.ms-dock-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ms-dock-media {
+  height: 45px;
+  border-radius: 23px;
+}
+
+.ms-dock-media .ms-dock-btn-wrap>.ms-dock-btn,
+.ms-dock-media .ms-dock-btn-wrap.cam-on>.ms-dock-btn,
+.ms-dock-media .ms-dock-btn .ms-dock-icon {
+  width: 39px;
+  min-width: 39px;
+  height: 39px;
+  min-height: 39px;
+}
+
+.ms-dock-media .ms-dock-chevron {
+  height: 39px;
+}
+
+.ms-dock-center .ms-dock-leave .ms-dock-icon {
+  width: 43px;
+  height: 43px;
+}
+
+.ms-dock-btn-wrap.ms-share-wrap .ms-dock-chevron {
+  height: 43px;
+}
+
+.ms-dock-label,
+.ms-dock-btn.on .ms-dock-label,
+.ms-dock-btn.off .ms-dock-label,
+.ms-dock-btn.rec-on .ms-dock-label {
+  font-size: 11px;
+}
+
+/* Share: its "off" (not sharing) class inherited the red muted tint meant for
+   mic/camera. Idle = the same lavender disc as its neighbours; sharing = solid
+   accent with a white glyph; pending = lavender, dimmed. */
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.off .ms-dock-icon,
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.pending .ms-dock-icon {
+  background: var(--call-btn-bg);
+  color: var(--call-blue);
+}
+
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.off:hover .ms-dock-icon {
+  background: color-mix(in srgb, var(--call-blue) 22%, var(--call-surface));
+}
+
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.pending .ms-dock-icon {
+  opacity: 0.6;
+}
+
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.on .ms-dock-icon {
+  background: var(--call-blue);
+  color: #fff;
+}
+
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.off .ms-dock-label,
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.on .ms-dock-label {
+  color: var(--meet-fg);
+}
+
+/* Share: no resting block behind the button (v1's .off tint); like every other
+   dock button only the disc changes, and only on hover. */
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn,
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.off,
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.on,
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.pending,
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn.off:hover,
+.ms-dock-btn-wrap.ms-share-wrap>.ms-dock-btn:hover {
+  background: transparent;
+  box-shadow: none;
+  color: var(--call-blue);
+}
+
+/* Name pill never touches the mic chip: reserve chip + its inset + a 12px gap
+   on the right (34 + 14 + 12, plus the pill's own 14px left inset). */
+.ms-label,
+.cv-tile-label {
+  max-width: calc(100% - 74px) !important;
+}
+
+@container (max-width: 360px) {
+
+  .ms-label,
+  .cv-tile-label {
+    max-width: calc(100% - 62px) !important;
+  }
+}
+
+/* The pill's max-width must include its own padding, or the padding pushes
+   its edge 28px further right, straight into the mic chip. */
+.ms-label,
+.cv-tile-label {
+  box-sizing: border-box !important;
+}
+
+/* 3px gap between the name pill and the mic chip (chip + inset + 3, plus the
+   pill's own left inset): 34+14+3+14 on normal tiles, 28+10+3+10 on small. */
+.ms-label,
+.cv-tile-label {
+  max-width: calc(100% - 65px) !important;
+}
+
+@container (max-width: 360px) {
+
+  .ms-label,
+  .cv-tile-label {
+    max-width: calc(100% - 51px) !important;
+  }
+}
+
+/* Host's split Leave (leave | ▾ end options): ONE red pill, same height as the
+   media pill — round handset button + a small chevron, no seam, no caption. */
+.ms-dock-center .ms-leave-split {
+  align-items: center;
+  height: 45px;
+  padding: 0 6px 0 3px;
+  border-radius: 23px;
+  background: var(--call-red);
+  gap: 0;
+  /* NO overflow:hidden — the end-options menu is absolutely positioned inside
+     this wrapper and would be clipped. */
+}
+
+.ms-dock-center .ms-leave-split .ms-leave-main {
+  min-width: 39px !important;
+  width: 39px !important;
+  height: 39px !important;
+}
+
+.ms-dock-center .ms-leave-split .ms-leave-main .ms-dock-icon {
+  width: 39px;
+  height: 39px;
+  border-radius: 50%;
+  background: transparent !important;
+}
+
+.ms-dock-center .ms-leave-split .ms-leave-main .ms-dock-label {
+  display: none;
+}
+
+.ms-dock-center .ms-leave-split .ms-leave-toggle {
+  width: 22px !important;
+  min-width: 22px !important;
+  height: 39px !important;
+  border-radius: 0 !important;
+  border-left: none !important;
+  background: transparent !important;
+  color: #fff;
+}
+
+.ms-dock-center .ms-leave-split .ms-leave-toggle svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.2;
+}
+
+.ms-dock-center .ms-leave-split:hover {
+  background: color-mix(in srgb, var(--call-red) 88%, #000);
+}
+
+.ms-dock-center .ms-leave-split:hover .ms-leave-main .ms-dock-icon,
+.ms-dock-center .ms-leave-split:hover .ms-leave-toggle,
+.ms-dock-center .ms-leave-split .ms-leave-toggle:hover {
+  background: transparent !important;
+}
+
+/* Its menu opens above the pill, centred. */
+.ms-dock-center .ms-leave-split .ms-leave-menu {
+  bottom: calc(100% + 10px);
+}
+
+/* The (i) now lives INSIDE the title wrapper; its details popover is absolutely
+   positioned there, so the wrapper must not clip. The title span keeps its own
+   nowrap + ellipsis, so nothing else changes. */
+.ms-topbar-titlewrap,
+.call-topbar-titlewrap,
+.ms-topbar-titlerow,
+.ms-topbar-left,
+.call-topbar-left {
+  overflow: visible;
+}
+
+.ms-topbar-titlerow .ms-info-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+/* Popover anchors to the (i) itself and stays above the stage. */
+.ms-topbar-titlerow .ms-info-pop {
+  top: calc(100% + 10px);
+  left: -8px;
+  z-index: 260;
+}
+
+/* Header legibility pass ─────────────────────────────────────────────── */
+/* ☰: 30px hit-area, 18px bold glyph; the unread dot sits on the corner,
+   OFF the glyph (both the meeting's .ms-topbar-dot and the call's inline dot). */
+.ms-topbar-btn.ms-topbar-menu {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--meet-fg);
+}
+
+.ms-topbar-btn.ms-topbar-menu:hover {
+  background: var(--meet-btn-hover, rgba(140, 150, 170, 0.18));
+}
+
+.ms-topbar-btn.ms-topbar-menu svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.2;
+}
+
+.ms-topbar-btn.ms-topbar-menu .ms-topbar-dot,
+.ms-topbar-btn.ms-topbar-menu>span[aria-hidden="true"] {
+  top: 1px !important;
+  right: 1px !important;
+  width: 8px !important;
+  height: 8px !important;
+}
+
+/* Meeting-name avatar: 32px disc, white initials. */
+.ms-topbar-avatar {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* (i): 20px accent disc, bold white glyph — same theme, just readable. */
+.ms-topbar-btn.ms-info-btn {
+  width: 20px;
+  height: 20px;
+}
+
+.ms-topbar-btn.ms-info-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 3;
+}
+
+/* Merged session avatar in the header (2–4 faces). */
+.ms-topbar-avatar-wrap {
+  flex: none;
+  display: inline-flex;
+}
+
+.ms-topbar-avatar-wrap .ca {
+  width: 32px;
+  height: 32px;
+}
+
+/* Blurred backdrop behind a portrait (phone) feed in a landscape tile — a
+   second <video> on the same stream, painted BEHIND the contained video.
+   Oversized so the blur's soft edges never show; the tile clips it. */
+.ms-tile>.vid-blur-bg,
+.cv-tile>.vid-blur-bg {
+  position: absolute;
+  top: -32px;
+  left: -32px;
+  width: calc(100% + 64px);
+  height: calc(100% + 64px);
+  object-fit: cover;
+  filter: blur(28px) brightness(0.55) saturate(1.15);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* The real camera video paints above the backdrop. */
+.ms-tile>.vid-blur-bg~video,
+.cv-tile>.vid-blur-bg~video {
+  position: relative;
+  z-index: 1;
+}
+
+/* Equal breathing room above and below the dock controls: the stage already
+   ends with a 10px inset, so the dock's top padding is 8 (10 + 8 = 18) and its
+   bottom padding is 18. Same total height as before (26px). */
+.ms-dock {
+  padding: 8px 14px 18px;
+}
+
+/* (i) glyph: filled dot + serif stem (reference), white on the accent disc. */
+.ms-topbar-btn.ms-info-btn .ms-info-glyph {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+}
+
+/* Recording pill (reference): dark grey pill, a WHITE disc holding the red
+   dot, then the elapsed time in bold white. */
+.ms-topbar-timer.rec {
+  height: 30px;
+  padding: 0 12px 0 7px;
+  gap: 8px;
+  border-radius: 15px;
+  background: #3f3f3f;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.ms-topbar-timer.rec .ms-rec-dot {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  animation: none;
+}
+
+.ms-topbar-timer.rec .ms-rec-dot::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: var(--call-red);
+  animation: ms-rec-blink 1.2s ease-in-out infinite;
+}
+
+/* Dock vertical rhythm made EXPLICIT: fixed 96px bar, every cluster centred,
+   no stray margins. Bottom padding 10 mirrors the stage's 10px bottom inset,
+   so the gap tile→icons equals the gap captions→window edge (23px each). */
+.ms-dock {
+  box-sizing: border-box;
+  height: 96px;
+  padding: 0 14px 10px !important;
+  align-items: center;
+}
+
+.ms-dock-group,
+.ms-dock-center,
+.ms-dock-media,
+.ms-dock-btn-wrap,
+.ms-more-wrap,
+.ms-leave-wrap {
+  align-self: center;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.ms-dock-btn,
+.ms-dock-btn-wrap>.ms-dock-btn,
+.ms-dock-center>.ms-dock-leave {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.ms-dock-label {
+  line-height: 1.1;
+  margin: 0;
+}
+
+/* (i) = the design's filled info badge itself (disc + cut-out "i", accent
+   colour). The button no longer paints a disc of its own. */
+.ms-topbar-btn.ms-info-btn {
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  color: var(--call-blue);
+}
+
+.ms-topbar-btn.ms-info-btn:hover,
+.ms-topbar-btn.ms-info-btn.on {
+  background: transparent;
+  color: color-mix(in srgb, var(--call-blue) 82%, #000);
+}
+
+.ms-topbar-btn.ms-info-btn .ms-info-glyph {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+}
+
+/* Small tiles by CLASS (strip thumbnails + self PiP), independent of the
+   container query: compact chip at right:10, pill capped so a long name
+   ellipsizes 3px before the chip (28 + 10 + 3, plus the pill's 10px left). */
+.stage-rail-tile>.ms-tile-mic,
+.stage-rail-tile>.cv-tile-mic,
+.ms-tile-self-pip>.ms-tile-mic,
+.cv-tile-self-pip>.cv-tile-mic {
+  width: 28px;
+  height: 28px;
+  right: 10px;
+  bottom: 10px;
+}
+
+.stage-rail-tile>.ms-tile-mic svg,
+.stage-rail-tile>.cv-tile-mic svg,
+.ms-tile-self-pip>.ms-tile-mic svg,
+.cv-tile-self-pip>.cv-tile-mic svg {
+  width: 13px;
+  height: 13px;
+}
+
+.stage-rail-tile .ms-label,
+.stage-rail-tile .cv-tile-label,
+.ms-tile-self-pip .ms-label,
+.cv-tile-self-pip .cv-tile-label {
+  left: 10px !important;
+  bottom: 10px !important;
+  padding: 5px 10px !important;
+  font-size: 12px !important;
+  max-width: calc(100% - 66px) !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* ═══ Camera-off tiles: Skype-style soft gradient backdrop ════════════════
+   Seeded from the person's own accent (--av on the tile) so every tile gets
+   its own pastel wash: a lavender/pink base, a sky-blue wash in one corner,
+   the accent in the other, and a soft diagonal light band. Video tiles stay
+   black. Name pill goes dark-translucent, mic chip light-translucent. */
+.ms-tile.ms-tile-novideo,
+.cv-tile:has(> .cv-avatar-ph) {
+  background:
+    linear-gradient(115deg, transparent 38%, rgba(255, 255, 255, 0.38) 50%, transparent 62%),
+    radial-gradient(120% 90% at 12% 18%, color-mix(in srgb, var(--av, #8b5cf6) 34%, #fff) 0%, transparent 62%),
+    radial-gradient(110% 80% at 88% 88%, color-mix(in srgb, #7dd3fc 60%, #fff) 0%, transparent 60%),
+    linear-gradient(135deg, color-mix(in srgb, var(--av, #8b5cf6) 16%, #fff) 0%, #f3d9fb 48%, color-mix(in srgb, var(--av, #8b5cf6) 26%, #dbeafe) 100%) !important;
+}
+
+.ms-avatar-ph {
+  background: transparent;
+}
+
+/* Avatar disc on the gradient: white initials on a deeper tint of the accent. */
+.ms-avatar-circle,
+.cv-avatar-ph {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--av, #8b5cf6) 45%, #fff), color-mix(in srgb, var(--av, #8b5cf6) 70%, #475569)) !important;
+  color: #fff !important;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(30, 27, 75, 0.18);
+}
+
+/* Name pill: dark translucent; mic chip: light translucent — both read on the
+   pastel backdrop AND on a black video tile. */
+.ms-label,
+.cv-tile-label {
+  background: rgba(52, 52, 64, 0.62) !important;
+  color: #fff !important;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.ms-tile>.ms-tile-mic,
+.cv-tile>.cv-tile-mic {
+  background: rgba(255, 255, 255, 0.34);
+  border: none;
+  color: #fff;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* Mic chip: dark translucent like the name pill — a white chip disappeared
+   into the pastel backdrop. */
+.ms-tile>.ms-tile-mic,
+.cv-tile>.cv-tile-mic {
+  background: rgba(52, 52, 64, 0.55);
+  color: #fff;
+}
+
+/* Camera-off backdrop, brand edition: the wash is anchored on Collab purple
+   (#8B29BE / #5E1087) at both ends, the person's accent colours the middle
+   and one corner, and the flow direction is per person (--av-angle). */
+.ms-tile.ms-tile-novideo,
+.cv-tile:has(> .cv-avatar-ph) {
+  background:
+    linear-gradient(calc(var(--av-angle, 135deg) - 20deg), transparent 38%, rgba(255, 255, 255, 0.32) 50%, transparent 62%),
+    radial-gradient(120% 90% at 14% 18%, color-mix(in srgb, var(--av, #8b29be) 55%, #fff) 0%, transparent 60%),
+    radial-gradient(110% 85% at 86% 86%, color-mix(in srgb, #5e1087 42%, #fff) 0%, transparent 62%),
+    linear-gradient(var(--av-angle, 135deg), color-mix(in srgb, #8b29be 34%, #fff) 0%, color-mix(in srgb, var(--av, #8b29be) 38%, #fff) 50%, color-mix(in srgb, #5e1087 46%, #fff) 100%) !important;
+}
+
+/* Camera-off backdrop, avatar edition: the wash is built ONLY from the
+   person's avatar colour (--av) — light tints of it across the tile, a
+   deeper pool in one corner, a soft light band — so tile and disc match. */
+.ms-tile.ms-tile-novideo,
+.cv-tile:has(> .cv-avatar-ph) {
+  background:
+    linear-gradient(calc(var(--av-angle, 135deg) - 20deg), transparent 38%, rgba(255, 255, 255, 0.30) 50%, transparent 62%),
+    radial-gradient(120% 90% at 14% 18%, color-mix(in srgb, var(--av, #8b29be) 22%, #fff) 0%, transparent 60%),
+    radial-gradient(110% 85% at 86% 86%, color-mix(in srgb, var(--av, #8b29be) 62%, #fff) 0%, transparent 62%),
+    linear-gradient(var(--av-angle, 135deg), color-mix(in srgb, var(--av, #8b29be) 30%, #fff) 0%, color-mix(in srgb, var(--av, #8b29be) 44%, #fff) 50%, color-mix(in srgb, var(--av, #8b29be) 58%, #fff) 100%) !important;
+}
+
+/* Camera-off backdrop, palette edition: one of 20 generated pairs per person
+   (--tile-a light, --tile-b deeper) — the tile's wash and the avatar disc
+   both come from that pair. */
+.ms-tile.ms-tile-novideo,
+.cv-tile:has(> .cv-avatar-ph) {
+  background:
+    linear-gradient(calc(var(--av-angle, 135deg) - 20deg), transparent 38%, rgba(255, 255, 255, 0.30) 50%, transparent 62%),
+    radial-gradient(120% 90% at 14% 18%, color-mix(in srgb, var(--tile-a, #e9d5ff) 70%, #fff) 0%, transparent 60%),
+    radial-gradient(110% 85% at 86% 86%, var(--tile-b, #c4b5fd) 0%, transparent 62%),
+    linear-gradient(var(--av-angle, 135deg), var(--tile-a, #e9d5ff) 0%, color-mix(in srgb, var(--tile-a, #e9d5ff) 50%, var(--tile-b, #c4b5fd)) 50%, var(--tile-b, #c4b5fd) 100%) !important;
+}
+
+.ms-avatar-circle,
+.cv-avatar-ph {
+  background: linear-gradient(160deg, var(--tile-b, #c4b5fd), color-mix(in srgb, var(--tile-b, #c4b5fd) 62%, #475569)) !important;
+  color: #fff !important;
+}
+
+/* ═══ Three camera-off gradient STYLES (per person, data-tile-grad) ═══════
+   All three use the person's palette pair (--tile-a light, --tile-b deeper)
+   and flow direction (--av-angle). */
+
+/* 1 · Diagonal sweep: light → deep along the angle, with a soft light band. */
+.ms-tile.ms-tile-novideo[data-tile-grad="1"],
+.cv-tile[data-tile-grad="1"]:has(> .cv-avatar-ph) {
+  background:
+    linear-gradient(calc(var(--av-angle, 135deg) - 20deg), transparent 40%, rgba(255, 255, 255, 0.34) 50%, transparent 60%),
+    linear-gradient(var(--av-angle, 135deg), var(--tile-a, #e9d5ff) 0%, color-mix(in srgb, var(--tile-a, #e9d5ff) 45%, var(--tile-b, #c4b5fd)) 55%, var(--tile-b, #c4b5fd) 100%) !important;
+}
+
+/* 2 · Radial glow: a bright pool off-centre fading to the deeper stop. */
+.ms-tile.ms-tile-novideo[data-tile-grad="2"],
+.cv-tile[data-tile-grad="2"]:has(> .cv-avatar-ph) {
+  background:
+    radial-gradient(85% 85% at 32% 28%, color-mix(in srgb, var(--tile-a, #e9d5ff) 75%, #fff) 0%, var(--tile-a, #e9d5ff) 38%, color-mix(in srgb, var(--tile-a, #e9d5ff) 40%, var(--tile-b, #c4b5fd)) 70%, var(--tile-b, #c4b5fd) 100%) !important;
+}
+
+/* 3 · Soft waves: two deeper pools and a light crest over a gentle base. */
+.ms-tile.ms-tile-novideo[data-tile-grad="3"],
+.cv-tile[data-tile-grad="3"]:has(> .cv-avatar-ph) {
+  background:
+    radial-gradient(60% 46% at 18% 32%, var(--tile-b, #c4b5fd) 0%, transparent 72%),
+    radial-gradient(56% 42% at 84% 74%, var(--tile-b, #c4b5fd) 0%, transparent 72%),
+    radial-gradient(72% 54% at 54% 48%, rgba(255, 255, 255, 0.55) 0%, transparent 68%),
+    linear-gradient(var(--av-angle, 135deg), var(--tile-a, #e9d5ff) 0%, color-mix(in srgb, var(--tile-a, #e9d5ff) 55%, var(--tile-b, #c4b5fd)) 100%) !important;
+}
+
+/* Avatar disc: always a readable mid/deep tone of the tile's deep stop, even
+   for a very light pair (e.g. #E3ECFD / #C6DCF2). */
+.ms-avatar-circle,
+.cv-avatar-ph {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--tile-b, #c4b5fd) 72%, #475569), color-mix(in srgb, var(--tile-b, #c4b5fd) 48%, #1e293b)) !important;
+  color: #fff !important;
+}
+
+/* ── Speaking wave in the name pill ──────────────────────────────────────
+   Four bars after the name, animated only while the tile carries
+   .tile-speaking (setTileSpeaking in lib/stageView). */
+.ms-label,
+.cv-tile-label {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+.label-wave {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+  flex: none;
+}
+
+.label-wave i {
+  display: block;
+  width: 2px;
+  height: 4px;
+  border-radius: 1px;
+  background: currentColor;
+  animation: label-wave 0.9s ease-in-out infinite;
+}
+
+.label-wave i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.label-wave i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.label-wave i:nth-child(4) {
+  animation-delay: 0.45s;
+}
+
+@keyframes label-wave {
+
+  0%,
+  100% {
+    height: 4px;
+  }
+
+  50% {
+    height: 12px;
+  }
+}
+
+.tile-speaking .label-wave {
+  display: inline-flex;
+}
+
+/* Overlays centred on the MAIN tile: shift left by half the side-rail band
+   (--stage-rail-band, published by layoutRail; 0 without a side rail). */
+.cv-reaction-picker {
+  left: calc(50% - var(--stage-rail-band, 0px) / 2);
+}
+
+.ms-reaction-group {
+  left: calc(50% - var(--stage-rail-band, 0px) / 2);
+}
+
+/* Reaction picker: taller (52px buttons, 30px emoji, more padding) and 20px
+   lower than before, on both the call and meeting stages. The muted prompt
+   (bottom:156) still clears it. */
+.cv-reaction-picker {
+  bottom: 76px;
+  padding: 5px 22px;
+  gap: 4px;
+}
+
+.cv-reaction-btn {
+  width: 52px;
+  height: 52px;
+  font-size: 25px;
+}
+
+.ms-reaction-group {
+  bottom: 58px;
+}
+
+.ms-reaction-picker-v2 {
+  padding: 12px 18px;
+  gap: 6px;
+}
+
+.ms-reaction-btn-v2 {
+  width: 52px;
+  height: 52px;
+  font-size: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ═══ In-call chat panel (reference card) ═════════════════════════════════
+   White rounded card inset like the tiles; underlined tabs; grouped
+   messages — avatar + name once per run, stacked bubbles, time + ticks;
+   "Today" divider; pill composer with attach inside and a round send. */
+.ms-panel-v2,
+.cv-people-panel {
+  width: 340px;
+  max-width: 340px;
+  margin: 10px;
+  background: var(--sb, #fff);
+  border: 1px solid var(--g200);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.ms-panel-head,
+.cv-people-head {
+  padding: 8px 12px 0 14px;
+  align-items: center;
+}
+
+.ms-panel-tabs-v2 {
+  gap: 16px;
+  border-bottom: 1px solid var(--g200);
+}
+
+.ms-panel-tab {
+  padding: 10px 2px 10px;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--g700);
+  border-bottom: 2px solid transparent;
+}
+
+.ms-panel-tab svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ms-panel-tab.active {
+  color: #8b29be;
+  border-bottom-color: #8b29be;
+}
+
+.ms-panel-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #8b29be;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ms-panel-close,
+.cv-people-close {
+  color: var(--g700);
+}
+
+.ms-chat-messages-v2 {
+  padding: 12px 12px 8px;
+  gap: 12px;
+}
+
+.icc-day {
+  display: flex;
+  justify-content: center;
+  margin: 2px 0 6px;
+}
+
+.icc-day span {
+  font-size: 12px;
+  color: var(--g700);
+  background: var(--sb, #fff);
+  border: 1px solid var(--g200);
+  border-radius: 8px;
+  padding: 4px 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.icc-run {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.icc-run.mine {
+  flex-direction: row-reverse;
+}
+
+.icc-avatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.icc-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  max-width: calc(100% - 42px);
+}
+
+.icc-run.mine .icc-col {
+  align-items: flex-end;
+}
+
+.icc-name {
+  font-size: 11.5px;
+  color: var(--g500);
+  margin: 2px 2px 0;
+}
+
+.icc-bubble {
+  max-width: 100%;
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #f3e8fb;
+  color: var(--g900);
+  font-size: 13.5px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.icc-run.mine .icc-bubble {
+  background: #8b29be;
+  color: #fff;
+}
+
+.icc-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--g500);
+  margin: 0 2px;
+}
+
+.icc-meta svg {
+  color: #8b29be;
+}
+
+/* Composer: one pill — attach · (emoji) · input · round purple send. */
+.ms-chat-composer {
+  margin: 6px 12px 12px;
+  padding: 4px 6px 4px 8px;
+  gap: 4px;
+  align-items: center;
+  border: 1px solid var(--g200);
+  border-top: 1px solid var(--g200);
+  border-radius: 26px;
+  background: var(--sb, #fff);
+}
+
+.ms-chat-composer .ms-chat-composer-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--g500);
+}
+
+.ms-chat-composer .ms-chat-composer-input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  border: none;
+  background: transparent;
+  padding: 0 6px;
+  font-size: 13.5px;
+  outline: none;
+}
+
+.ms-chat-composer .ms-chat-composer-send,
+.ms-chat-composer>button:last-child {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: #8b29be;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ms-chat-composer>button:last-child svg {
+  width: 16px;
+  height: 16px;
+  stroke: #fff;
+}
+
+/* Panel surface: explicit white (the inherited call-bar tint made it grey). */
+.ms-panel-v2,
+.cv-people-panel {
+  background: #fff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  opacity: 1;
+}
+
+.ms-panel-v2 .ms-panel-head,
+.cv-people-panel .cv-people-head,
+.ms-chat-messages-v2 {
+  background: #fff;
+}
+
+body.dark .ms-panel-v2,
+body.dark .cv-people-panel,
+body.dark .ms-panel-v2 .ms-panel-head,
+body.dark .cv-people-panel .cv-people-head,
+body.dark .ms-chat-messages-v2 {
+  background: #1b1f2a;
+}
+
+body.dark .icc-bubble {
+  background: rgba(139, 41, 190, 0.22);
+  color: #e9edf5;
+}
+
+body.dark .icc-day span,
+body.dark .ms-chat-composer {
+  background: #1b1f2a;
+  color: #e9edf5;
+}
+
+/* Force the white surface over any inline tint on the panel element. */
+.ms-panel-v2,
+.cv-people-panel {
+  background: #fff !important;
+  border-color: var(--g200) !important;
+}
+
+body.dark .ms-panel-v2,
+body.dark .cv-people-panel {
+  background: #1b1f2a !important;
+}
+
+/* Gap between the video stage and the side panel (Chat/People). The panel is
+   an ABSOLUTELY-POSITIONED overlay (right:0), not a flex sibling that shrinks
+   the stage — so a margin on the panel alone doesn't move the tiles, and a
+   tile's edge (its mic chip, its rail thumbnail) sits flush under the panel,
+   which is what this fixes. Reserve real width on the stage instead: it
+   already has a live ResizeObserver, so this single padding change re-runs
+   the whole tile grid + rail layout automatically, leaving a genuine gap
+   between the video and the panel's left edge. 340px panel + 10px margin each
+   side + a little clearance. */
+.ms-stage.panel-open,
+.cv-stage.panel-open {
+  /* NO padding-right here — the room for the panel is already reserved ONCE:
+     the call view pads its stage wrapper (CallModal, paddingRight when the
+     panel is open) and the meeting panel is a flex sibling that shrinks the
+     stage by itself. A second reservation here doubled it and left a wide
+     empty band between the tiles and the panel.
+     --panel-band DOES stay the real panel width (350px): it's read-only, by
+     publishRailBand() (lib/stageView) into --stage-rail-band, which is what
+     fixed-position overlays (reaction picker, muted-mic toast) use to clear
+     the panel instead of centring/anchoring UNDER it. */
+  --panel-band: 350px;
+}
+
+/* Narrow viewport: the panel itself caps at 100vw-24px (v1.css), so the fixed
+   372px reservation above would over-shrink the stage below that. Scale it
+   down to match on phones/small panes. */
+@media (max-width: 460px) {
+
+  .ms-stage.panel-open,
+  .cv-stage.panel-open {
+    --panel-band: calc(100vw - 24px);
+  }
+}
+
+/* Call panel geometry, matched to the current chrome: header 60px, dock 96px,
+   stage inset 10px. The panel spans exactly the tiles' height (top 60, bottom
+   96 + 10) and sits 10px from the right edge; the wrapper reserves 350px for
+   it (340 + 10), and the stage's own 10px right padding is the visible gap. */
+.cv-people-panel {
+  top: 60px;
+  bottom: 106px;
+  right: 10px;
+  margin: 0;
+  width: 340px;
+}
+
+/* Meeting panel: a flex sibling — same 10px rhythm, flush with the tiles. */
+.ms-panel-v2 {
+  margin: 0 10px 10px 0;
+}
+
+/* In-call side panel: flat card — border only, no drop shadow. */
+.ms-panel-v2,
+.cv-people-panel {
+  box-shadow: none !important;
+}
+
+/* People tab: "Mute everyone" and the search field share one size (36px,
+   9px radius, 12px side margins) and an even 10px rhythm — 10px under the tab
+   line, 10px between the two, 10px before the list. Both call and meeting. */
+.cv-people-muteall,
+.ms-people-mute-all,
+.ms-people-search {
+  box-sizing: border-box;
+  height: 36px;
+  min-height: 36px;
+  margin: 0 12px 10px;
+  border-radius: 9px;
+}
+
+.cv-people-muteall,
+.ms-people-mute-all {
+  width: calc(100% - 24px);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.ms-people-search {
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ms-people-input {
+  height: 100%;
+  font-size: 13px;
+}
+
+/* 10px of air between the tab line and the first control. */
+.cv-people-head+.cv-people-muteall,
+.cv-people-head+.ms-people-search,
+.ms-people-panel {
+  margin-top: 10px;
+}
+
+.ms-people-panel {
+  padding-top: 0;
+}
+
+.ms-people-list,
+.cv-people-list {
+  padding: 0 8px 10px;
+}
+
+/* ═══ Participants tab (reference) ═══════════════════════════════════════
+   Soft grey panel, each person a white rounded card: 44px avatar, name,
+   role, and mic + camera state icons on the right (accent = on, red = off). */
+.cv-people-panel:has(.ms-people-list),
+.ms-panel-v2:has(.ms-people-list) {
+  background: #f5f6fa !important;
+}
+
+.cv-people-panel:has(.ms-people-list) .cv-people-head,
+.ms-panel-v2:has(.ms-people-list) .ms-panel-head {
+  background: transparent;
+}
+
+.ms-people-list,
+.cv-people-list {
+  padding: 2px 10px 10px;
+  gap: 0;
+}
+
+.ms-person-row {
+  box-sizing: border-box;
+  min-height: 60px;
+  margin: 0 0 10px;
+  padding: 8px 14px 8px 10px;
+  gap: 12px;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.ms-person-row:hover {
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(15, 23, 42, 0.08);
+}
+
+.ms-person-row.speaking {
+  background: #fff;
+  box-shadow: 0 0 0 1.5px #8b29be;
+}
+
+.ms-person-avatar,
+.cv-person-avatar {
+  width: 44px;
+  height: 44px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ms-person-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ms-person-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--g900);
+}
+
+.ms-person-role {
+  font-size: 11px;
+  color: var(--g500);
+}
+
+.ms-person-status {
+  gap: 14px;
+  margin-left: auto;
+  flex: none;
+}
+
+.ms-person-mic,
+.ms-person-cam {
+  display: inline-flex;
+  line-height: 0;
+}
+
+.ms-person-mic.on,
+.ms-person-cam.on {
+  color: #8b29be;
+}
+
+.ms-person-mic.off,
+.ms-person-cam.off {
+  color: #ef5b7a;
+}
+
+/* Controls on the grey panel read as white fields. */
+.cv-people-panel:has(.ms-people-list) .cv-people-muteall,
+.ms-panel-v2:has(.ms-people-list) .ms-people-mute-all,
+.cv-people-panel:has(.ms-people-list) .ms-people-search,
+.ms-panel-v2:has(.ms-people-list) .ms-people-search {
+  background: #fff;
+  border: 1px solid var(--g200);
+}
+
+body.dark .cv-people-panel:has(.ms-people-list),
+body.dark .ms-panel-v2:has(.ms-people-list) {
+  background: #171b29 !important;
+}
+
+body.dark .ms-person-row,
+body.dark .ms-person-row:hover {
+  background: #232838;
+}
+
+/* Participants list: no hover state — the row stays a plain white card and
+   its ⋮/pin/fullscreen/mute action strip never appears on hover (mic + camera
+   status is the only thing shown per row, per the reference). */
+.ms-people-list .ms-person-row:hover,
+.cv-people-list .ms-person-row:hover {
+  background: #fff;
+  box-shadow: none;
+}
+
+body.dark .ms-people-list .ms-person-row:hover,
+body.dark .cv-people-list .ms-person-row:hover {
+  background: #232838;
+}
+
+.ms-people-list .ms-person-row:hover .ms-person-actions,
+.cv-people-list .ms-person-row:hover .ms-person-actions,
+.ms-people-list .ms-person-row:focus-within .ms-person-actions,
+.cv-people-list .ms-person-row:focus-within .ms-person-actions {
+  display: none !important;
+}
+/* ── Connecting / error overlays: sit BELOW the header (never cover it) and use
+      light text — the overlay is a dark tile, but --meet-sub is dark in light theme. ── */
+.ms-wrap > .ms-connect-overlay,
+.ms-wrap > .ms-err-overlay {
+  top: 60px;
+  color: #cfd6e4;
+}
+.ms-wrap > .ms-connect-overlay span,
+.ms-wrap > .ms-err-overlay span {
+  color: #cfd6e4;
+}

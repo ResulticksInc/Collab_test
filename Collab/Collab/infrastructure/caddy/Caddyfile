@@ -1,0 +1,72 @@
+# CoLab production TLS front door (Caddy).
+#
+# WHY THIS EXISTS: browsers expose the microphone/camera (getUserMedia) and allow
+# secure WebSockets ONLY from a *secure context* — i.e. HTTPS (or localhost).
+# Serving CoLab over plain HTTP at a bare IP makes calls/meetings fail with
+# "media server error". Caddy terminates TLS so the whole app — page, API,
+# realtime socket, AND LiveKit signalling — is HTTPS/WSS on a single origin.
+# This works on ANY network (LAN, private IP, public domain) with no per-host
+# rebuild, because the backend derives the LiveKit URL from this origin.
+#
+# TLS strategy (no decisions required):
+#   • Default → a self-signed internal CA (`tls internal`). HTTPS works on ANY
+#     host immediately, including bare IPs and air-gapped LANs, with zero
+#     external dependencies. Browsers show a one-time "proceed" warning; to make
+#     it disappear, either install Caddy's root CA on client machines
+#     (`docker exec colab-caddy caddy trust`) or use a real domain (below).
+#   • Real public domain → set PUBLIC_HOST to the domain (e.g. collab.example.com)
+#     AND CADDY_ACME_EMAIL to your email; Caddy then auto-fetches a browser-
+#     trusted Let's Encrypt certificate (needs DNS → this server and ports 80/443
+#     reachable from the internet). Remove the `tls internal` line to enable it.
+#
+# PUBLIC_HOST: your server's domain or IP, no scheme. Defaults to :443 (binds all
+# hostnames) so it serves correctly even before DNS is configured.
+
+{
+	# Don't auto-redirect http→https for IP/loopback hosts (keeps bare-IP access
+	# working); real domains still get the redirect.
+	auto_https disable_redirects
+	# NOTE: when switching to a public domain for a trusted Let's Encrypt cert,
+	# add your ACME email here:  email you@example.com
+}
+
+{$PUBLIC_HOST::443} {
+	# Self-signed by default → secure context on every network. Delete this single
+	# line (and set PUBLIC_HOST + CADDY_ACME_EMAIL) to switch to Let's Encrypt.
+	tls internal
+
+	# Generous body limit for file/image/voice uploads.
+	request_body {
+		max_size 2GB
+	}
+
+	# ── LiveKit SFU signalling (WebSocket) ──────────────────────────────────
+	# Must precede the catch-all. The browser connects to wss://<host>/livekit and
+	# the LiveKit client appends /rtc/v1 → wss://<host>/livekit/rtc/v1. LiveKit
+	# serves at /rtc (NO /livekit prefix), so we use handle_path to STRIP the
+	# /livekit prefix before proxying (handle would forward /livekit/rtc → 404).
+	# reverse_proxy upgrades the WebSocket automatically.
+	handle_path /livekit* {
+		reverse_proxy livekit:7534
+	}
+
+	# ── Backend REST API (bypasses the Next proxy hop for reliability) ───────
+	handle /api/* {
+		reverse_proxy backend:4000
+	}
+
+	# ── Socket.IO realtime (HTTP long-poll AND WebSocket upgrade) ───────────
+	handle /socket.io/* {
+		reverse_proxy backend:4000
+	}
+
+	# ── MinIO object storage / console (optional) ───────────────────────────
+	handle /minio/* {
+		reverse_proxy minio:9003
+	}
+
+	# ── Everything else → the Next.js frontend ──────────────────────────────
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

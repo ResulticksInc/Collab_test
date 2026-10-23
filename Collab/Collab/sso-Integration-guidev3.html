@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SSO Integration Guide — CoLab</title>
+</head>
+<body style="margin:0; background:#ffffff; color:#1f2937; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; line-height:1.65; font-size:16px;">
+<div style="max-width:860px; margin:0 auto; padding:48px 24px 96px;">
+
+  <!-- Header -->
+  <div style="border:1px solid #e5e7eb; border-radius:16px; padding:32px; background:#f9fafb;">
+    <div style="display:inline-block; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:#0369a1; border:1px solid #bae6fd; background:#f0f9ff; padding:4px 10px; border-radius:999px;">Engineering Reference · CoLab · guide v3</div>
+    <h1 style="font-size:34px; line-height:1.15; margin:18px 0 8px; font-weight:800; color:#111827;">Single Sign-On (SSO) Integration — CoLab</h1>
+    <p style="margin:0; color:#6b7280; font-size:15px;">OpenID Connect (Authorization Code + PKCE) against the shared <b style="color:#111827;">AgenXchange</b> Identity Provider. Every code sample below is the real <b style="color:#111827;">CoLab</b> implementation (Node/Express backend, Next.js web app, Electron desktop sharing the same endpoints). Values marked <span style="display:inline-block; background:#fef3c7; border:1px solid #fcd34d; color:#92400e; font-size:11px; font-weight:700; padding:1px 6px; border-radius:6px;">&laquo;per-env&raquo;</span> differ between local, teams and run.</p>
+    <p style="margin:10px 0 0; color:#6b7280; font-size:13px;"><b style="color:#111827;">Aligned with AgenXchange guide v3:</b> IdP host <code>https://stgoa.re.cx/</code>, OIDC <code>claims</code> request for the full profile pack, RSA <code>claims_jwe</code> decryption (PEM exchange), IdP launcher <code>login_hint</code>, RP-initiated logout.</p>
+  </div>
+
+  <!-- What CoLab implements -->
+  <div style="margin-top:16px; border:1px solid #a78bfa; background:#f5f3ff; padding:14px 18px; border-radius:10px; font-size:14px; color:#5b21b6;">
+    <b>What CoLab implements from guide v3 (and what it deliberately does not):</b>
+    <ul style="margin:8px 0 0; padding-left:18px;">
+      <li>IdP base URL <code style="color:#5b21b6; background:#ede9fe; padding:1px 5px; border-radius:4px;">https://stgoa.re.cx/</code> — one env var (<code>SSO_BASE_URL</code>) derives <code>/authorize</code>, <code>/token</code>, <code>/jwks</code>, <code>/logout</code>.</li>
+      <li>Authorize requests carry the OIDC <code>claims</code> parameter asking for <code>email, name, picture, department, employee_id, claims_jwe, products, entitlements</code>.</li>
+      <li>RSA <code>claims_jwe</code> is decrypted server-side with <code>jose</code> and CoLab's private PEM (<code>keys/collab_private.pem</code>). AgenXchange encrypts with <code>keys/agenxchange_public.pem</code>. Decrypted values <b>override</b> plaintext claims.</li>
+      <li>The IdP <code>picture</code> seeds the user's avatar; <code>department</code> / <code>employee_id</code> ride on the profile.</li>
+      <li>IdP launcher <code>?login_hint=</code> on the app root auto-starts OIDC — never the password form.</li>
+      <li>Logout ends <b>both</b> sessions: app session revoked, then a full-page trip through the IdP <code>/logout</code>.</li>
+      <li>Fernet <code>*_enc</code> copies are decrypted with <code>SSO_PROFILE_ENC_SECRET</code> (Node port of the Fernet spec, cross-checked against Python <code>cryptography</code>); <code>/userinfo</code> is consulted when the id_token carries no identity. Resolution order: id_token → userinfo → <code>*_enc</code> → <code>claims_jwe</code>, decrypted values win.</li>
+    </ul>
+  </div>
+
+  <!-- Environments -->
+  <div style="margin-top:12px; border:1px solid #c7d2fe; background:#eef2ff; padding:14px 18px; border-radius:10px; font-size:14px; color:#3730a3;">
+    <b>Three environments, one client. The app host <u>is</u> the <code style="color:#3730a3; background:#e0e7ff; padding:1px 5px; border-radius:4px;">redirect_uri</code> (app root, no trailing slash):</b>
+    <table style="width:100%; border-collapse:collapse; font-size:13.5px; margin-top:8px;">
+      <thead>
+        <tr>
+          <td style="padding:6px 8px; border-bottom:2px solid #c7d2fe; font-weight:700;">Env</td>
+          <td style="padding:6px 8px; border-bottom:2px solid #c7d2fe; font-weight:700;">App host = redirect_uri = post_logout_redirect_uri</td>
+          <td style="padding:6px 8px; border-bottom:2px solid #c7d2fe; font-weight:700;">Env file</td>
+          <td style="padding:6px 8px; border-bottom:2px solid #c7d2fe; font-weight:700;">Registered on IdP?</td>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td style="padding:6px 8px; border-bottom:1px solid #c7d2fe;">local</td><td style="padding:6px 8px; border-bottom:1px solid #c7d2fe;"><code style="background:#e0e7ff; padding:1px 5px; border-radius:4px;">http://localhost:3002</code></td><td style="padding:6px 8px; border-bottom:1px solid #c7d2fe;"><code>.env</code></td><td style="padding:6px 8px; border-bottom:1px solid #c7d2fe;">Yes</td></tr>
+        <tr><td style="padding:6px 8px; border-bottom:1px solid #c7d2fe;">teams (UAT)</td><td style="padding:6px 8px; border-bottom:1px solid #c7d2fe;"><code style="background:#e0e7ff; padding:1px 5px; border-radius:4px;">https://collab-uat.resulticks.com</code></td><td style="padding:6px 8px; border-bottom:1px solid #c7d2fe;"><code>.env.teams</code></td><td style="padding:6px 8px; border-bottom:1px solid #c7d2fe;"><b style="color:#b91c1c;">Action for SSO team</b> — add this redirect_uri to client <code>collab</code></td></tr>
+        <tr><td style="padding:6px 8px;">run (production)</td><td style="padding:6px 8px;"><code style="background:#e0e7ff; padding:1px 5px; border-radius:4px;">https://collab.resulticks.com</code></td><td style="padding:6px 8px;"><code>.env.live</code></td><td style="padding:6px 8px;">Yes</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:8px 0 0; font-size:13px;">The IdP answers <b>HTTP 400</b> to an unregistered <code>redirect_uri</code> before showing its login page, so a missing registration looks like "SSO does nothing". Each environment signs its own OAuth <code>state</code>, so a code returned to the wrong host is always rejected.</p>
+  </div>
+
+  <!-- Shared IdP -->
+  <div style="margin-top:12px; border:1px solid #86efac; background:#f0fdf4; padding:14px 18px; border-radius:10px; font-size:14px; color:#166534;">
+    <b>All teams use ONE shared IdP:</b> <code style="color:#166534; background:#dcfce7; padding:1px 5px; border-radius:4px;">https://stgoa.re.cx/</code> for <code style="color:#166534; background:#dcfce7; padding:1px 5px; border-radius:4px;">/authorize</code>, <code style="color:#166534; background:#dcfce7; padding:1px 5px; border-radius:4px;">/token</code>, <code style="color:#166534; background:#dcfce7; padding:1px 5px; border-radius:4px;">/jwks</code>, <code style="color:#166534; background:#dcfce7; padding:1px 5px; border-radius:4px;">/userinfo</code>, <code style="color:#166534; background:#dcfce7; padding:1px 5px; border-radius:4px;">/logout</code>. Discovery at <code style="color:#166534; background:#dcfce7; padding:1px 5px; border-radius:4px;">/.well-known/openid-configuration</code> publishes <code>issuer = https://stgoa.re.cx</code>, <code>id_token_signing_alg = RS256</code>, <code>claims_jwe_alg = RSA-OAEP-256</code>, <code>claims_jwe_enc = A256GCM</code>. CoLab registers as client <code style="color:#166534; background:#dcfce7; padding:1px 5px; border-radius:4px;">collab</code> (confidential, PKCE always on).
+  </div>
+
+  <!-- Concepts -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">1. Concepts to know first</h2>
+  <table style="width:100%; border-collapse:collapse; font-size:14px;">
+    <tbody>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; width:160px; color:#0369a1; font-weight:600;">IdP</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Central Identity Provider at <code>stgoa.re.cx</code> (AgenXchange "Saavee" login) that owns user credentials. CoLab never sees a password.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">Client</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">CoLab. Registered on the IdP as <code>client_id = collab</code> with a client secret (server-side only).</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">redirect_uri</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">The app root of the environment (table above). Pre-registered; byte-for-byte match, no trailing slash.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">code</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Short-lived, single-use authorization code the IdP appends to the app root; the SPA posts it to the backend, which swaps it for tokens.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">PKCE</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;"><code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">code_verifier</code> + <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">code_challenge = S256(verifier)</code>. Always on, even with the client secret.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">state</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Anti-CSRF value echoed back. CoLab HMAC-signs it (10-minute TTL) and embeds the PKCE verifier + nonce, so no server storage is needed across instances.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">nonce</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Binds the id_token to the login CoLab started (replay protection).</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">claims</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">OIDC <code>claims</code> request parameter on <code>/authorize</code>: JSON naming the profile fields CoLab wants in the id_token and at <code>/userinfo</code>, including <code>claims_jwe</code>.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">claims_jwe</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Compact JWE (RSA-OAEP-256 / A256GCM) whose plaintext is a JSON object with the PII. IdP encrypts with CoLab's <b>public</b> PEM; CoLab decrypts with its <b>private</b> PEM.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">login_hint</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Email the IdP app launcher appends when opening the CoLab homepage (no code yet). CoLab starts OIDC with that hint.</td></tr>
+      <tr><td style="padding:8px 10px; color:#0369a1; font-weight:600;">app session</td><td style="padding:8px 10px; color:#374151;">CoLab's own JWT (+ rotating refresh token), returned in the <b>JSON body</b> of the callback exchange — never in a URL. Stored in localStorage (web) or the OS keychain (desktop) and bound to the device's E2EE identity.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Flow -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">2. The sign-in flow</h2>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:12.5px; color:#c9d1d9; line-height:1.5;"><code>Browser                 CoLab web (Next proxy)      CoLab backend (/api/auth)         IdP (stgoa.re.cx)
+  | pick "SSO"           |                            |                                  |
+  |----------------------|--- GET /api/auth/sso/start --&gt;  PKCE + signed state + nonce    |
+  |  302 -&gt; /authorize?client_id=collab&amp;redirect_uri=&lt;app root&gt;&amp;code_challenge&amp;claims&amp;… |
+  |----------------------------------------------------------------------------------&gt;|
+  |                                       user signs in on the IdP "Sign In" page       |
+  |  302 -&gt; &lt;app root&gt;/?code=…&amp;state=…                                          &lt;-----|
+  | SPA boots, reads ?code&amp;state off its own URL, strips them                          |
+  |--- POST /api/auth/sso/callback {code,state,deviceId} --&gt;                            |
+  |                      |                            | verify state -&gt; verifier+nonce   |
+  |                      |                            | POST /token (code+verifier+secret) --&gt;|
+  |                      |                            | verify id_token: JWKS sig, iss, aud, exp, nonce
+  |                      |                            | decrypt claims_jwe (RSA private PEM) -&gt; PII
+  |                      |                            | find-or-create user, mint app JWT
+  |  { token, user, refreshToken }  (JSON body)  &lt;----|                                  |
+  | signed in; token in localStorage / keychain                                          |</code></pre>
+
+  <!-- STEP 1 -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 1 — CoLab's registration on the IdP</h2>
+  <p style="color:#374151;">The IdP is shared; CoLab is registered on it once. This is what the SSO/platform team holds (or needs) for CoLab:</p>
+  <table style="width:100%; border-collapse:collapse; font-size:14px;">
+    <tbody>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; width:220px; color:#0369a1; font-weight:600;">client_id</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;"><code style="color:#111827; background:#f3f4f6; padding:1px 5px; border-radius:4px;">collab</code></td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">redirect_uri (local)</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;"><code style="color:#111827; background:#f3f4f6; padding:1px 5px; border-radius:4px;">http://localhost:3002</code></td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">redirect_uri (teams / UAT)</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;"><code style="color:#111827; background:#f3f4f6; padding:1px 5px; border-radius:4px;">https://collab-uat.resulticks.com</code> <span style="display:inline-block; background:#fee2e2; border:1px solid #fca5a5; color:#991b1b; font-size:11px; font-weight:700; padding:1px 6px; border-radius:6px;">to be added</span></td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">redirect_uri (run / prod)</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;"><code style="color:#111827; background:#f3f4f6; padding:1px 5px; border-radius:4px;">https://collab.resulticks.com</code></td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">post_logout_redirect_uri</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">The same app root per environment (used by the app-initiated logout).</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">scope</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;"><code style="color:#111827; background:#f3f4f6; padding:1px 5px; border-radius:4px;">openid profile email</code></td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">homepage / launcher URL</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">The app root per environment. The IdP may open it with <code>?login_hint=&lt;email&gt;</code>.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">claims_jwe public key</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">CoLab hands over <code style="color:#111827; background:#f3f4f6; padding:1px 5px; border-radius:4px;">keys/agenxchange_public.pem</code> (RSA-2048, <code>BEGIN PUBLIC KEY</code>). The private half never leaves the CoLab server. One pair per environment is recommended.</td></tr>
+      <tr><td style="padding:8px 10px; color:#0369a1; font-weight:600;">client type</td><td style="padding:8px 10px; color:#374151;">Confidential (server-side secret on <code>/token</code>) — PKCE S256 still required on every request.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- STEP 2 -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 2 — Configure environment</h2>
+  <p style="color:#374151;">All config is read in one place, <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">config/src/index.ts</code> (the <code>sso</code> block), and consumed by <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">backend/app/src/services/ssoService.ts</code>. The IdP lines are identical in every environment; only the host, secrets and key differ.</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code><span style="color:#7ee787;"># --- Shared IdP (KEEP — same for every environment, HTTPS required) ---</span>
+SSO_ENABLED=true
+SSO_BASE_URL=https://stgoa.re.cx/          <span style="color:#7ee787;"># derives /authorize /token /jwks /logout</span>
+SSO_AUTHORIZE_URL=https://stgoa.re.cx/authorize
+SSO_TOKEN_URL=https://stgoa.re.cx/token
+SSO_JWKS_URL=https://stgoa.re.cx/jwks
+SSO_ISSUER=https://stgoa.re.cx             <span style="color:#7ee787;"># id_token `iss` (discovery value); base-URL origin also accepted</span>
+SSO_IDP_URL=                                <span style="color:#7ee787;"># blank: go straight to /authorize (IdP shows its own /login)</span>
+SSO_SCOPE=openid profile email
+NEXT_PUBLIC_SSO_ENABLED=true                <span style="color:#7ee787;"># shows "SSO" in the sign-in method menu</span>
+
+<span style="color:#f0c674;"># --- Per environment ---</span>
+SSO_CLIENT_ID=collab
+SSO_CLIENT_SECRET=…                         <span style="color:#f0c674;"># from the SSO team; server-side only</span>
+SSO_REDIRECT_URI=https://collab-uat.resulticks.com   <span style="color:#f0c674;"># «per-env» app root: localhost:3002 | collab-uat | collab</span>
+SSO_STATE_SECRET=…                          <span style="color:#f0c674;"># HMAC key for the signed state (falls back to AUTH_JWT_SECRET)</span>
+
+<span style="color:#f0c674;"># --- Encrypted PII (claims_jwe) ---</span>
+SSO_JWE_PRIVATE_KEY_FILE=keys/collab_private.pem     <span style="color:#7ee787;"># mounted read-only at /app/keys in Docker</span>
+<span style="color:#7ee787;"># OR the PEM inline (raw, or base64 of the whole file — for secret stores / Azure variable groups):</span>
+SSO_JWE_PRIVATE_KEY=
+
+<span style="color:#f0c674;"># --- Fernet profile copies (*_enc) ---</span>
+SSO_PROFILE_ENC_SECRET=…                    <span style="color:#f0c674;"># shared secret from the SSO team; server-side only</span></code></pre>
+  <p style="margin-top:12px; color:#374151; font-size:14px;"><b>HTTPS matters:</b> the IdP must be called over <code>https://stgoa.re.cx/</code>. <b>PEM files:</b> generate the pair once per environment with <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">scripts/gen-sso-keys.sh</code>; <code>keys/*.pem</code> is git-ignored and only the public file is shared. The deploy bundle ships the env files but <b>not</b> <code>keys/</code> — DevOps copies the private key to <code>&lt;deploy dir&gt;/keys/</code> or pastes it inline.</p>
+
+  <!-- STEP 3 -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 3 — PKCE helpers</h2>
+  <p style="color:#374151;"><code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">backend/app/src/services/ssoService.ts</code> — pure Node <code>crypto</code>, no extra dependency:</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>import { createHash, randomBytes } from "crypto";
+function b64url(buf: Buffer): string {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+export function randomString(byteLen = 48): string {
+  return b64url(randomBytes(byteLen));
+}
+export function sha256b64url(input: string): string {
+  return b64url(createHash("sha256").update(input).digest());
+}</code></pre>
+
+  <!-- STEP 4 -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 4 — Carry the verifier safely (signed state)</h2>
+  <p style="color:#374151;">The <code>code_verifier</code> and <code>nonce</code> minted at sign-in must be available at the callback. CoLab signs them into <code>state</code> with HMAC-SHA256 and a 10-minute TTL, so it works across multiple backend instances with no shared storage. Same file:</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>const STATE_TTL_MS = 10 * 60 * 1000;
+export function createSsoState(payload: { v: string; n: string }): string {
+  const body = Buffer.from(
+    JSON.stringify({ v: payload.v, n: payload.n, e: Date.now() + STATE_TTL_MS }),
+  ).toString("base64url");
+  const sig = createHmac("sha256", config.sso.stateSecret).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+export function parseSsoState(state: string): { v: string; n: string } | null {
+  const dot = state.lastIndexOf(".");
+  const body = state.slice(0, dot), sig = state.slice(dot + 1);
+  const expected = createHmac("sha256", config.sso.stateSecret).update(body).digest("base64url");
+  const a = Buffer.from(sig, "base64url"), b = Buffer.from(expected, "base64url");
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null; // forged
+  const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  if (!parsed.e || parsed.e &lt;= Date.now()) return null;              // expired
+  return { v: parsed.v, n: parsed.n };
+}</code></pre>
+
+  <!-- STEP 5 -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 5 — Build the authorize URL (with the <code>claims</code> request)</h2>
+  <p style="color:#374151;"><code>buildLoginRedirect()</code> in <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">ssoService.ts</code>. The <code>claims</code> parameter asks the IdP for the full profile pack in both the id_token and <code>/userinfo</code>; <code>null</code> means "requested, not essential" (OIDC Core §5.5).</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>const PROFILE_CLAIMS_REQUEST = JSON.stringify({
+  id_token: { email: null, email_verified: null, name: null, picture: null,
+              department: null, employee_id: null, claims_jwe: null,
+              products: null, entitlements: null },
+  userinfo: { email: null, email_verified: null, name: null, picture: null,
+              department: null, employee_id: null, claims_jwe: null,
+              products: null, entitlements: null },
+});
+
+export async function buildLoginRedirect(args: { state; nonce; codeChallenge; loginHint? }) {
+  const { authorizeUrl } = await resolveEndpoints();   // SSO_AUTHORIZE_URL | SSO_BASE_URL + /authorize
+  const qs = new URLSearchParams({
+    response_type: "code",
+    client_id: c.clientId,
+    redirect_uri: c.redirectUri,
+    scope: c.scope,
+    state: args.state,
+    nonce: args.nonce,
+    code_challenge: args.codeChallenge,
+    code_challenge_method: "S256",
+    claims: PROFILE_CLAIMS_REQUEST,
+  });
+  if (args.loginHint) qs.set("login_hint", args.loginHint);   // IdP launcher hand-off
+  return `${authorizeUrl}?${qs.toString()}`;
+}</code></pre>
+
+  <!-- STEP 6 -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 6 — Sign-in endpoint (the redirect)</h2>
+  <p style="color:#374151;"><code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">backend/app/src/routes/auth.ts</code> — <code>GET /api/auth/sso/start</code>. One hop: mint PKCE + signed state + nonce and redirect straight to <code>/authorize</code>. The IdP shows its own login page; no pre-login logout bounce.</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>router.get("/sso/start", async (req, res) => {
+  if (!sso.ssoConfigured()) return res.redirect("/?sso_error=not_configured");
+  const loginHint = sso.cleanLoginHint(req.query.login_hint);        // email-shaped or dropped
+  const verifier      = sso.randomString(48);
+  const codeChallenge = sso.sha256b64url(verifier);
+  const nonce         = sso.randomString(16);
+  const state         = sso.createSsoState({ v: verifier, n: nonce });
+  return res.redirect(await sso.buildLoginRedirect({ state, nonce, codeChallenge, loginHint }));
+});</code></pre>
+  <p style="color:#374151;">The UI triggers it with a full-page navigation — no client-side OAuth logic. <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">frontend/app/src/components/LoginScreen.tsx</code> (the sign-in method menu, "Email" / "SSO"):</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>const startSso = () => { window.location.assign(api.ssoStartUrl()); };   // → /api/auth/sso/start</code></pre>
+
+  <!-- STEP 6b -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 6b — What that redirect actually looks like</h2>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>https://stgoa.re.cx/authorize
+  ?response_type=code
+  &amp;client_id=collab
+  &amp;redirect_uri=https://collab-uat.resulticks.com        <span style="color:#f0c674;"># «per-env»</span>
+  &amp;scope=openid+profile+email
+  &amp;state=&lt;body&gt;.&lt;hmac&gt;
+  &amp;nonce=…
+  &amp;code_challenge=…
+  &amp;code_challenge_method=S256
+  &amp;claims={"id_token":{"email":null,…,"claims_jwe":null},"userinfo":{…}}
+  &amp;login_hint=user@example.com                            <span style="color:#7ee787;"># optional — IdP launcher</span></code></pre>
+  <p style="color:#374151;">The IdP answers <code>302 → https://stgoa.re.cx/login?return_to=/authorize?…</code> and shows its "Sign In" page (email, password, passkey). Verified against staging on 2026-09-16 for <code>client_id=collab</code>.</p>
+
+  <!-- STEP 7 -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 7 — Callback: exchange, verify, decrypt</h2>
+  <p style="color:#374151;">The IdP redirects the browser to the app root with <code>?code&amp;state</code>. CoLab is a SPA, so there is no server route at the redirect URI: the boot effect in <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">frontend/app/src/components/colab/session/useCoLab1.tsx</code> reads the two params, strips them from the address bar (so a refresh cannot replay the single-use code), and POSTs them <b>exactly once</b>:</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>// useCoLab1.tsx — boot
+const p = new URLSearchParams(window.location.search);
+const code = p.get("code"), state = p.get("state");
+strip();                                   // remove code/state/error/login_hint from the URL
+api.ssoCallback(code, state)               // POST /api/auth/sso/callback { code, state, deviceId }
+  .then(({ token, user, refreshToken }) => {
+    localStorage.setItem("colab.authMethod", "sso");   // logout later also ends the IdP session
+    authSuccess(token, user, refreshToken);            // token → localStorage / keychain, app opens
+  });</code></pre>
+  <p style="color:#374151;">Server side, <code>POST /api/auth/sso/callback</code> → <code>completeSsoCallback()</code> in <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">ssoService.ts</code>:</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>const parsed = sso.parseSsoState(state);                 // 400 SSO_STATE_MISMATCH if forged/expired
+const tokens = await exchangeCode(code, parsed.v);       // POST /token: code + code_verifier + client_secret
+let claims   = await verifyIdToken(tokens.id_token, parsed.n);
+//   RS256 signature via /jwks (kid-matched, refetched once on rotation),
+//   aud = client_id, iss ∈ {SSO_ISSUER, base-URL origin, …}, exp (60 s tolerance), nonce
+if (claims.claims_jwe) {
+  const pii = await decryptClaimsJwe(claims.claims_jwe);  // RSA private PEM → { email, name, picture, department, employee_id }
+  claims = { ...claims, ...pii };                          // decrypted values WIN over plaintext
+}
+const email = claims.email.toLowerCase();                 // the account key
+return { email, name, groups, picture, department, employeeId };
+// → ssoLogin(): find-or-create the (passwordless) user, picture seeds avatarUrl,
+//   mint the app JWT + refresh token → res.json({ token, user, refreshToken })</code></pre>
+  <p style="color:#374151; font-size:14px;">Failures are surfaced to the login screen with the real reason (token-exchange status, issuer mismatch with the value the IdP stamped, missing JWE key, …) so misconfiguration is diagnosable without server logs.</p>
+
+  <!-- STEP 8 -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 8 — The local session</h2>
+  <p style="color:#374151;">CoLab does not use a handoff URL: the app JWT comes back in the JSON body of the callback POST and is stored by <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">frontend/app/src/lib/tokenStore.ts</code> (localStorage on web, OS keychain on desktop). The session is bound to the device's E2EE identity (<code>deviceId</code> in the callback body), so encrypted history works on that device. The user record carries the full profile: name, avatar from <code>picture</code>, and the SSO badge (<code>ssoEnabled</code>). New SSO users are created without a password and can only sign in via SSO; an existing password account with the same email is reused, never clobbered.</p>
+
+  <!-- STEP 8c -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 8c — Profile claims and the encrypted PII pack <span style="display:inline-block; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#0369a1; border:1px solid #bae6fd; background:#f0f9ff; padding:2px 8px; border-radius:999px; vertical-align:middle;">v3</span></h2>
+  <p style="color:#374151;">Read profile only after the id_token is verified (signature, iss, aud, exp, nonce). Claims CoLab requests and uses:</p>
+  <table style="width:100%; border-collapse:collapse; font-size:14px;">
+    <thead>
+      <tr>
+        <td style="padding:8px 10px; border-bottom:2px solid #e5e7eb; color:#111827; font-weight:700;">Claim</td>
+        <td style="padding:8px 10px; border-bottom:2px solid #e5e7eb; color:#111827; font-weight:700;">Source</td>
+        <td style="padding:8px 10px; border-bottom:2px solid #e5e7eb; color:#111827; font-weight:700;">Used for</td>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">email</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">claims_jwe (preferred) / plaintext / preferred_username</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Account key (lower-cased). Required.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">name</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">claims_jwe / plaintext / given_name</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Display name + initials on first sign-in.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">picture</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">claims_jwe / plaintext (https URL only)</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Seeds <code>avatarUrl</code> for a new user.</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">department, employee_id</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">claims_jwe / plaintext (staff accounts)</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Carried on the SSO profile (<code>department</code>, <code>employeeId</code>).</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#0369a1; font-weight:600;">groups / roles</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">plaintext, if the IdP sends them</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb; color:#374151;">Optional org role mapping (<code>SSO_GROUP_ROLE_MAP</code>).</td></tr>
+      <tr><td style="padding:8px 10px; color:#0369a1; font-weight:600;">claims_jwe</td><td style="padding:8px 10px; color:#374151;">id_token (requested via <code>claims</code>)</td><td style="padding:8px 10px; color:#374151;">Decrypted to <code>{ email, name, picture, department, employee_id }</code>; overrides the plaintext fields.</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:12px; color:#374151; font-size:14px;"><b>Plaintext switch-off:</b> when the SSO team sets <code>profile_plaintext_claims = 0</code>, CoLab keeps working because it prefers the encrypted channels. <b>Resolution order</b> (<code>completeSsoCallback</code>): verified id_token → <code>/userinfo</code> if the id_token has no identity → decrypt Fernet <code>*_enc</code> with <code>SSO_PROFILE_ENC_SECRET</code> → decrypt RSA <code>claims_jwe</code> → decrypted values win over plaintext. A login that still has no email fails with the claim keys received and the likely cause (public key not yet registered, Fernet secret missing, or no profile claims enabled for the client).</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code><span style="color:#7ee787;">// ssoService.ts — Fernet (AES-128-CBC + HMAC-SHA256) on Node crypto, no dependency</span>
+export function fernetDecrypt(token: string, secret: string): string {
+  const raw = createHash("sha256").update(secret, "utf8").digest();   // key = SHA256(secret)
+  const sign = raw.subarray(0, 16), enc = raw.subarray(16, 32);
+  const buf = Buffer.from(token, "base64url");                         // 0x80 | ts(8) | iv(16) | ct | hmac(32)
+  const body = buf.subarray(0, buf.length - 32), mac = buf.subarray(buf.length - 32);
+  if (!timingSafeEqual(mac, createHmac("sha256", sign).update(body).digest())) throw new Error("Fernet HMAC mismatch");
+  const d = createDecipheriv("aes-128-cbc", enc, buf.subarray(9, 25));
+  return Buffer.concat([d.update(buf.subarray(25, buf.length - 32)), d.final()]).toString("utf8");
+}
+<span style="color:#7ee787;">// resolveEncClaims(): every &lt;field&gt;_enc → &lt;field&gt; (decrypted wins); no-op without SSO_PROFILE_ENC_SECRET</span></code></pre>
+
+  <h3 style="font-size:18px; margin:30px 0 10px; color:#111827;">RSA <code>claims_jwe</code> — key exchange and decryption</h3>
+  <p style="color:#374151;">Generate the pair once per environment (<code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">scripts/gen-sso-keys.sh</code> wraps exactly these commands and refuses to overwrite an existing pair):</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>openssl genrsa -out keys/collab_private.pem 2048
+openssl rsa -in keys/collab_private.pem -pubout -out keys/agenxchange_public.pem</code></pre>
+  <ul style="color:#374151; font-size:14px; padding-left:20px;">
+    <li><b>Give the SSO team</b> <code>keys/agenxchange_public.pem</code> (header <code>BEGIN PUBLIC KEY</code>, body starts <code>MIIBIjANBg…</code>). Safe to send.</li>
+    <li><b>Keep</b> <code>keys/collab_private.pem</code> on the CoLab server only (<code>SSO_JWE_PRIVATE_KEY_FILE</code>, or inline via <code>SSO_JWE_PRIVATE_KEY</code>). <code>keys/*.pem</code> is git-ignored. Both PEM formats work (<code>BEGIN RSA PRIVATE KEY</code> from OpenSSL 1.x/LibreSSL, <code>BEGIN PRIVATE KEY</code> from OpenSSL 3.x).</li>
+    <li>Never regenerate on a server once the public key has been registered — the pair must stay matched or every SSO login fails with a decryption error.</li>
+  </ul>
+  <p style="color:#374151;"><code>decryptClaimsJwe()</code> in <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">ssoService.ts</code> — the Node twin of the SSO team's Python reference:</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>import { createPrivateKey } from "crypto";
+import { compactDecrypt } from "jose";
+
+export async function decryptClaimsJwe(compact: string): Promise&lt;SsoPii&gt; {
+  const key = loadJwePrivateKey();            // SSO_JWE_PRIVATE_KEY (raw/base64 PEM) or *_FILE; cached
+  if (!key) throw ssoErr(500, "id_token carries encrypted claims (claims_jwe) but no SSO_JWE_PRIVATE_KEY / SSO_JWE_PRIVATE_KEY_FILE is configured.");
+  const { plaintext } = await compactDecrypt(compact, key, {
+    keyManagementAlgorithms: ["RSA-OAEP", "RSA-OAEP-256", "RSA-OAEP-384", "RSA-OAEP-512"], // RSA1_5 refused
+  });
+  return JSON.parse(new TextDecoder().decode(plaintext));   // { email, name, picture, department, employee_id }
+}
+
+<span style="color:#7ee787;"># Python reference (Authlib) — what the IdP team documented
+# from authlib.jose import JsonWebEncryption
+# jwe = JsonWebEncryption()
+# data = jwe.deserialize_compact(id_token_claims["claims_jwe"], private_pem)
+# pii = json.loads(data["payload"]); email = pii["email"]</span></code></pre>
+  <p style="color:#374151; font-size:14px;"><b>Fails closed.</b> No key configured, wrong key, tampered ciphertext, unsupported algorithm or a non-JSON payload all reject the sign-in with a message naming the problem. CoLab never falls back to plaintext claims when <code>claims_jwe</code> is present. Covered by unit tests in <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">backend/app/test/sso.test.ts</code>.</p>
+
+  <!-- STEP 8d -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 8d — IdP app launcher (<code>login_hint</code>) <span style="display:inline-block; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#0369a1; border:1px solid #bae6fd; background:#f0f9ff; padding:2px 8px; border-radius:999px; vertical-align:middle;">v3</span></h2>
+  <p style="color:#374151;">When a user already signed in on the IdP dashboard clicks CoLab, the IdP opens the app root with <code>?login_hint=user@…</code> and no code. CoLab must start OIDC, not show the password form. Boot effect in <code style="color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">useCoLab1.tsx</code>:</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:13px; color:#c9d1d9;"><code>if (loginHint &amp;&amp; !isCallback &amp;&amp; !err) {
+  loadToken().then((tok) => {
+    if (tok) { strip(); return; }                           // saved session → normal restore
+    window.location.assign(api.ssoStartUrl(loginHint));     // → /api/auth/sso/start?login_hint=…
+  });
+}</code></pre>
+  <p style="color:#374151; font-size:14px;">The backend accepts only an email-shaped hint (<code>cleanLoginHint</code>) and forwards it to <code>/authorize</code>. Verified on staging: <code>/?login_hint=jane@…</code> lands on the IdP sign-in page with <code>login_hint</code> and <code>claims</code> in the request.</p>
+
+  <!-- STEP 9 -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Step 9 — Logout (clear both sessions)</h2>
+  <p style="color:#374151;">Logging out must end the CoLab session <b>and</b> the IdP's SSO cookie; otherwise the next "SSO" click silently re-authenticates.</p>
+  <pre style="background:#0d1117; border:1px solid #0d1117; border-radius:10px; padding:18px; overflow:auto; font-size:12.5px; color:#c9d1d9; line-height:1.5;"><code>User confirms Logout (CoLab)                       useCoLab0.tsx doLogout()
+  → POST /api/auth/logout  (revoke JWT + device session, close sockets)
+  → clear token / refresh token / drafts / local state
+  → if localStorage colab.authMethod === "sso":
+       window.location.assign("/api/auth/sso/logout")   routes/auth.ts
+  → 302 https://stgoa.re.cx/logout?post_logout_redirect_uri=&lt;app root&gt;&amp;client_id=collab
+  → IdP clears its cookie, then sends the browser back to &lt;app root&gt; (sign-in screen)
+  → next SSO sign-in asks for credentials again</code></pre>
+  <p style="color:#374151; font-size:14px;">Local state is cleared <b>before</b> the navigation, so no re-render can cancel the IdP logout trip. This is the only place CoLab calls the IdP <code>/logout</code>; SSO start goes directly to <code>/authorize</code>.</p>
+
+  <!-- Security -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Security rules (non-negotiable)</h2>
+  <ul style="color:#374151; font-size:14px; padding-left:20px;">
+    <li>PKCE S256 on every sign-in — even with the client secret.</li>
+    <li>IdP only over HTTPS (<code>https://stgoa.re.cx/</code>).</li>
+    <li><code>redirect_uri</code> is the configured app root — never reflected from user input.</li>
+    <li><code>state</code> is HMAC-verified with a 10-minute TTL and carries the PKCE verifier + nonce.</li>
+    <li>id_token validated (JWKS signature, <code>iss</code>, <code>aud</code>, <code>exp</code>, <code>nonce</code>) before any claim is trusted; <code>claims_jwe</code> is decrypted only from a verified token.</li>
+    <li>Fails closed: unverifiable signature or undecryptable <code>claims_jwe</code> rejects the login. <code>SSO_INSECURE_SKIP_VERIFY</code> is refused in production.</li>
+    <li>Client secret, state secret and the JWE private PEM stay server-side (env / mounted file) — never in the browser or in git.</li>
+    <li>Only the public PEM is shared with the SSO team.</li>
+    <li>The app JWT is returned in a POST body, never in a URL; the one-time code is stripped from the address bar immediately.</li>
+    <li>Logout completes the IdP <code>/logout</code> redirect before the sign-in screen is shown again.</li>
+  </ul>
+
+  <!-- Testing -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">Testing checklist</h2>
+  <ul style="color:#374151; font-size:14px; padding-left:20px;">
+    <li>✅ Sign-in menu → "SSO" → <code>/authorize</code> → IdP "Sign In" page (verified on staging, local env)</li>
+    <li>✅ <code>/?login_hint=</code> auto-starts OIDC with the hint and the <code>claims</code> request (verified on staging)</li>
+    <li>✅ <code>claims_jwe</code> round-trip, foreign key, tampered ciphertext, non-JSON payload, missing key — unit tests (9/9)</li>
+    <li>✅ Forged / tampered / expired <code>state</code> rejected — unit tests</li>
+    <li>✅ Unregistered <code>redirect_uri</code> rejected by the IdP with 400 (observed for <code>collab-uat</code> until registered)</li>
+    <li>⬜ Full sign-in with a staging account: token exchange, issuer check, <code>claims_jwe</code> decryption with the registered key</li>
+    <li>⬜ Logout: app session revoked, IdP cookie cleared, next SSO sign-in prompts for credentials</li>
+    <li>⬜ Each environment has its own registered <code>redirect_uri</code>, client secret and private PEM</li>
+  </ul>
+
+  <!-- API reference table -->
+  <h2 style="font-size:24px; margin:44px 0 12px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">API &amp; endpoint reference</h2>
+  <table style="width:100%; border-collapse:collapse; font-size:14px;">
+    <thead>
+      <tr>
+        <td style="padding:8px 10px; border-bottom:2px solid #e5e7eb; color:#111827; font-weight:700;">Endpoint</td>
+        <td style="padding:8px 10px; border-bottom:2px solid #e5e7eb; color:#111827; font-weight:700;">Host</td>
+        <td style="padding:8px 10px; border-bottom:2px solid #e5e7eb; color:#111827; font-weight:700;">Method</td>
+        <td style="padding:8px 10px; border-bottom:2px solid #e5e7eb; color:#111827; font-weight:700;">Purpose</td>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>/api/auth/sso/status</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">CoLab</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">GET</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>{ enabled, configured }</code> — show/hide the SSO option</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>/api/auth/sso/start[?login_hint=]</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">CoLab</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">GET</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">Begin OIDC + PKCE (302 straight to /authorize)</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>/authorize</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">stgoa.re.cx</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">GET</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">IdP login (302 → <code>/login?return_to=</code>)</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>&lt;app root&gt;/?code&amp;state</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">CoLab</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">GET</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">Registered redirect_uri; SPA reads the params</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>/api/auth/sso/callback</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">CoLab</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">POST</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>{ code, state, deviceId }</code> → exchange, verify, decrypt, <code>{ token, user, refreshToken }</code></td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>/token</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">stgoa.re.cx</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">POST</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">Code + verifier + client secret → tokens (server-to-server)</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>/jwks</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">stgoa.re.cx</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">GET</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">Signing keys for the id_token (cached 1 h)</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>/userinfo</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">stgoa.re.cx</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">GET</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">Profile fallback when no id_token is issued</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>/api/auth/logout</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">CoLab</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">POST</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">Revoke the app session</td></tr>
+      <tr><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><code>/api/auth/sso/token</code></td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">CoLab</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;">POST</td><td style="padding:8px 10px; border-bottom:1px solid #e5e7eb;"><b>Mobile / native:</b> <code>{ id_token, access_token?, nonce?, deviceId? }</code> → same <code>{ token, user, refreshToken }</code>. The app did the PKCE exchange itself; the backend verifies the id_token (<code>aud</code> = <code>SSO_CLIENT_ID</code> or <code>SSO_EXTRA_CLIENT_IDS</code>) and runs the same profile pipeline.</td></tr>
+      <tr><td style="padding:8px 10px;"><code>/api/auth/sso/logout</code></td><td style="padding:8px 10px;">CoLab</td><td style="padding:8px 10px;">GET</td><td style="padding:8px 10px;">302 → IdP <code>/logout</code> with the app root as return</td></tr>
+    </tbody>
+  </table>
+
+  <!-- JOURNEY SHOWCASE -->
+  <h2 style="font-size:24px; margin:56px 0 6px; border-bottom:1px solid #e5e7eb; padding-bottom:8px; color:#111827;">The full CoLab journey (click to see the file + code)</h2>
+  <p style="color:#6b7280; font-size:14px; margin:0 0 24px;">Follow one sign-in and one logout from click to signed-out state.</p>
+
+  <!-- Step J1 -->
+  <div style="display:flex; gap:16px; margin-bottom:14px;">
+    <div style="flex:0 0 36px;"><div style="width:36px; height:36px; border-radius:999px; background:#0369a1; color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center;">1</div></div>
+    <div style="flex:1; border:1px solid #e5e7eb; border-radius:12px; padding:16px 18px; background:#f9fafb;">
+      <div style="font-weight:700; color:#111827;">User picks &ldquo;SSO&rdquo; in the sign-in method menu</div>
+      <p style="margin:6px 0 0; color:#374151; font-size:14px;">The login screen's Email / SSO selector navigates to the start endpoint — no client-side OAuth logic.</p>
+      <button onclick="ssoToggle('j1')" style="margin-top:12px; cursor:pointer; background:#111827; color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600;">Show file &amp; code</button>
+      <div id="j1" style="display:none; margin-top:12px;">
+        <div style="font-size:12px; color:#0369a1; font-weight:600; margin-bottom:6px;">frontend/app/src/components/LoginScreen.tsx</div>
+        <pre style="background:#0d1117; border-radius:10px; padding:16px; overflow:auto; font-size:13px; color:#c9d1d9; margin:0;"><code>const startSso = () => {
+  window.location.assign(api.ssoStartUrl());   // "/api/auth/sso/start"
+};
+// menu option "SSO": setChosenMethod("sso"); setTimeout(startSso, 130);</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step J2 -->
+  <div style="display:flex; gap:16px; margin-bottom:14px;">
+    <div style="flex:0 0 36px;"><div style="width:36px; height:36px; border-radius:999px; background:#0369a1; color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center;">2</div></div>
+    <div style="flex:1; border:1px solid #e5e7eb; border-radius:12px; padding:16px 18px; background:#f9fafb;">
+      <div style="font-weight:700; color:#111827;">Start endpoint builds the OAuth params and redirects to /authorize</div>
+      <p style="margin:6px 0 0; color:#374151; font-size:14px;">PKCE + HMAC-signed state + nonce + the <code>claims</code> request, in a single 302.</p>
+      <button onclick="ssoToggle('j2')" style="margin-top:12px; cursor:pointer; background:#111827; color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600;">Show file &amp; code</button>
+      <div id="j2" style="display:none; margin-top:12px;">
+        <div style="font-size:12px; color:#0369a1; font-weight:600; margin-bottom:6px;">backend/app/src/routes/auth.ts</div>
+        <pre style="background:#0d1117; border-radius:10px; padding:16px; overflow:auto; font-size:13px; color:#c9d1d9; margin:0;"><code>const state = sso.createSsoState({ v: verifier, n: nonce });
+return res.redirect(await sso.buildLoginRedirect({ state, nonce, codeChallenge, loginHint }));</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step J3 -->
+  <div style="display:flex; gap:16px; margin-bottom:14px;">
+    <div style="flex:0 0 36px;"><div style="width:36px; height:36px; border-radius:999px; background:#0369a1; color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center;">3</div></div>
+    <div style="flex:1; border:1px solid #e5e7eb; border-radius:12px; padding:16px 18px; background:#f9fafb;">
+      <div style="font-weight:700; color:#111827;">User signs in at the IdP (no CoLab code)</div>
+      <p style="margin:6px 0 0; color:#374151; font-size:14px;">Credentials are entered on <code>https://stgoa.re.cx/login</code>. CoLab never sees the password. The IdP returns to the app root with <code>?code&amp;state</code>.</p>
+    </div>
+  </div>
+
+  <!-- Step J4 -->
+  <div style="display:flex; gap:16px; margin-bottom:14px;">
+    <div style="flex:0 0 36px;"><div style="width:36px; height:36px; border-radius:999px; background:#0369a1; color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center;">4</div></div>
+    <div style="flex:1; border:1px solid #e5e7eb; border-radius:12px; padding:16px 18px; background:#f9fafb;">
+      <div style="font-weight:700; color:#111827;">SPA posts the code; backend exchanges, verifies, decrypts, mints the session</div>
+      <p style="margin:6px 0 0; color:#374151; font-size:14px;">Exactly one POST. The response body carries the app JWT; the URL never does.</p>
+      <button onclick="ssoToggle('j4')" style="margin-top:12px; cursor:pointer; background:#111827; color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600;">Show file &amp; code</button>
+      <div id="j4" style="display:none; margin-top:12px;">
+        <div style="font-size:12px; color:#0369a1; font-weight:600; margin-bottom:6px;">backend/app/src/routes/auth.ts → services/ssoService.ts → services/authService.ts</div>
+        <pre style="background:#0d1117; border-radius:10px; padding:16px; overflow:auto; font-size:13px; color:#c9d1d9; margin:0;"><code>const parsed  = sso.parseSsoState(state);                       // verifier + nonce
+const profile = await sso.completeSsoCallback(code, parsed.v, parsed.n);
+//   exchangeCode → verifyIdToken → decryptClaimsJwe → { email, name, picture, department, employeeId }
+const out = await ssoLogin(profile, sessionContextFrom(req), deviceId);   // find-or-create + JWT
+res.json(ok(out));                                               // { token, user, refreshToken }</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step J5 -->
+  <div style="display:flex; gap:16px; margin-bottom:14px;">
+    <div style="flex:0 0 36px;"><div style="width:36px; height:36px; border-radius:999px; background:#16a34a; color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center;">✓</div></div>
+    <div style="flex:1; border:1px solid #bbf7d0; border-radius:12px; padding:16px 18px; background:#f0fdf4;">
+      <div style="font-weight:700; color:#14532d;">Signed in on CoLab</div>
+      <p style="margin:6px 0 0; color:#166534; font-size:14px;">Token in localStorage / keychain, avatar from the IdP <code>picture</code>, <code>colab.authMethod = sso</code> remembered for logout.</p>
+    </div>
+  </div>
+
+  <!-- Logout journey -->
+  <h3 style="font-size:18px; margin:30px 0 14px; color:#111827;">Logout journey</h3>
+  <div style="display:flex; gap:16px; margin-bottom:14px;">
+    <div style="flex:0 0 36px;"><div style="width:36px; height:36px; border-radius:999px; background:#b45309; color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; font-size:13px;">L1</div></div>
+    <div style="flex:1; border:1px solid #e5e7eb; border-radius:12px; padding:16px 18px; background:#f9fafb;">
+      <div style="font-weight:700; color:#111827;">User confirms Logout in CoLab</div>
+      <button onclick="ssoToggle('l1')" style="margin-top:12px; cursor:pointer; background:#111827; color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600;">Show file &amp; code</button>
+      <div id="l1" style="display:none; margin-top:12px;">
+        <div style="font-size:12px; color:#0369a1; font-weight:600; margin-bottom:6px;">frontend/app/src/components/colab/session/useCoLab0.tsx — doLogout()</div>
+        <pre style="background:#0d1117; border-radius:10px; padding:16px; overflow:auto; font-size:13px; color:#c9d1d9; margin:0;"><code>if (tok) api.logout(tok);                 // POST /api/auth/logout — revoke JWT + device session
+clearToken(); clearRefreshToken(); setMe(null); setAuthed(false); …
+if (localStorage.getItem("colab.authMethod") === "sso") {
+  localStorage.removeItem("colab.authMethod");
+  window.location.assign(api.ssoLogoutUrl());   // "/api/auth/sso/logout" — AFTER local state is cleared
+}</code></pre>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex; gap:16px; margin-bottom:14px;">
+    <div style="flex:0 0 36px;"><div style="width:36px; height:36px; border-radius:999px; background:#b45309; color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; font-size:13px;">L2</div></div>
+    <div style="flex:1; border:1px solid #e5e7eb; border-radius:12px; padding:16px 18px; background:#f9fafb;">
+      <div style="font-weight:700; color:#111827;">Backend forwards to the IdP end-session endpoint</div>
+      <p style="margin:6px 0 0; color:#374151; font-size:14px;"><code>https://stgoa.re.cx/logout?post_logout_redirect_uri=&lt;app root&gt;&amp;client_id=collab</code></p>
+    </div>
+  </div>
+  <div style="display:flex; gap:16px; margin-bottom:14px;">
+    <div style="flex:0 0 36px;"><div style="width:36px; height:36px; border-radius:999px; background:#16a34a; color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center;">✓</div></div>
+    <div style="flex:1; border:1px solid #bbf7d0; border-radius:12px; padding:16px 18px; background:#f0fdf4;">
+      <div style="font-weight:700; color:#14532d;">Fully logged out — both sessions cleared</div>
+      <p style="margin:6px 0 0; color:#166534; font-size:14px;">Browser lands on the CoLab sign-in screen. The next SSO sign-in requires credentials again.</p>
+    </div>
+  </div>
+
+  <div style="margin-top:40px; border-top:1px solid #e5e7eb; padding-top:16px; color:#6b7280; font-size:13px;">
+    <b style="color:#111827;">Reference implementation: CoLab</b> (Node/Express backend + Next.js web + Electron desktop). Key files:
+    <code>config/src/index.ts</code> (<code>sso</code> block),
+    <code>backend/app/src/services/ssoService.ts</code> (PKCE, signed state, endpoint resolution, token exchange, id_token verification, <code>claims_jwe</code> decryption),
+    <code>backend/app/src/services/authService.ts</code> (<code>ssoLogin</code>),
+    <code>backend/app/src/routes/auth.ts</code> (<code>/sso/status</code>, <code>/sso/start</code>, <code>/sso/callback</code>, <code>/sso/logout</code>),
+    <code>frontend/app/src/components/LoginScreen.tsx</code>,
+    <code>frontend/app/src/components/colab/session/useCoLab1.tsx</code> (callback + <code>login_hint</code> boot),
+    <code>frontend/app/src/components/colab/session/useCoLab0.tsx</code> (logout),
+    <code>scripts/gen-sso-keys.sh</code>, <code>keys/</code>,
+    <code>backend/app/test/sso.test.ts</code>.
+    PEM: <code>keys/agenxchange_public.pem</code> (share with SSO) / <code>keys/collab_private.pem</code> (server only).
+    Internal guide: <code>docs/SSO.md</code>.
+  </div>
+
+</div>
+<script>
+  function ssoToggle(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var btn = el.previousElementSibling;
+    var open = el.style.display !== "none";
+    el.style.display = open ? "none" : "block";
+    if (btn && btn.tagName === "BUTTON") {
+      btn.textContent = open ? "Show file & code" : "Hide file & code";
+    }
+  }
+</script>
+</body>
+</html>

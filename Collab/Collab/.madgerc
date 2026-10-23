@@ -1,0 +1,5 @@
+{
+  "fileExtensions": ["js", "jsx"],
+  "excludeRegExp": ["node_modules", "\\.next", "/dist/", "\\.stories\\.", "_mocks\\.js"],
+  "detectiveOptions": { "es6": { "mixedImports": true } }
+}

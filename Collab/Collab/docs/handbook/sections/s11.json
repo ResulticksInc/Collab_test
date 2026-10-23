@@ -1,0 +1,272 @@
+[
+  {"t":"h","level":1,"text":"11. MCP Architecture"},
+
+  {"t":"p","text":"This section documents CoLab's Model Context Protocol (MCP) integration: what MCP is, why it exists in CoLab, exactly what the current code does, and where the gaps are. It is written to be the single source of truth for the next five years, so it is deliberately honest about maturity. The short version, which the rest of the section expands and proves against the code: **CoLab ships a real, hand-written MCP server under `mcp/` that exposes the workspace's capabilities as tools, resources, and one prompt, and proxies every call to the existing REST backend — but it is a prototype scaffold, not wired into any running deployment, and no agent or LLM in the product currently talks to it.** Both the repository's own architecture document and the in-app Agents screen say so in plain language."},
+
+  {"t":"callout","kind":"warning","title":"Maturity at a glance","text":"The MCP server is code-complete enough to list and invoke tools over stdio, but it is NOT a spec-complete MCP server, NOT containerized as a running service, and NOT connected to any agent. The frontend Agents screen renders 'No MCP server is configured in this deployment'. Treat `mcp/` as a reserved, working prototype — a foundation to build on — not as a live capability."},
+
+  {"t":"h","level":2,"text":"11.1 What MCP Is, In Plain Language"},
+
+  {"t":"p","text":"**Plain language.** The Model Context Protocol is an open standard for letting an AI assistant *do things* in an application instead of just talking about them. Think of it as a universal power strip: the application publishes a list of safe actions it can perform ('send a message', 'create a meeting', 'search files'), and any AI client that speaks MCP can discover that list and ask the application to run one of those actions on the user's behalf. The application stays in control of *what* is possible and *who* is allowed; the AI only chooses *which* published action to call and *with what arguments*."},
+
+  {"t":"p","text":"**Engineering language.** MCP is a JSON-RPC 2.0 protocol with three core primitives: `tools` (callable functions with a JSON-Schema input contract that produce side effects or computed results), `resources` (addressable, read-only context the model can pull in, named by URI), and `prompts` (reusable, parameterized prompt templates). A *server* exposes those primitives; a *client* (typically an LLM host such as a desktop assistant or an agent runtime) discovers them via `tools/list`, `resources/list`, and `prompts/list`, then executes them via `tools/call` and `resources/read`. Transports are pluggable — most commonly stdio (the host spawns the server as a subprocess and exchanges line-delimited JSON over stdin/stdout) or HTTP/SSE."},
+
+  {"t":"p","text":"**Why it exists in CoLab.** CoLab is a collaboration platform — messaging, calls, meetings, tasks, reminders, files, contacts. Every one of those capabilities is already reachable through an authenticated REST API (`/api/*`, see Section 2). MCP is the *governed bridge* that turns those same REST capabilities into a catalog an AI agent can safely use. The architectural promise CoLab makes — stated verbatim in the Agents screen — is that **'an agent never gets direct database or network access'**: an agent may only act through the curated set of MCP tools, each of which calls the backend over HTTP with the user's bearer token and is therefore subject to the same authentication, membership checks, rate limits, and audit logging as a human using the app. MCP exists to make agentic automation *possible later* without ever bypassing the platform's existing authorization model."},
+
+  {"t":"diagram","kind":"layered","title":"Where MCP sits in the stack","layers":[
+    {"label":"AI client / agent (FUTURE)","items":["LLM host","MCP client"]},
+    {"label":"CoLab MCP server (mcp/, prototype)","items":["Tools","Resources","Prompts"]},
+    {"label":"Backend gateway (HTTP fetch + Bearer)","items":["request()"]},
+    {"label":"CoLab REST backend (/api/*)","items":["Express routes","Services"]},
+    {"label":"Persistence","items":["MySQL","MinIO","Redis"]}
+  ]},
+
+  {"t":"h","level":2,"text":"11.2 Repository Layout and Provenance"},
+
+  {"t":"p","text":"The entire MCP integration is eleven TypeScript files plus a `package.json` and `tsconfig.json`, all under `mcp/`. There is no build output, no compiled `dist/`, and no third-party runtime dependency. The package is a private monorepo workspace, `@colab/mcp` v1.0.0, whose own description names it a scaffold."},
+
+  {"t":"table","headers":["File","Role"],"widths":[4200,4800],"rows":[
+    ["mcp/package.json","Workspace manifest. name `@colab/mcp`, version 1.0.0, private, `main` = app/src/index.ts. Description: 'MCP server exposing CoLab capabilities as tools (scaffold).' NO `dependencies` field and NO `scripts` field — nothing to `npm start`, nothing to build."],
+    ["mcp/tsconfig.json","Two lines: extends the root tsconfig, includes `app/src/**/*.ts`. Confirms the server runs as raw TypeScript (via the monorepo's tsx runner), not a compiled artifact."],
+    ["mcp/app/src/index.ts","Entrypoint. Re-exports `registry`, `startSse`, `startStdio`; when run as main, selects transport from argv (`--sse` -> SSE, else stdio)."],
+    ["mcp/app/src/registry/index.ts","`registry()` builds `{ tools, resources, prompts }` fresh from the backend gateway on each transport start."],
+    ["mcp/app/src/tools/index.ts","`createTools(gateway)` — the 19 tool definitions (name, description, JSON-Schema input, `run` proxy). The catalog."],
+    ["mcp/app/src/resources/index.ts","`createResources(gateway)` — 7 read-only resources mapping a URI to a backend GET path."],
+    ["mcp/app/src/prompts/index.ts","One prompt template: `workspace_briefing`."],
+    ["mcp/app/src/server/gateway.ts","`backendGateway` — the HTTP bridge. get/post/patch/delete against `COLAB_API_BASE_URL` with a Bearer token; unwraps the `{ok,data}` envelope."],
+    ["mcp/app/src/transports/stdio/index.ts","Stdio JSON-RPC transport. readline over stdin; handles list/call/read methods."],
+    ["mcp/app/src/transports/sse/index.ts","HTTP/SSE transport. Node http server; exposes `/mcp/events` and `/mcp/capabilities` only (discovery-only)."],
+    ["mcp/app/src/types/index.ts","Shared types: `McpContext`, `McpTool`, `McpResource`, `McpPrompt`, `BackendGateway`."]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Recon correction (verified against source)","text":"The grounding inventory said '20 tools'. The actual file `mcp/app/src/tools/index.ts` defines exactly **19** tools (send_message, schedule_message, create_group, add_participant, create_thread, send_voice_message, create_meeting, update_meeting, cancel_meeting, create_task, update_task, move_task, assign_task, upload_file, share_file, search_files, search_contacts, get_contact, get_recent_activity). This section uses 19 throughout. All other recon facts about transports, gateway, and maturity were confirmed accurate."},
+
+  {"t":"h","level":2,"text":"11.3 Transports"},
+
+  {"t":"p","text":"The server can start in one of two transports, chosen at process launch in `index.ts`: `process.argv.includes('--sse')` selects SSE, otherwise stdio is the default. Both are hand-rolled — there is no `@modelcontextprotocol/sdk` dependency anywhere in the lockfile, only the local `@colab/mcp` workspace entries. This is a deliberate, dependency-free implementation of the wire format, which is why it is partial against the full spec."},
+
+  {"t":"h","level":3,"text":"11.3.1 Stdio Transport (the functional one)"},
+
+  {"t":"p","text":"**Plain language.** A host program launches the MCP server as a child process and talks to it by writing one JSON request per line to its standard input; the server writes one JSON response per line back to its standard output. This is the path that can actually *do* things — it is the only transport that can invoke a tool."},
+
+  {"t":"p","text":"**Engineering language.** `startStdio()` opens a `readline` interface over `process.stdin` and builds the registry once. For each input line it `JSON.parse`s the line into a JSON-RPC request, constructs an `McpContext`, and dispatches on `req.method`:"},
+
+  {"t":"ul","items":[
+    "`tools/list` -> returns `reg.tools` with the `run` function stripped off (only name, description, inputSchema serialized).",
+    "`resources/list` -> returns `reg.resources` with the `read` function stripped off.",
+    "`prompts/list` -> returns `reg.prompts` verbatim (name, description, template).",
+    "`tools/call` -> finds the tool by `req.params.name`, throws 'Unknown tool' if missing, else `await tool.run(req.params.arguments || {}, context)`.",
+    "`resources/read` -> finds the resource by exact `req.params.uri` string match, throws 'Unknown resource' if missing, else `await resource.read(req.params || {}, context)`.",
+    "any other method -> throws 'Unsupported MCP method'."
+  ]},
+
+  {"t":"p","text":"Responses are written as `{jsonrpc:'2.0', id, result}` and errors as `{jsonrpc:'2.0', id, error:{message}}`, each followed by a newline."},
+
+  {"t":"callout","kind":"warning","title":"Spec gaps in the stdio transport","text":"This is NOT a spec-complete MCP server. There is no `initialize` handshake (an MCP host normally negotiates protocol version and capabilities first), no server-initiated notifications, no request batching, and no `prompts/get`. Critically, the error path `writeError(undefined, error)` always passes `id = undefined`, so the JSON-RPC request id is dropped on every error — a compliant client correlating responses by id would not be able to match an error to its request. A real MCP host would likely fail at the missing `initialize` step before reaching any tool call."},
+
+  {"t":"h","level":3,"text":"11.3.2 SSE Transport (discovery-only)"},
+
+  {"t":"p","text":"**Plain language.** The SSE transport is a tiny web server that can *describe* what the MCP server offers, but cannot *run* anything. It is a catalog window, not a control panel."},
+
+  {"t":"p","text":"**Engineering language.** `startSse(port)` listens on `COLAB_MCP_PORT` (default `4015`) and answers exactly three things: it handles CORS preflight `OPTIONS` (204), and serves two GET routes. `GET /mcp/events` opens a `text/event-stream`, writes a single `event: ready` frame, and then sends nothing further. `GET /mcp/capabilities` returns the full `{tools, resources, prompts}` JSON (functions stripped). Everything else is `404`. There is no `tools/call` route, no `resources/read` route, and no POST endpoint — the SSE transport is purely for discovery."},
+
+  {"t":"callout","kind":"risk","title":"Hardcoded CORS origin","text":"The SSE server sets `Access-Control-Allow-Origin: http://localhost:3000` as a literal string. That is the local dev origin only; in any real deployment (frontend served on port 3002 in dev, or behind nginx/Caddy on the production host) this CORS header would not match, so a browser-based client could not read `/mcp/capabilities` cross-origin. This is consistent with the transport being a local prototype."},
+
+  {"t":"table","headers":["Concern","Stdio","SSE"],"widths":[3000,3000,3000],"rows":[
+    ["List tools/resources/prompts","Yes","Yes (`/mcp/capabilities`)"],
+    ["Invoke a tool (`tools/call`)","Yes","No"],
+    ["Read a resource (`resources/read`)","Yes","No"],
+    ["Transport","stdin/stdout JSON-RPC","HTTP + one SSE `ready` frame"],
+    ["Default selector","default (no flag)","`--sse` flag"],
+    ["Network exposure","none (subprocess)","TCP port 4015, CORS pinned to localhost:3000"]
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"11.4 The Registry: Tools, Resources, Prompts"},
+
+  {"t":"p","text":"`registry()` returns one object — `{ tools: createTools(backendGateway), resources: createResources(backendGateway), prompts }` — and is called once per transport start. Every tool and resource closes over the same shared `backendGateway`, so they all reach the backend the same way. This is the single point that defines the agent's entire surface area against CoLab."},
+
+  {"t":"h","level":3,"text":"11.4.1 Tool Catalog (19 tools)"},
+
+  {"t":"p","text":"Each tool is `{ name, description, inputSchema, run }`. `inputSchema` is built by an `objectSchema(properties, required)` helper that always sets `type:'object'` and `additionalProperties:false` (so unexpected arguments are, by schema, rejected — though nothing in the prototype actually *validates* arguments against the schema before calling `run`; the schema is advertised for the client's benefit). `run(input, context)` proxies straight to a backend REST endpoint. The table below maps every tool to the exact backend call it makes."},
+
+  {"t":"table","headers":["Tool","Backend call","Notes"],"widths":[2600,3600,2800],"rows":[
+    ["send_message","POST /api/conversations/{id}/messages","Body `{text}`. Required: conversationId, text."],
+    ["schedule_message","POST /api/conversations/{id}/scheduled","Body `{body, sendAt}`. Deliver-later."],
+    ["create_group","POST /api/conversations","Body `{kind:'group', title, memberIds}`."],
+    ["add_participant","POST /api/conversations/{id}/members","Body `{userIds}`."],
+    ["create_thread","POST /api/conversations/{id}/messages","Body `{parentMessageId, text}` — a threaded reply."],
+    ["send_voice_message","POST /api/conversations/{id}/messages","Body has a `file` stub `{name:'Voice message.webm', type:'audio/webm', url}`. Placeholder only — does not upload audio."],
+    ["create_meeting","POST /api/meetings","Passes input through (title, startsAt)."],
+    ["update_meeting","PATCH /api/meetings/{id}","Passes input through."],
+    ["cancel_meeting","POST /api/meetings/{id}/cancel","Empty body."],
+    ["create_task","POST /api/tasks","Passes input through (title)."],
+    ["update_task","PATCH /api/tasks/{id}","Passes input through."],
+    ["move_task","PATCH /api/tasks/{id}","Body `{status}` — kanban move."],
+    ["assign_task","PATCH /api/tasks/{id}","Body `{assigneeId}`."],
+    ["upload_file","POST /api/files","Passes `{name}`. Note: real uploads use a raw-bytes body; this JSON path registers metadata only."],
+    ["share_file","POST /api/files/{id}/share","Passes input through."],
+    ["search_files","GET /api/files?search=<q>","Query URL-encoded."],
+    ["search_contacts","GET /api/users?search=<q>","Query URL-encoded."],
+    ["get_contact","GET /api/users/{id}","Fetch one user."],
+    ["get_recent_activity","GET /api/audit","No arguments. Reads the actor-scoped audit log."]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Honest limits inside the tools","text":"Two tools are placeholders even at the contract level. `send_voice_message` fabricates a file stub pointing at a caller-supplied URL — it does not record, encode, or upload audio, so it cannot produce a real playable voice note the way the in-app recorder does. `upload_file` posts JSON to `/api/files`, but the real upload route expects raw file bytes via `express.raw` with a `name`/`mime` query string; the MCP tool therefore registers a file record shape, not actual file content. These are wiring stubs for a future, fuller implementation."},
+
+  {"t":"h","level":3,"text":"11.4.2 Resource Catalog (7 resources)"},
+
+  {"t":"p","text":"Resources are read-only context surfaces. `createResources` maps a URI to a backend GET path, and `read(params, context)` resolves any path template and appends `limit`/`cursor`/`filter` query parameters before calling `gateway.get`."},
+
+  {"t":"table","headers":["Resource URI","Backend path"],"widths":[4200,4800],"rows":[
+    ["messages://conversations","GET /api/conversations"],
+    ["messages://threads","GET /api/conversations/{conversationId}/thread/{messageId}"],
+    ["tasks://boards","GET /api/tasks"],
+    ["meetings://upcoming","GET /api/meetings"],
+    ["files://shared","GET /api/files"],
+    ["contacts://directory","GET /api/users"],
+    ["activity://feed","GET /api/audit"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Recon nuance: resource templates vs. exact-match lookup","text":"The recon notes said resources have 'no URI-template matching'. That is half right and worth stating precisely. The resource *body* DOES substitute path templates: `read()` replaces `{conversationId}` and `{messageId}` from `params`. However, the stdio `resources/read` handler selects a resource by EXACT `uri` string equality (`r.uri === req.params.uri`). The registered uri is the literal `messages://threads`, so a caller must pass that exact string AND supply `conversationId`/`messageId` as separate params — there is no parameterized-URI matcher that would let a client request `messages://threads/<cid>/<mid>` directly. In practice the templated `messages://threads` resource is reachable, but only via the awkward exact-uri-plus-side-params shape."},
+
+  {"t":"h","level":3,"text":"11.4.3 Prompts (1 prompt)"},
+
+  {"t":"p","text":"There is exactly one prompt, `workspace_briefing`, described as 'Summarize current CoLab activity using authorized resources.' Its template instructs the model to 'Use messages, tasks, meetings, files and activity resources to produce a concise workspace briefing.' It is a static, parameterless template — it ties the prompt to the resource catalog above and is the conceptual seed for the future AI Workspace Companion's daily briefing."},
+
+  {"t":"h","level":2,"text":"11.5 The Backend Gateway and the Governance Model"},
+
+  {"t":"p","text":"**Plain language.** Every tool and resource ultimately calls one small helper that makes an HTTP request to CoLab's normal backend, signed with the user's login token. The MCP server has no database driver, no socket, no file-system access to user data — it can only do what a logged-in user could do by calling the public API. That is the whole security story, and it is intentional."},
+
+  {"t":"p","text":"**Engineering language.** `gateway.ts` defines `backendGateway` with `get/post/patch/delete`, all delegating to a private `request(method, path, context, body)`. `request`:"},
+
+  {"t":"ol","items":[
+    "Throws 'MCP authentication token is required' if `context.token` is missing — fail-closed, no anonymous calls.",
+    "Sends `fetch(COLAB_API_BASE_URL + path)` (default `http://localhost:4000`) with `Authorization: Bearer <token>` and, if present, an `X-CoLab-Tenant: <tenantId>` header.",
+    "Parses the JSON response and enforces CoLab's envelope contract: if the body is missing or `json.ok !== true`, it throws using `json.error.message` when available, else a generic 'Backend gateway request failed' message.",
+    "On success, returns `json.data` (the unwrapped payload) to the tool/resource."
+  ]},
+
+  {"t":"p","text":"The `McpContext` carried through every call is `{ token, tenantId?, userId? }`. In the stdio transport the token is derived per request: `req.token || process.env.COLAB_MCP_TOKEN || ''`. So a host can pass a fresh user token per JSON-RPC request, or the server can run with a single ambient `COLAB_MCP_TOKEN` for a service identity."},
+
+  {"t":"diagram","kind":"flow","title":"How a tool reaches data","nodes":[
+    {"label":"MCP tool.run","sub":"args + context"},
+    {"label":"backendGateway","sub":"fetch + Bearer"},
+    {"label":"REST /api/*","sub":"authz + audit"},
+    {"label":"MySQL / MinIO"}
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Why this design is the right foundation","text":"Because the gateway only ever speaks the public REST API with a real user token, an MCP agent automatically inherits ALL existing backend protections at no extra cost: JWT verification and the token blocklist, per-conversation membership gates (e.g. you cannot send to a conversation you are not a member of), DM block enforcement, meeting host/lobby/lock rules, the IP rate limiters, and — importantly — the audit log. An agent action looks like a user action to the backend, so it is governed exactly like one. There is no second, weaker authorization surface to secure."},
+
+  {"t":"callout","kind":"risk","title":"Governance caveats to fix before going live","text":"The model is sound, but the prototype has rough edges. (1) The audit log records the actor, but does not yet distinguish 'agent acting as user' from the user themselves — there is no agent-attribution dimension. (2) `tenantId` is forwarded as `X-CoLab-Tenant`, but the current single-tenant backend does not consume it, so multi-tenant isolation is aspirational. (3) The advertised JSON Schemas are not enforced server-side before `run`, so a malformed argument flows to the backend and relies on the route's own validation. (4) The token has the full 7-day session scope (Section 10) — there is no narrower, agent-scoped credential yet."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"11.6 Tool-Invocation Flow (End to End)"},
+
+  {"t":"p","text":"This is the complete lifecycle of a single successful tool call over the stdio transport, from the host writing a line to the user's message appearing. It is the canonical sequence to reason about when debugging."},
+
+  {"t":"diagram","kind":"pipeline","title":"send_message over stdio","steps":[
+    {"label":"Host writes JSON-RPC line","detail":"{method:'tools/call', params:{name:'send_message', arguments:{conversationId, text}}, token}"},
+    {"label":"stdio parses + builds context","detail":"McpContext.token = req.token || COLAB_MCP_TOKEN; finds tool by params.name"},
+    {"label":"tool.run executes","detail":"gateway.post('/api/conversations/<id>/messages', {text}, context)"},
+    {"label":"gateway -> backend","detail":"fetch with Authorization: Bearer <token>; backend checks membership, rate limit, persists, emits MESSAGE_NEW over Socket.IO"},
+    {"label":"Envelope unwrapped","detail":"backend returns {ok:true,data:msg}; gateway returns data; stdio writes {jsonrpc,id,result}"}
+  ]},
+
+  {"t":"p","text":"A few properties of this flow are worth calling out for operators and future implementers:"},
+
+  {"t":"ul","items":[
+    {"text":"Side effects are real and immediate.","items":["A successful `send_message` is a genuine, persisted message that fans out over Socket.IO (`MESSAGE_NEW`) to every connected client in that conversation — the same as if a human sent it. There is no 'dry-run' or preview mode in the prototype."]},
+    {"text":"Failures surface as the backend defined them.","items":["If membership fails the backend returns a 403 envelope (`ok:false`); the gateway throws with that message; stdio emits a JSON-RPC `error`. But because of the `id=undefined` bug, the error response loses its correlation id."]},
+    {"text":"No retries, no idempotency keys.","items":["The gateway makes exactly one fetch. A network blip mid-call is reported as a failure; a retried `tools/call` would create a duplicate message. Idempotency is a future concern."]},
+    {"text":"The registry is built once per process.","items":["`registry()` runs at transport start, so the tool/resource set is static for the life of the process; there is no hot-reload of capabilities."]}
+  ]},
+
+  {"t":"h","level":3,"text":"11.6.1 Failure Scenarios and Troubleshooting"},
+
+  {"t":"table","headers":["Symptom","Likely cause","First checks"],"widths":[3000,3000,3000],"rows":[
+    ["Every call throws 'MCP authentication token is required'","No token in the JSON-RPC line and no `COLAB_MCP_TOKEN` env","Confirm the host passes `token` per request, or export `COLAB_MCP_TOKEN` with a valid 7-day JWT"],
+    ["Calls throw 'Backend gateway request failed'","`COLAB_API_BASE_URL` wrong, backend down, or non-2xx with no envelope","Curl `COLAB_API_BASE_URL/api/health`; confirm default `http://localhost:4000` matches your deployment"],
+    ["403-style errors on send/add/meeting tools","Token user is not a member / not the host","Expected governance — the agent inherits the user's permissions; use a token whose user actually has access"],
+    ["429 errors under load","Hit the API IP rate limiter (global 600/min) or socket send bucket","Throttle agent calls; the limiter is per backend instance, keyed by forwarded IP"],
+    ["SSE client cannot read /mcp/capabilities","Hardcoded CORS origin localhost:3000 mismatch, or wrong port","Call from localhost:3000, or read it server-to-server; confirm port `COLAB_MCP_PORT` (default 4015)"],
+    ["Host rejects the server at startup","No `initialize` handshake implemented","Expected — the prototype is not spec-complete; use a permissive/raw JSON-RPC client for testing, not a strict MCP host"],
+    ["resources/read 'Unknown resource'","Passed a templated path instead of the literal uri","Pass the exact registered uri (e.g. `messages://threads`) and supply `conversationId`/`messageId` as separate params"]
+  ]},
+
+  {"t":"h","level":2,"text":"11.7 Agent Communication and the AI Story"},
+
+  {"t":"p","text":"**There is no functioning agent-to-MCP link today.** This is the single most important honesty point in this section, so it is stated bluntly and then evidenced."},
+
+  {"t":"ul","items":[
+    {"text":"The agents/ module is an interface-only stub.","items":["`agents/app/src/index.ts` is twenty lines: a single `companion` object whose three methods — `dailyBriefing`, `summarizeConversation`, `workspaceInsights` — each `throw new Error('not implemented (Sprint 6) ...')`. Its own header says 'No model calls are wired yet; this declares the interface so the architecture supports it cleanly.' It has no memory, no planner, no model wiring, and no parameters (the signatures are commented out)."]},
+    {"text":"agents/ does not import mcp/.","items":["A repository-wide search finds no code path connecting the agent scaffold to the MCP server. `companion` is exported but imported nowhere outside its own package. The conceptual 'agent uses MCP tools' link exists only in documentation and UI copy."]},
+    {"text":"Nothing starts the MCP server in any deployment.","items":["No compose file runs it, there is no start script, and outside `mcp/` itself the only references to `@colab/mcp` are in `package-lock.json` (workspace registration) and the monorepo lint tooling. The Dockerfile copies the package for the workspace install but never launches it."]},
+    {"text":"The Agents screen confirms it to the user.","items":["`AgentsView.tsx` is a static, informational page: 'No agents connected', 'Agents connect AI assistants — over the Model Context Protocol (MCP) — to act in your workspace', and 'No MCP server is configured in this deployment' / 'MCP not configured'. The nav entry is itself feature-flagged off by default."]}
+  ]},
+
+  {"t":"p","text":"**The product's working AI lives elsewhere and does not use MCP.** The real, shipped AI surface is the backend `aiService.ts` (branded 'Agen-X'), exposed at `POST /api/ai/summarize` and `POST /api/ai/ask`, calling an OpenAI-compatible chat-completions endpoint. Only conversation summarization ('Catch up') is wired into the UI, behind the `aiSummary` feature flag (off by default); the `ask` endpoint exists but has no UI caller. This AI path talks to the backend directly — it is not an MCP client and does not invoke any MCP tool. The name overlap (`summarizeConversation` appears in both the dead agents scaffold and the live aiService) is coincidental."},
+
+  {"t":"callout","kind":"note","title":"So what IS real today?","text":"Real and runnable: the MCP server's stdio transport can list and invoke all 19 tools / 7 resources / 1 prompt against a running CoLab backend, given a valid token. Real but discovery-only: the SSE transport. NOT real: any agent or LLM that uses these tools; any running MCP service in a deployment; multi-tenant isolation; the agents/ companion. The link between an AI brain and these MCP hands is the work that remains."},
+
+  {"t":"h","level":2,"text":"11.8 Future MCP Roadmap"},
+
+  {"t":"p","text":"The roadmap below is ordered to convert the prototype into a governed, production-grade agentic surface without ever weakening the backend's authorization model. It is framed as phases with concrete, code-level work items so a future engineer can pick up exactly where the scaffold leaves off."},
+
+  {"t":"h","level":3,"text":"Phase 1 — Spec Compliance and Hardening"},
+
+  {"t":"ul","items":[
+    "Adopt the official `@modelcontextprotocol/sdk` (or implement to spec): add the `initialize` handshake with protocol-version/capability negotiation, `prompts/get`, server notifications, and proper JSON-RPC error objects.",
+    "Fix the `id=undefined` bug so error responses carry the originating request id.",
+    "Validate `arguments` against each tool's advertised JSON Schema before calling `run` (the schemas already exist and use `additionalProperties:false`).",
+    "Replace the hardcoded SSE CORS origin with a configurable allow-list, and reconsider SSE as a real streaming transport (Streamable HTTP) if browser clients are needed.",
+    "Add structured logging and a `[mcp]`-tagged trace so tool calls are observable alongside the existing diagnostics layer."
+  ]},
+
+  {"t":"h","level":3,"text":"Phase 2 — Agent-Scoped Identity and Governance"},
+
+  {"t":"ul","items":[
+    "Introduce an agent-scoped credential distinct from the 7-day user session JWT — short-lived, narrowly scoped, revocable — minted by the backend so an agent token can be killed without logging the user out.",
+    "Add an agent-attribution dimension to the audit log: record `actor = user`, `via = agent:<id>`, and the tool name, so every agent action is traceable and distinguishable from a human action.",
+    "Make `X-CoLab-Tenant` real: have the backend consume it for tenant isolation once multi-tenancy lands, instead of forwarding it into a single-tenant void.",
+    "Add per-tool authorization policy (allow/deny lists per agent), human-in-the-loop confirmation for high-impact tools (e.g. `cancel_meeting`, `add_participant`), and idempotency keys to make retries safe."
+  ]},
+
+  {"t":"h","level":3,"text":"Phase 3 — Wire a Real Agent (close the loop)"},
+
+  {"t":"ul","items":[
+    "Implement the `agents/` companion for real: `dailyBriefing`/`summarizeConversation`/`workspaceInsights` become an MCP client that connects to this server, uses the `workspace_briefing` prompt and the 7 resources to gather context, and calls tools to act.",
+    "Choose a deployment topology: either run the MCP server as a stdio subprocess of the agent runtime, or stand it up as a long-lived service (then add a compose service, a start script, and the missing runtime config).",
+    "Reconcile with the existing Agen-X aiService so there is one AI path, not two overlapping ones — likely the agent runtime calls the LLM and uses MCP tools, while aiService's summarize/ask become tools the agent can call.",
+    "Flip the `agents` and (where appropriate) MCP feature flags on, and replace the static AgentsView empty state with a real connected-agents management UI."
+  ]},
+
+  {"t":"h","level":3,"text":"Phase 4 — Breadth and Trust"},
+
+  {"t":"ul","items":[
+    "Complete the placeholder tools: a true `send_voice_message` (record/encode/upload) and a streaming `upload_file` that uses the raw-bytes route.",
+    "Expand the catalog to cover calls, reminders, contacts management, and search with the global-search backend, each still proxied through the gateway.",
+    "Add resource subscriptions/notifications so an agent can react to new messages or meeting changes instead of polling.",
+    "Publish the tool/resource contract as a versioned, documented capability manifest so external MCP hosts can integrate against a stable surface."
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Guiding principle for the next five years","text":"Never let an agent bypass the gateway. Every future tool, no matter how powerful, should remain a thin proxy over an authenticated REST endpoint that a human could also call. The day an MCP tool reaches the database or a socket directly is the day the governance promise in this section breaks. Keep the gateway as the one and only door."},
+
+  {"t":"h","level":2,"text":"11.9 Summary"},
+
+  {"t":"table","headers":["Aspect","Current state"],"widths":[3200,5800],"rows":[
+    ["SDK","Hand-rolled JSON-RPC, no @modelcontextprotocol/sdk, zero runtime deps"],
+    ["Transports","stdio (functional, can invoke) + SSE (discovery-only); not spec-complete (no `initialize`)"],
+    ["Tools","19, each a thin proxy to a REST endpoint via the backend gateway"],
+    ["Resources","7 read-only URIs mapping to GET endpoints"],
+    ["Prompts","1 (`workspace_briefing`)"],
+    ["Auth","Bearer token per call; fail-closed if no token; inherits all backend authz + audit"],
+    ["Agent link","None — agents/ is a throwing stub; nothing imports or starts the server"],
+    ["Deployment","Not containerized, no start script; referenced only by lint tooling; UI says 'MCP not configured'"],
+    ["Verdict","Working prototype and a sound foundation; NOT a live capability"]
+  ]},
+
+  {"t":"p","text":"CoLab's MCP integration is best understood as a carefully-shaped *foundation*: the hard architectural decision — that agents act only through governed, authenticated REST tools and never touch data directly — is already made and already implemented in `gateway.ts`. What remains is spec compliance, agent-scoped identity, and actually connecting a brain to these hands. The scaffold is honest about being a scaffold, and this section is honest in turn: nothing here should be sold as a shipping agent feature until Phase 3 closes the loop."}
+]

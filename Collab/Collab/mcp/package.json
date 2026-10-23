@@ -1,0 +1,13 @@
+{
+  "name": "@colab/mcp",
+  "version": "1.0.1",
+  "private": true,
+  "main": "app/src/index.ts",
+  "description": "CoLab MCP server — a secure orchestration layer exposing CoLab capabilities (messaging, contacts, calendar, meetings, tasks, files, activity, reminders, search) to AI assistants over the Model Context Protocol. Talks to the existing backend over HTTP only.",
+  "scripts": {
+    "start": "tsx app/src/index.ts",
+    "start:http": "tsx app/src/index.ts --http",
+    "dev": "tsx watch app/src/index.ts --http",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

@@ -1,0 +1,45 @@
+# LOCAL-ONLY (gitignored) override for the DEV stack (docker-compose.yml).
+#
+# Why: the live stack (docker-compose.live.yml, colab-livekit) already publishes
+# host ports 7531 (ICE/TCP), 7532/udp (ICE/UDP) and 7533/udp (TURN). The dev
+# LiveKit publishes the same three, so whichever stack starts second loses its
+# media ports and the dev SFU crash-loops. This moves the dev SFU's media ports
+# to 7541-7543 (signalling stays on 7534, which the live stack never publishes).
+# The SFU advertises the ports it listens on (node_ip 127.0.0.1), so the
+# container-side ports match the host-side ones 1:1.
+#
+# The host `next dev` on :3002 must proxy /livekit here:
+#   LIVEKIT_INTERNAL_URL=http://127.0.0.1:7534
+services:
+  livekit:
+    ports: !override
+      - "7534:7534"      # signalling (ws/http)
+      - "7541:7541"      # ICE/TCP media
+      - "7542:7542/udp"  # ICE/UDP media
+      - "7543:7543/udp"  # TURN relay
+    volumes: !reset []
+    configs:
+      - source: livekit_local
+        target: /etc/livekit.yaml
+configs:
+  livekit_local:
+    content: |
+      # Same as infrastructure/livekit/livekit.yaml with the media ports moved.
+      port: 7534
+      rtc:
+        udp_port: 7542
+        tcp_port: 7541
+        use_external_ip: false
+        node_ip: 127.0.0.1
+      keys:
+        # Placeholder — overridden by LIVEKIT_KEYS from .env at runtime.
+        colab-prod: devsecret-overridden-by-env-do-not-use-in-prod
+      turn:
+        enabled: true
+        udp_port: 7543
+      redis:
+        address: redis:6379
+      webhook:
+        api_key: colab-prod
+        urls:
+          - http://backend:4000/api/livekit/webhook

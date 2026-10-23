@@ -1,0 +1,20 @@
+{
+  "ignores": [
+    "concurrently",
+    "dependency-cruiser",
+    "madge",
+    "knip",
+    "depcheck",
+    "@next/bundle-analyzer",
+    "@playwright/test",
+    "playwright",
+    "storybook",
+    "@storybook/nextjs",
+    "@storybook/react",
+    "@storybook/addon-essentials",
+    "chromatic",
+    "react-scan",
+    "cross-env"
+  ],
+  "ignore-patterns": ["node_modules", ".next", "dist"]
+}

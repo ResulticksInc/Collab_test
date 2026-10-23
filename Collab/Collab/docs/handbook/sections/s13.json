@@ -1,0 +1,305 @@
+[
+  {"t":"h","level":1,"text":"13. Deployment Architecture"},
+
+  {"t":"p","text":"This section is the single source of truth for how CoLab is built into container images, configured per environment, networked, fronted with TLS, deployed, rolled back, and recovered. Every claim below is grounded in the real repository: the six `docker-compose.*.yml` files at the repo root, `infrastructure/nginx/nginx.conf`, `infrastructure/caddy/Caddyfile`, `infrastructure/coturn/turnserver.conf`, the five `infrastructure/livekit/*.yaml` profiles, the two Dockerfiles under `docker/`, the env reference `.env.example`, and the operational scripts under `scripts/` plus the root `DEPLOY.md` runbook."},
+
+  {"t":"p","text":"CoLab is deployed as a **single-host Docker Compose stack**, not a Kubernetes or multi-node orchestration. One physical or virtual server runs the whole application surface (web, API, realtime, database, object storage, cache, media server) as a set of containers on one internal Docker network. The only deliberately externalized component is the media plane: in some topologies the LiveKit SFU and the coturn TURN relay are relocated to a separate box near the users. There is no service mesh, no autoscaler, and no CI-driven blue/green pipeline; deployment is a deliberate `docker compose ... up -d --build` command run by an operator from the unzipped bundle on the target box."},
+
+  {"t":"callout","kind":"note","title":"Plain-language summary","text":"Think of CoLab as a self-contained appliance. You copy a folder onto a server, fill in one environment file, and run one Docker command. Docker then starts about eight cooperating programs (the website, the API, the database, file storage, a cache, the video server, and a reverse proxy in front of them). A reverse proxy (nginx or Caddy) is the single front door; everything else hides on a private network behind it."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.1 Environments and the Three-Tier Topology"},
+
+  {"t":"p","text":"CoLab runs across three real promotion tiers. The **same build runs in all three** — there is no per-environment code fork. All environment differences are expressed through an env file (`.env.local`, `.env.teams`, `.env.live`) and a chosen LiveKit config YAML. URLs that the browser needs (the API origin, the Socket.IO origin, the LiveKit signalling URL) are derived from the request origin at runtime wherever possible, which is precisely why one image is portable across hosts."},
+
+  {"t":"table","headers":["Tier","Host / Origin","Internal IP","User port","DB","LiveKit config"],"rows":[
+    ["Development","localhost (Docker Desktop)","127.0.0.1","3002","bundled MySQL container `colab:colab`","livekit.yaml (node_ip 127.0.0.1)"],
+    ["Staging / Test (\"teams\")","collab.resul.com / collab.resul.team","10.205.11.8","7520","corporate MySQL via DATABASE_URL","livekit.test.yaml (node_ip 10.205.11.8)"],
+    ["Production (\"live\")","collab.resulticks.com","10.200.3.17","7524 (LB → server)","shared corporate MySQL 10.101.3.2:3603","livekit.live.yaml (use_external_ip true)"]
+  ]},
+
+  {"t":"p","text":"**Development** is the local loop. `docker compose up -d` brings up the full stack including a bundled `mysql:8` container seeded from the migrations. The LiveKit SFU advertises `node_ip: 127.0.0.1` because, on Docker Desktop, the published media ports map back to loopback — this is the single most important media setting on a laptop. Calls between two browser tabs on the same machine connect directly; no TURN relay is involved locally."},
+
+  {"t":"p","text":"**Staging / Test** (the \"teams\" tier) lives *inside* the corporate network at a private `10.205.11.8` address reachable over the company LAN/VPN, not the public internet. Its LiveKit profile (`livekit.test.yaml`) therefore deliberately sets `use_external_ip: false` and pins `node_ip: 10.205.11.8` — running STUN external-IP discovery here would advertise the wrong (internet-facing) address and break media. The comment in that file is explicit: \"The ONLY line that differs from the live server's config is node_ip.\""},
+
+  {"t":"p","text":"**Production** (the \"live\" tier) serves internal and corporate-VPN users behind a corporate TLS load balancer that terminates HTTPS and forwards to the server. The live LiveKit profile sets `use_external_ip: true` with `node_ip` *unset*, so the SFU advertises **both** the local `10.200.3.17` host candidate (for internal/VPN callers, who pair on it directly without hairpinning) **and** a STUN-discovered public candidate (for off-network callers). This dual-candidate behavior was established by live debugging: with `use_external_ip: false` the SFU advertised only the private candidate and off-network calls hung."},
+
+  {"t":"p","text":"The promotion path is **localhost → teams → (manager approval) → live**. Operators switch the active env file with `scripts/use-profile.sh local|teams|live` (or the PowerShell mirror `use-profile.ps1`), which simply copies `.env.<profile>` to `.env`, prints the key facts (PUBLIC_HOST, FRONTEND_PORT, DB_PROFILE, DATABASE_URL, LIVEKIT_WS_URL), and warns if any `REPLACE_WITH_*`/`CHANGE_ME_*` placeholders remain to be filled before deploy."},
+
+  {"t":"callout","kind":"warning","title":"Documentation discrepancy worth knowing","text":"The live compose file maps the host port as `${NGINX_PORT:-7524}:7530`, i.e. nginx is reachable on host port 7524. The root `DEPLOY.md` runbook, however, repeatedly states the corporate LB forwards `https://collab.resulticks.com` (443) to the server `:3002` and its firewall step opens `3002/tcp`. These two numbers disagree. The authoritative value is whatever `NGINX_PORT` is set to in the active `.env.live`; treat `3002` in the prose as a stale artifact and confirm the real port against the env file and `docker compose ps` at deploy time."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.2 The Container Set"},
+
+  {"t":"p","text":"CoLab is composed of up to ten container services. Not every compose file runs all of them; the table below is the full catalog with the image pin and role. Container names use the `colab-*` prefix in the base and live stacks and the `collab-*` prefix in the production (Caddy) stack."},
+
+  {"t":"table","headers":["Service","Image (pinned)","Role","Host-published?"],"rows":[
+    ["db","mysql:8","Primary datastore (InnoDB, utf8mb4); runs migrations on boot","Optional (base only)"],
+    ["redis","redis:7-alpine","Socket.IO adapter, huddle/hand state, token blocklist","No (internal)"],
+    ["minio","minio/minio:RELEASE.2025-09-07T16-13-09Z","S3-compatible object storage for file/recording blobs","Dev only (9000/9001)"],
+    ["livekit","livekit/livekit-server:v1.9","WebRTC SFU for calls, meetings, screen share","Media ports only"],
+    ["coturn","coturn/coturn:4.6","TURN/STUN relay for cross-network media","host networking"],
+    ["egress","livekit/egress:latest","Server-side meeting recording (opt-in)","No (profile: recording)"],
+    ["backend","docker/Dockerfile.backend","Express + Socket.IO API on :4000","Dev/base only"],
+    ["frontend","docker/Dockerfile.frontend","Next.js 14 SSR app on :3000","Per-profile port"],
+    ["nginx","nginx:alpine (sha256 digest pin)","Reverse proxy / single web entry on :7530","Yes (profile: production)"],
+    ["caddy","caddy:2-alpine","TLS-terminating reverse proxy (443/80) — production stack only","Yes"],
+    ["cloudflared","cloudflare/cloudflared:latest","Outbound tunnel for public demo ingress","No (cloud override)"]
+  ]},
+
+  {"t":"p","text":"Two named volumes persist data across container restarts and rebuilds: `colab_mysqldata` (MySQL data directory) and `colab_minio` (object-storage blobs). The production stack adds `collab_caddy_data` and `collab_caddy_config` to persist Caddy's certificates and config. **These volumes are the durable state of the system; deleting them destroys all user data and uploaded files.**"},
+
+  {"t":"callout","kind":"risk","title":"Pinning and image-tag risks","text":"Most images are pinned for reproducibility (`mysql:8`, `livekit/livekit-server:v1.9`, the digest-pinned `nginx:alpine`, the date-stamped MinIO release). However `egress:latest`, `caddy:2-alpine`, and `cloudflared:latest` are moving tags — a future `up --build` could pull a changed image. The MinIO pin is deliberate: the comment warns that MinIO froze the community `:latest` in Sept 2025 and newer builds removed the admin console that the `/minio` nginx route depends on. Do not bump it without testing."},
+
+  {"t":"h","level":3,"text":"13.2.1 Backend image (docker/Dockerfile.backend)"},
+
+  {"t":"p","text":"A multi-stage `node:20-alpine` build. The `deps` stage runs `npm ci --omit=dev --ignore-scripts --legacy-peer-deps` across the monorepo workspaces (config, shared, database, backend, mcp, agents, frontend). The runner stage copies only `config/`, `shared/`, `database/`, and `backend/` source, installs `tini` as PID 1 for clean signal handling, and runs the TypeScript entry **directly** via `tsx backend/app/src/index.ts` — there is no compiled `dist/`; the backend executes its TypeScript at runtime. It exposes port 4000."},
+
+  {"t":"h","level":3,"text":"13.2.2 Frontend image (docker/Dockerfile.frontend)"},
+
+  {"t":"p","text":"Also multi-stage `node:20-alpine`. The critical detail is that **Next.js bakes a set of values at build time**, not runtime. Two classes of variable must be present during `npx next build`:"},
+
+  {"t":"ul","items":[
+    {"text":"`NEXT_PUBLIC_*` — exposed to the browser bundle: API base URL, socket URL, app/workspace name, the signup feature flag, and the E2EE flag. These are compiled into the client JavaScript.","items":["Leaving `NEXT_PUBLIC_API_BASE_URL` / `NEXT_PUBLIC_SOCKET_URL` blank selects same-origin mode — the browser talks to its own host:port and Next proxies onward. The Dockerfile comment explicitly forbids defaulting these to `localhost:4000`, because that would bake every remote visitor's browser into trying its *own* localhost."]},
+    {"text":"`BACKEND_INTERNAL_URL` and `LIVEKIT_INTERNAL_URL` — server-side proxy targets baked into `next.config.js` rewrites.","items":["Next compiles `rewrites()` into the route manifest at build time, so a runtime env is ignored. Without `BACKEND_INTERNAL_URL` set at build, the proxy falls back to `127.0.0.1:4000` and every proxied request fails with ECONNREFUSED inside the container — manifesting as login/signup 500s and dead realtime."]}
+  ]},
+
+  {"t":"callout","kind":"warning","title":"Rebuild after changing NEXT_PUBLIC_* or proxy targets","text":"Because these are baked at build time, changing the app name, feature flags, or proxy targets requires `up -d --build`, not just `up -d`. A plain restart will silently keep the old baked values."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.3 Compose Files — One Topology Per File"},
+
+  {"t":"p","text":"There are six compose files at the repo root plus one override under `infrastructure/deployment/`. Each encodes a deliberate topology. Understanding which file maps to which deployment is the core operational skill for CoLab."},
+
+  {"t":"table","headers":["Compose file","Purpose","Public surface","DB","Notable"],"rows":[
+    ["docker-compose.yml","Base — all services; dev default","frontend port (3002); nginx only with --profile production","bundled db container","coturn host-net; egress behind --profile recording"],
+    ["docker-compose.live.yml","LIVE collab.resulticks.com","nginx (7524→7530) + media (7531/7532/7533) ONLY","bundled db OR DB_PROFILE=live → corporate MySQL","coturn profile-gated OFF; everything else internal"],
+    ["docker-compose.production.yml","HTTPS-everywhere, network-agnostic","Caddy 443/80 ONLY + media","external corporate MySQL via DATABASE_URL (no bundled db)","Caddy terminates TLS; HTTP/3 on 443/udp"],
+    ["docker-compose.cloud.yml","Public demo override","Cloudflare Tunnel (no open ports)","local MySQL container","Media via LiveKit Cloud; cloudflared agent"],
+    ["docker-compose.mumbai.yml","Regional media node only","SFU media + TURN (no app/db/web)","none (media only)","LiveKit + coturn + a LiveKit-state Redis near users"],
+    ["docker-compose.server.yml","Override selecting livekit.prod.yaml","inherits base","inherits base","mounts livekit.prod.yaml; optional remote DB block"]
+  ]},
+
+  {"t":"h","level":3,"text":"13.3.1 Base — docker-compose.yml"},
+
+  {"t":"p","text":"The base file declares every service. In its default form (no profile) it runs db, coturn, redis, minio, livekit, backend, and frontend, and publishes the frontend on the host (`${FRONTEND_PORT:-3002}:3000`). The `nginx` reverse proxy is gated behind `--profile production`, and the `egress` recording worker behind `--profile recording`, so plain dev stays lean. The bundled `db` container hardcodes `colab/colab` credentials and mounts `database/initdb` for first-boot database creation. MinIO publishes 9000 (API) and 9001 (console) only in this dev file."},
+
+  {"t":"h","level":3,"text":"13.3.2 Live — docker-compose.live.yml"},
+
+  {"t":"p","text":"The live file exists for one reason: the shared production box already runs services on common host ports (its own MySQL holds 3306, etc.), so publishing db/backend/frontend/minio/livekit-signalling to the host would collide (\"address already in use\"). The live file therefore publishes **only the two surfaces that must be reachable from outside the Docker host**: nginx (the corporate LB target) and the LiveKit media ports (browsers send RTP/ICE straight here). Everything else — db:3306, backend:4000, frontend:3000, minio:9000, livekit:7534 — talks over the internal Docker network with no host port and no possible conflict."},
+
+  {"t":"p","text":"The live `backend` reads `DB_PROFILE` (default `local`): set `DB_PROFILE=live` and it uses `DATABASE_URL_LIVE` (the shared corporate MySQL at `10.101.3.2:3603`), otherwise it falls back to `DATABASE_URL` (the bundled container). A `COLAB_FRESH_START` switch controls whether first boot starts the target DB empty or imports the bundled snapshot. The co-located `coturn` service is `profiles: [coturn]` — i.e. **off by default** — because the live TURN relay runs on a dedicated public box (its `:443` clashed with nginx on the app box). Note nginx here `depends_on` minio as well, because nginx resolves all upstreams at startup and refuses to boot if any (including MinIO) is missing."},
+
+  {"t":"h","level":3,"text":"13.3.3 Production — docker-compose.production.yml"},
+
+  {"t":"p","text":"This is the network-agnostic, HTTPS-everywhere stack. The only public web surface is **Caddy** on 443 + 80 (plus 443/udp for HTTP/3); Caddy terminates TLS and reverse-proxies the frontend, API, Socket.IO, LiveKit signalling, and MinIO on a single secure origin. There is **no bundled `db` service** — the backend connects to the shared corporate MySQL via `DATABASE_URL`, with no fallback (fail fast if missing). This stack is the right choice for any host where you want a browser-trusted or self-signed secure context with zero per-host rebuild, because the backend derives the browser-facing LiveKit URL from the request origin."},
+
+  {"t":"h","level":3,"text":"13.3.4 Cloud demo — docker-compose.cloud.yml"},
+
+  {"t":"p","text":"A thin override used with the base file for a public showcase. It points the backend's token minting and server SDK at **LiveKit Cloud** (`wss://<project>.livekit.cloud`), which handles all NAT traversal, and adds a **cloudflared** agent that makes an outbound connection to Cloudflare's edge to serve the app at a public HTTPS URL with no open ports, no VPN, and no public IP required. The DB stays local. The documented invocation lists services explicitly (db redis minio backend frontend cloudflared) so the base file's self-hosted livekit/coturn are not started (they would sit unused since LiveKit Cloud is used instead)."},
+
+  {"t":"h","level":3,"text":"13.3.5 Mumbai regional media — docker-compose.mumbai.yml"},
+
+  {"t":"p","text":"A self-contained media node and nothing else: one LiveKit SFU, one coturn, and one Redis for the SFU's own room state. Its purpose is latency, not redundancy. Because a LiveKit SFU is **not peer-to-peer** (media flows client → SFU → client), a US-East SFU serving India users incurs ~200–300ms RTT even within a single room. Relocating only the media engine to asia-south1 cuts that to ~20–40ms. The app, backend, database, messaging, files, and the app's own huddleStore Redis stay on US-East; signalling still flows through the 17 box's nginx `/livekit` (proxied to the Mumbai public IP:7534, firewalled to the 17 box only), while media goes direct to Mumbai. No app code changes — env and config only."},
+
+  {"t":"callout","kind":"note","title":"Mumbai Redis is not the app Redis","text":"The Redis in the mumbai file is the media node's OWN room-state store (for LiveKit and future multi-node SFU scaling). It is NOT the application's huddleStore/Socket.IO Redis, which stays on US-East with the backend. Do not point the backend at it."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.4 Networking and Port Topology"},
+
+  {"t":"p","text":"CoLab's networking has two distinct planes that must not be conflated: the **control plane** (web, API, realtime, LiveKit signalling) which flows through the single reverse-proxy front door, and the **media plane** (RTP/ICE/TURN) which goes **direct** from the browser to the SFU/relay box on dedicated ports. Mixing these up is the root cause of nearly every \"calls don't connect\" incident."},
+
+  {"t":"diagram","kind":"layered","title":"Production request path (control plane)","layers":[
+    {"label":"Browser","items":["HTTPS page","WSS socket","WSS LiveKit signalling"]},
+    {"label":"Corporate LB (TLS, 443)","items":["terminates TLS","X-Forwarded-Proto"]},
+    {"label":"Host port (NGINX_PORT, e.g. 7524)","items":["maps to nginx container :7530"]},
+    {"label":"nginx / Caddy reverse proxy","items":["/api → backend","/socket.io → backend","/livekit → SFU","/ → frontend"]},
+    {"label":"Internal services","items":["frontend:3000","backend:4000","livekit:7534"]}
+  ]},
+
+  {"t":"p","text":"The confirmed control-plane chain is: **corporate LB (443) → host `NGINX_PORT` → nginx container :7530 → {frontend:3000, backend:4000, livekit:7534}**. TLS is terminated *upstream* of nginx (at the corporate LB), so the nginx container itself never holds a certificate; it honors the LB's `X-Forwarded-Proto`, defaulting to `https` when none is sent. That forwarded scheme is what the backend uses to build `wss://` LiveKit URLs and same-origin links — a wrong `http` here causes mixed-content errors and broken calls."},
+
+  {"t":"table","headers":["Port","Protocol","Plane","What it carries"],"rows":[
+    ["7530","TCP","Control","nginx single entry (inside container)"],
+    ["7524 / 7520 / 3002","TCP","Control","host NGINX_PORT per tier (LB target)"],
+    ["3000","TCP","Control","frontend (Next.js), internal"],
+    ["4000","TCP","Control","backend (Express + Socket.IO), internal"],
+    ["7534","TCP","Control","LiveKit signalling (WSS), internal — proxied at /livekit"],
+    ["7532","UDP","Media","LiveKit ICE/UDP — direct to SFU box"],
+    ["7531","TCP","Media","LiveKit ICE/TCP fallback — direct to SFU box"],
+    ["7533","UDP","Media","LiveKit built-in TURN relay"],
+    ["3478","UDP/TCP","Media","coturn plain TURN/STUN"],
+    ["5349","TCP","Media","coturn TURN-over-TLS"],
+    ["443","TCP","Media","coturn TURN-over-TLS (alt) — strict-NAT traversal"],
+    ["49152-49251","UDP","Media","coturn relay port range"]
+  ]},
+
+  {"t":"p","text":"All LiveKit ports deliberately sit within the **7530–7536 range that corporate IT freed** for this deployment. Signalling (7534) stays internal and is reached only via the reverse proxy's `/livekit` route; media ports (7531/7532/7533) are published to the host and opened on the firewall so browsers reach the SFU's advertised `node_ip` directly. This direct-media design is why a DNS subdomain alone does not fix calls — signalling (WSS) and media (RTP/UDP) are separate problems, and a name pointing at an internal `10.x` IP is unreachable from outside the corporate network regardless."},
+
+  {"t":"h","level":3,"text":"13.4.1 The /livekit prefix-strip — a load-bearing rewrite"},
+
+  {"t":"p","text":"The browser connects to `wss://<host>/livekit`, and the LiveKit client appends `/rtc/v1`, so requests arrive as `/livekit/rtc/v1[...]`. LiveKit itself serves at `/rtc` with **no** `/livekit` prefix. Both proxies therefore strip the prefix before forwarding: nginx uses `rewrite ^/livekit/?(.*)$ /$1 break;` and Caddy uses `handle_path /livekit*`. If the prefix is not stripped, LiveKit returns 404 on `/livekit/rtc/v1/validate` and the call's media connection fails. The nginx `/livekit` and `/socket.io/` locations also set the `Upgrade`/`Connection: upgrade` headers for the WebSocket handshake, and `/livekit` uses an 86400s read/send timeout to keep the signalling socket open for the whole call."},
+
+  {"t":"diagram","kind":"flow","title":"Media plane (direct, bypasses the proxy)","nodes":[
+    {"label":"Browser","sub":"behind NAT"},
+    {"label":"coturn relay","sub":"3478/5349/443"},
+    {"label":"LiveKit SFU","sub":"node_ip:7532"}
+  ]},
+
+  {"t":"p","text":"On the media plane, a clean LAN client pairs an ICE **host** candidate directly to the SFU at `node_ip:7532`. A client behind restrictive NAT (VPN, WSL, Docker virtual adapter, hotel/mobile) relays through coturn, which forwards to the SFU's internal candidate. This is why the coturn config carries an explicit `allowed-peer-ip` exception for the SFU's internal IP (10.200.3.17, plus the teams SFU 10.205.11.8) ahead of the blanket RFC1918 denies — without it, the relay cannot reach the SFU and every relayed call fails DTLS."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.5 Reverse Proxy and Same-Origin Model"},
+
+  {"t":"p","text":"CoLab uses a strict **same-origin** model: the browser only ever talks to one origin, and that origin proxies onward to the backend, the SFU signalling, and object storage. This is implemented in three layers, any one of which can carry the proxy depending on the topology."},
+
+  {"t":"ol","items":[
+    "The reverse proxy (nginx in live, Caddy in production) routes /api and /socket.io to the backend, /livekit to the SFU, /minio to MinIO, and / to the frontend.",
+    "The Next.js server itself also carries rewrites (next.config.js): /api/* and /socket.io/* → BACKEND_INTERNAL_URL, /livekit/* → LIVEKIT_INTERNAL_URL (prefix stripped). This is the fallback path used when no outer proxy fronts the frontend (e.g. the cloud demo, where cloudflared points straight at frontend:3000).",
+    "The frontend client defaults its API and socket base URLs to '' (empty = same-origin), so requests inherit the page origin."
+  ]},
+
+  {"t":"p","text":"The business impact of same-origin is concrete: it eliminated a class of cross-host bugs where attachments showed \"Couldn't load\" and realtime only worked after a manual refresh. Because an attachment URL is `/api/files/:id/download` on the *same* origin (proxied frontend → backend → MinIO), there is no CORS negotiation, no presigned-URL expiry, and no second hostname for the browser to fail to reach. Presigned MinIO URLs exist in code but are effectively unused for delivery, because a presigned URL points at the internal `minio:9000` endpoint that browsers cannot reach in production."},
+
+  {"t":"callout","kind":"tip","title":"Why the API also has nginx routes when Next can proxy","text":"The nginx config routes /api and /socket.io straight to the backend rather than through the Next.js proxy hop \"for reliability\" (per its own comment). This shortens the path and avoids a Next.js process restart taking down the API alongside the page. Both routes exist; the outer proxy wins when present."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.6 TLS and Certificates"},
+
+  {"t":"p","text":"Browsers expose the microphone/camera (`getUserMedia`) and allow secure WebSockets only from a **secure context** — HTTPS, or localhost. Serving CoLab over plain HTTP at a bare IP makes calls and meetings fail with a \"media server error\". TLS is therefore mandatory for the call/meeting features, and CoLab handles it in one of three ways depending on topology."},
+
+  {"t":"table","headers":["Topology","TLS terminated by","Cert source","Notes"],"rows":[
+    ["Live (nginx)","Corporate LB upstream of nginx","Corporate / LB-managed","nginx never holds a cert; honors X-Forwarded-Proto (default https)"],
+    ["Production (Caddy)","Caddy itself","`tls internal` self-signed by default, or Let's Encrypt","Set PUBLIC_HOST + CADDY_ACME_EMAIL and remove `tls internal` for a trusted cert"],
+    ["Cloud demo","Cloudflare edge","Cloudflare-managed","Tunnel provides public HTTPS with no local cert"],
+    ["coturn TURN-over-TLS","coturn","fullchain.pem + privkey.key on the box","Valid for turncollab.resulticks.com; gitignored, dropped on the box"]
+  ]},
+
+  {"t":"p","text":"The Caddy path is the most self-service: by default it uses an internal self-signed CA (`tls internal`), so HTTPS works on **any** host immediately — bare IPs, air-gapped LANs — with a one-time browser \"proceed\" warning. To make the warning disappear, either install Caddy's root CA on client machines (`docker exec collab-caddy caddy trust`) or set `PUBLIC_HOST` to a real domain plus `CADDY_ACME_EMAIL` and delete the `tls internal` line to enable Let's Encrypt (which then needs public DNS and reachable ports 80/443). Caddy also sets `auto_https disable_redirects` so bare-IP access keeps working while real domains still get the http→https redirect."},
+
+  {"t":"p","text":"coturn's TLS material (`/etc/coturn/certs/fullchain.pem` + `privkey.key`) must be valid for the TURN hostname (`turncollab.resulticks.com`) and is mounted read-only. The `alt-tls-listening-port=443` line is what lets the relay traverse the most locked-down networks: port 443 looks like HTTPS, so TURN-over-TLS on 443 is the only transport that reliably crosses strict mobile/corporate/hotel firewalls. The constraint is that the site's public 443 is owned by the app LB, so the TURN host must resolve to a **separate** public IP where coturn can own 443."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.7 Environment Variables"},
+
+  {"t":"p","text":"All configuration is read in exactly one place — `config/src/index.ts` — and never directly by application modules. Variables group cleanly by subsystem. The names (not the secret values) follow; defaults shown are the documented fallbacks."},
+
+  {"t":"table","headers":["Group","Variables","Purpose"],"rows":[
+    ["Backend","BACKEND_HOST, BACKEND_PORT (4000), CORS_ORIGINS","Listen address and allowed origins"],
+    ["Auth","AUTH_JWT_SECRET, AUTH_TOKEN_TTL (7d)","JWT signing secret and session TTL"],
+    ["Database","DB_PROFILE, DATABASE_URL, DATABASE_URL_LOCAL/LIVE/DEMO, DEMO_DATABASE_URL, DEMO_MODE, COLAB_FRESH_START","DB target selection and first-boot behavior"],
+    ["LiveKit","LIVEKIT_WS_URL, LIVEKIT_SERVER_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_TOKEN_TTL_SEC (3600), EGRESS_ENABLED","Media server token minting and signalling"],
+    ["TURN","TURN_URLS, TURN_USERNAME, TURN_PASSWORD","coturn relay advertised to browsers"],
+    ["Storage","S3_ENDPOINT, S3_PUBLIC_ENDPOINT, S3_BUCKET (colab-files), S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, MINIO_ROOT_USER/PASSWORD","Object storage (MinIO/S3)"],
+    ["Redis","REDIS_URL","Socket.IO adapter, huddle/hand state, token blocklist"],
+    ["AI","LLM_BASE_URL, LLM_API_KEY, LLM_MODEL","OpenAI-compatible summarize/ask (off when base URL unset)"],
+    ["E2EE","E2EE_ENABLED (false), NEXT_PUBLIC_E2EE_ENABLED (false)","DM end-to-end encryption kill switch (default off)"],
+    ["One API","ONE_API_ENABLED, ONE_API_URL, ONE_API_DB_TYPE, ONE_API_DATABASE, ONE_API_KEY","Optional DB-access proxy — INERT at runtime"],
+    ["Frontend (build-time)","NEXT_PUBLIC_API_BASE_URL/SOCKET_URL/APP_NAME/WORKSPACE_NAME/USER_EMAIL/FEATURE_SIGNUP/E2EE_ENABLED, BACKEND_INTERNAL_URL, LIVEKIT_INTERNAL_URL","Baked into the Next.js bundle and rewrites"],
+    ["coturn / Caddy / Cloud","COTURN_PUBLIC_IP, COTURN_BIND_IP, PUBLIC_HOST, CADDY_ACME_EMAIL, WEB_PORT, WEB_HTTP_PORT, CLOUDFLARE_TUNNEL_TOKEN","Relay NAT, TLS front, public tunnel"]
+  ]},
+
+  {"t":"p","text":"The **DB_PROFILE mechanism** is the key indirection: setting `DB_PROFILE=<name>` makes the backend use `DATABASE_URL_<NAME>` (e.g. `DB_PROFILE=live` → `DATABASE_URL_LIVE`), otherwise it falls back to `DATABASE_URL`; `DEMO_MODE=yes` forces `DEMO_DATABASE_URL`. The **One API** group is wired but inert — the SQL executor connects directly to the pool, because the structured gateway format cannot express CoLab's FULLTEXT, window-function, upsert, and `FOR UPDATE` queries. Leaving `ONE_API_ENABLED=true` is a safe no-op."},
+
+  {"t":"h","level":3,"text":"13.7.1 Secrets handling"},
+
+  {"t":"p","text":"Secrets live in the per-tier env files (`.env.local`, `.env.teams`, `.env.live`), which carry real filled values and are treated as sensitive. `.env.example` is the secrets-free reference (it ships only the dev defaults). The production boot has a **fail-fast secret guard**: it refuses to start if `AUTH_JWT_SECRET` is the bundled default or under 32 characters, or if `LIVEKIT_API_SECRET` / MinIO creds are bundled defaults, when `NODE_ENV=production`. This prevents accidentally shipping `dev-only-change-me` or `change-me-to-a-long-random-livekit-secret` to production."},
+
+  {"t":"callout","kind":"risk","title":"Hardcoded secrets in tracked files (rotation candidates)","text":"Several real secrets are committed to the repository and should be rotated and externalized: the static coturn credential `user=collab-turn:8V$kR2!mQ9#zL4@xT7^nP1&cY6*Wj3HgF5sD` lives literally in infrastructure/coturn/turnserver.conf; the live corporate DB password appears in DEPLOY.md and in scripts/migrate-local-to-prod.sh (and fresh-prod-migrate.js). The MinIO root credentials default to weak unenforced values (colabminio/colabminio123 or colab/colab). The coturn auth uses a static long-term credential (lt-cred-mech, NOT HMAC), so the username/password must match .env.live byte-for-byte and rotating it means editing both the conf and the env in lockstep."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.8 The Deployment Process"},
+
+  {"t":"p","text":"Deployment is a deliberate, operator-run sequence. There is no automated CD. The canonical live runbook is `DEPLOY.md`; the packaged bundle ships a filled `.env.live` so the deploy team runs the commands verbatim."},
+
+  {"t":"diagram","kind":"pipeline","title":"Live deployment lifecycle","steps":[
+    {"label":"Package","detail":"scripts/package-deploy-live.ps1 builds CoLab-LIVE-deploy-<stamp>.zip with filled .env.live + DB snapshot"},
+    {"label":"Transfer + unzip","detail":"Drop the bundle on the server (10.200.3.17), run all commands from its root"},
+    {"label":"Build + up","detail":"docker compose --env-file .env.live ... --profile production up -d --build"},
+    {"label":"Migrate","detail":"Backend auto-runs migrations on boot; one-time local→prod data migration if needed"},
+    {"label":"Firewall + verify","detail":"Open media/TURN ports; curl /livekit/rtc/v1/validate; check ICE candidates"}
+  ]},
+
+  {"t":"p","text":"**Packaging.** `scripts/package-deploy-live.ps1` builds a ready-to-deploy ZIP that intentionally ships the filled `.env.live` (unlike `package-handover.ps1`, which strips every real env for a secrets-free dev handover). It includes the `database/dumps/colab_full.sql` snapshot that the backend auto-imports on first boot via `promoteIfNeeded()`, prunes other profiles' env files, build artifacts, diagnostics, and media, and aborts if `.env.live` or the SQL dump is missing/under threshold. The output ZIP is sensitive (real secrets)."},
+
+  {"t":"p","text":"**Build and start.** The live deploy command is:"},
+
+  {"t":"code","lines":[
+    "# clean start (KEEPS the DB volume):",
+    "docker compose --env-file .env.live -f docker-compose.yml --profile production down",
+    "docker compose --env-file .env.live -f docker-compose.yml --profile production up -d --build"
+  ]},
+
+  {"t":"p","text":"This builds the frontend/backend images, starts db + redis + minio + livekit + (coturn, if profiled) + backend + frontend, runs DB migrations and seed on boot, and brings up nginx via `--profile production`. Note: `DEPLOY.md` drives the live deploy through `docker-compose.yml --profile production` (which includes the bundled db) rather than `docker-compose.live.yml`; both are valid paths to the live topology and the operator should follow whichever the active runbook specifies."},
+
+  {"t":"p","text":"**Migrations** are additive and idempotent, tracked in the `schema_migrations` table, applied statement-by-statement by a BEGIN/END-aware splitter that swallows \"already applied\" errnos so a resumed run picks up from the failure point with no crash-loop. They auto-run on every backend boot, so a redeploy is safe with respect to schema. A **one-time** data migration (`scripts/migrate-local-to-prod.sh`, guarded by `CONFIRM=yes`) backs up prod first, dumps the local container, and imports it into the corporate prod DB — destructive (`--add-drop-table`), to be run once before first login."},
+
+  {"t":"p","text":"**Firewall and verify.** The operator opens the media ports (7531/tcp, 7532/udp, 7533/udp) and TURN ports (3478 udp/tcp, 49152-49251/udp) on both the host and any network firewall between client subnets and the SFU box. Verification: `docker compose ... ps` (all Up), a `curl -sk https://<host>/livekit/rtc/v1/validate` that should return HTTP 400 \"join_request is required\" (proving signalling reaches LiveKit), `docker logs colab-livekit | grep -i candidate` to confirm the SFU advertises the right IP (must be the public/internal node IP, never 127.0.0.1), and a test call inspected in `chrome://webrtc-internals` for a `connected` ICE pair (host on clean LAN, relay on VPN/virtual-adapter machines — either is success)."},
+
+  {"t":"h","level":3,"text":"13.8.1 Common redeploy operations"},
+
+  {"t":"code","lines":[
+    "# after editing .env or infra config (recreate only what changed):",
+    "docker compose --env-file .env.live -f docker-compose.yml --profile production up -d",
+    "# after a code update (rebuild images):",
+    "docker compose --env-file .env.live -f docker-compose.yml --profile production up -d --build",
+    "# recreate just the media stack (after a LiveKit-secret or TURN change):",
+    "docker compose --env-file .env.live -f docker-compose.yml --profile production up -d coturn backend livekit"
+  ]},
+
+  {"t":"callout","kind":"warning","title":"LiveKit secret rotation requires recreating the SFU","text":"If you change LIVEKIT_API_SECRET, you MUST recreate the livekit container so the SFU and the backend agree on the signing secret. Otherwise calls fail with \"invalid token / cryptographic primitive\". The LIVEKIT_KEYS env (\"<key>: <secret>\") injected into the container overrides the placeholder in the YAML, so the backend's minted tokens and the SFU validate against the same secret."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.9 Rollback and Disaster Recovery"},
+
+  {"t":"p","text":"CoLab's recovery posture rests on three pillars: a durable named volume that survives rebuilds, additive/idempotent migrations that never destroy data on re-apply, and a backup-before-cutover discipline baked into the migration scripts. The audit verdict on file is that **data loss is not a structural risk** under normal operations — but two operational footguns and one absolute rule make the difference."},
+
+  {"t":"callout","kind":"risk","title":"NEVER run `docker compose down -v` in production","text":"The `-v` flag deletes named volumes, including `colab_mysqldata` (the entire database) and `colab_minio` (every uploaded file). Use plain `down` (stops containers, keeps volumes) or just `up -d --build` (recreates changed containers in place). The `database/initdb/*.sql` scripts only run on an EMPTY volume, so a wiped volume means a full rebuild from migrations + seed, losing all real user data."},
+
+  {"t":"p","text":"**Backup before every deploy.** The standard backup command dumps the running MySQL container:"},
+
+  {"t":"code","lines":[
+    "docker exec colab-db mysqldump -u colab -pcolab --single-transaction \\",
+    "  --routines --triggers colab > backup_<stamp>.sql"
+  ]},
+
+  {"t":"p","text":"**Rollback paths by change type:**"},
+
+  {"t":"ul","items":[
+    {"text":"Application/image rollback","items":["Re-deploy the prior bundle/image tag with `up -d --build`. The volume persists, so the data is unchanged; only the running code reverts. Migrations are forward-only and additive, so a code rollback does not require a schema rollback in practice."]},
+    {"text":"Data cutover rollback","items":["`migrate-local-to-prod.sh` takes a prod backup to `./colab-prod-backup-<stamp>.sql` *before* it overwrites prod; restoring that dump reverses the cutover. This is the documented rollback for the one-time local→prod migration."]},
+    {"text":"Mumbai media rollback","items":["Revert the nginx upstream to `livekit:7534` and `LIVEKIT_SERVER_URL`, restart livekit + nginx, and re-point `turncollab` DNS. coturn/TURN changes are additive — stop coturn and drop the TURN_URLS entries to revert; internal direct calls are unaffected."]},
+    {"text":"Secret rotation rollback","items":["Restore the prior secret in the env file and recreate the affected container (livekit for the API secret, coturn for the TURN credential, which must also be reverted in turnserver.conf)."]}
+  ]},
+
+  {"t":"p","text":"**Disaster recovery.** The recovery unit is the named volumes plus the env file. To rebuild a lost host: provision a new box with Docker, restore `colab_mysqldata` (or re-import the most recent `mysqldump`/`colab_full.sql`) and `colab_minio`, drop the env file and any coturn certs in place, and run the standard `up -d --build`. Because migrations are idempotent and tracked, a backend booting against a restored DB applies only the unseen migrations and is otherwise a no-op. The `deploy_state` sentinel table coordinates the one-time auto data-promotion on first live cutover so a re-boot does not re-promote."},
+
+  {"t":"callout","kind":"warning","title":"Silent storage-fallback footgun","text":"If MinIO is down at upload time, fileService.create() silently falls back to storing the file bytes in the MySQL `data` LONGBLOB with no operator alert (an empty catch). Files are not lost, but they land in the DB instead of object storage, bloating the database. After any MinIO outage, audit for DB-resident blobs and verify MinIO is healthy before resuming uploads."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"13.10 Operational Summary and Deployment Decision Guide"},
+
+  {"t":"p","text":"Choose the compose file by what the target host can provide, then fill the matching env profile. The reverse proxy, same-origin model, and direct-media plane are constant across all of them."},
+
+  {"t":"table","headers":["If you need…","Use","TLS via","DB"],"rows":[
+    ["Local development","docker-compose.yml (default)","none (localhost is secure)","bundled container"],
+    ["Corporate LB in front (internal users)","docker-compose.live.yml + .env.live","corporate LB upstream","DB_PROFILE=live (corporate MySQL)"],
+    ["HTTPS on any host, no LB","docker-compose.production.yml","Caddy (self-signed or LE)","external corporate MySQL"],
+    ["Public demo, no open ports","base + docker-compose.cloud.yml","Cloudflare tunnel","local container, LiveKit Cloud media"],
+    ["Lower call latency for a region","add docker-compose.mumbai.yml media node","existing front","unchanged (media only)"]
+  ]},
+
+  {"t":"p","text":"**Honest maturity caveats for this section:** server-side meeting recording (the `egress` worker) is fully coded but gated behind `--profile recording` and `EGRESS_ENABLED=yes`, and is not provisioned in current deployments — recording returns an honest 503 until the worker is up. The One API gateway is wired but inert. The MCP server exists as standalone code but is not run by any compose file. The co-located coturn in the live file is profile-gated off because the live TURN relay runs on a dedicated public box. Treat these as reserved capabilities, not running services, when reasoning about a given deployment."},
+
+  {"t":"p","text":"The deployment architecture's central design choices — one portable image, same-origin proxying, request-origin-derived URLs, additive idempotent migrations, and a strict separation of the control plane (through the proxy) from the media plane (direct to the SFU) — are what let CoLab move cleanly across localhost, the internal test tier, and the live corporate tier with nothing but an env file and a LiveKit YAML changing between them."}
+]

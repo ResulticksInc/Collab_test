@@ -1,0 +1,31 @@
+{
+  "name": "@collab/desktop",
+  "version": "1.0.3",
+  "private": true,
+  "description": "Collab — secure team messaging, calls and meetings",
+  "author": "Resulticks",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node scripts/kill-stale.js && electron . --dev",
+    "start": "electron .",
+    "icons": "node scripts/gen-icons.js",
+    "prebuild:win": "node scripts/prebuild-wincodesign.js",
+    "build": "electron-builder",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --publish never",
+    "predist:win": "node scripts/prebuild-wincodesign.js",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "dependencies": {
+    "electron-store": "^8.1.0",
+    "@nut-tree-fork/nut-js": "^4.2.0"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^24.13.0",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.35.2"
+  }
+}

@@ -1,0 +1,88 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+
+FROM base AS deps
+COPY package.json package-lock.json ./
+COPY config/package.json ./config/
+COPY shared/package.json ./shared/
+COPY database/package.json ./database/
+COPY backend/package.json ./backend/
+COPY mcp/package.json ./mcp/
+COPY agents/package.json ./agents/
+COPY frontend/app/package.json ./frontend/app/
+RUN npm ci --ignore-scripts --legacy-peer-deps
+
+FROM deps AS build
+# BLANK = same-origin: the browser talks to its OWN host:port and Next proxies
+# /api + /socket.io to the backend. NEVER default these to localhost:4000 — that
+# gets baked into the browser bundle and every remote visitor's browser would try
+# to reach THEIR OWN localhost:4000 (ERR_CONNECTION_REFUSED on any non-dev host).
+ARG NEXT_PUBLIC_API_BASE_URL=
+ARG NEXT_PUBLIC_SOCKET_URL=
+ARG NEXT_PUBLIC_APP_NAME=Collab
+ARG NEXT_PUBLIC_WORKSPACE_NAME=Collab
+ARG NEXT_PUBLIC_USER_EMAIL=user@colab.app
+ARG NEXT_PUBLIC_FEATURE_SIGNUP=1
+ARG NEXT_PUBLIC_E2EE_ENABLED=false
+ARG NEXT_PUBLIC_E2EE_DECRYPT_LEGACY=false
+ARG NEXT_PUBLIC_E2EE_RATCHET=false
+# Web Push: the PUBLIC VAPID key (safe to ship to browsers). Without it the client
+# must fetch the key from the backend on every boot; with it, subscribing works
+# even if that lookup fails. Must match the backend's VAPID_PUBLIC_KEY.
+ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY=
+# BUILD TARGET + FLAGS (see frontend/app/src/lib/platform.ts).
+# Default "all" = ONE shared build serving both browser and desktop — DO NOT
+# change for the normal `frontend` service. Only the opt-in Mode B
+# `frontend-desktop` service (docker-compose.live.yml, profile "desktop") passes
+# NEXT_PUBLIC_BUILD_TARGET=desktop to produce a hard-isolated desktop bundle.
+# FLAGS is a comma-separated in-progress feature list, empty by default.
+ARG NEXT_PUBLIC_BUILD_TARGET=all
+ARG NEXT_PUBLIC_FLAGS=
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
+ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
+ENV NEXT_PUBLIC_WORKSPACE_NAME=$NEXT_PUBLIC_WORKSPACE_NAME
+ENV NEXT_PUBLIC_USER_EMAIL=$NEXT_PUBLIC_USER_EMAIL
+ENV NEXT_PUBLIC_FEATURE_SIGNUP=$NEXT_PUBLIC_FEATURE_SIGNUP
+ENV NEXT_PUBLIC_E2EE_ENABLED=$NEXT_PUBLIC_E2EE_ENABLED
+ENV NEXT_PUBLIC_E2EE_DECRYPT_LEGACY=$NEXT_PUBLIC_E2EE_DECRYPT_LEGACY
+ENV NEXT_PUBLIC_E2EE_RATCHET=$NEXT_PUBLIC_E2EE_RATCHET
+ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
+ENV NEXT_PUBLIC_BUILD_TARGET=$NEXT_PUBLIC_BUILD_TARGET
+ENV NEXT_PUBLIC_FLAGS=$NEXT_PUBLIC_FLAGS
+# Next BAKES rewrites() (the /api + /socket.io proxy target) into the build, so
+# BACKEND_INTERNAL_URL must be set at BUILD time — a runtime env is ignored by the
+# already-baked route manifest. Default to the compose service name. Without this,
+# the proxy bakes the 127.0.0.1:4000 fallback and every proxied request fails with
+# ECONNREFUSED inside the container (login/signup 500, realtime dead).
+ARG BACKEND_INTERNAL_URL=http://backend:4000
+ENV BACKEND_INTERNAL_URL=$BACKEND_INTERNAL_URL
+# LiveKit signalling proxy target for the baked /livekit rewrite (see
+# next.config.js). Defaults to the compose service; override for other hosts.
+ARG LIVEKIT_INTERNAL_URL=http://livekit:7534
+ENV LIVEKIT_INTERNAL_URL=$LIVEKIT_INTERNAL_URL
+COPY config/ ./config/
+COPY shared/ ./shared/
+COPY frontend/app/ ./frontend/app/
+WORKDIR /app/frontend/app
+RUN npx next build
+
+FROM base AS runner
+ENV NODE_ENV=production
+ENV PORT=3000
+RUN apk add --no-cache tini
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package.json ./
+COPY --from=deps /app/package-lock.json ./
+COPY --from=build /app/frontend/app/.next ./frontend/app/.next
+# public/ holds static assets served at the site root (e.g. /collab.svg, the
+# brand logo). Without this copy, `next start` has no public dir → /collab.svg
+# 404s and the sidebar logo is broken.
+COPY --from=build /app/frontend/app/public ./frontend/app/public
+COPY --from=build /app/frontend/app/package.json ./frontend/app/
+COPY --from=build /app/frontend/app/next.config.js ./frontend/app/
+COPY --from=build /app/frontend/app/next-env.d.ts ./frontend/app/
+WORKDIR /app/frontend/app
+EXPOSE 3000
+ENTRYPOINT ["tini", "--"]
+CMD ["npx", "next", "start"]

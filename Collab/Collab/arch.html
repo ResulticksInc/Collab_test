@@ -1,0 +1,1266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CoLab Architecture Report</title>
+<meta name="description" content="Full project architecture analysis of the CoLab monorepo (Next.js 14 + Express/Socket.IO + MySQL + LiveKit + Electron), produced 2026-10-08 from the run branch.">
+<style>
+:root{
+  --bg:#f7f8fa; --surface:#ffffff; --surface-2:#f0f2f5; --text:#1b1f27; --muted:#5b6472; --line:#dde2ea;
+  --accent:#2457d6; --accent-soft:#e6edfb; --ok:#1f8a4c; --warn:#b7791f; --bad:#c43c3c; --crit:#8f1d1d;
+  --code-bg:#f1f3f7; --code-text:#2b3240; --radius:10px; --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1218; --surface:#161b24; --surface-2:#1d2330; --text:#e7eaf0; --muted:#9aa4b4; --line:#2a3240;
+    --accent:#6f9bff; --accent-soft:#1c2a4a; --code-bg:#11151d; --code-text:#d7dce6;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1218; --surface:#161b24; --surface-2:#1d2330; --text:#e7eaf0; --muted:#9aa4b4; --line:#2a3240;
+  --accent:#6f9bff; --accent-soft:#1c2a4a; --code-bg:#11151d; --code-text:#d7dce6;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:32px 16px 80px}
+header.hero{border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:28px}
+header.hero h1{font-size:30px;margin:0 0 6px;letter-spacing:-.01em}
+header.hero .meta{color:var(--muted);font-size:14px}
+header.hero .meta code{font-size:13px}
+nav.toc{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 20px;margin:0 0 32px;columns:2;column-gap:28px}
+nav.toc ol{margin:0;padding-left:20px}
+nav.toc li{break-inside:avoid;margin:3px 0;font-size:14px}
+nav.toc a{color:var(--accent);text-decoration:none}
+nav.toc a:hover{text-decoration:underline}
+h2{font-size:23px;margin:48px 0 12px;padding-top:8px;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:17px;margin:26px 0 8px}
+h4{font-size:15px;margin:18px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-size:12.5px}
+p{margin:8px 0 12px}
+p,li,dd,td,th,.callout{overflow-wrap:break-word}
+ul,ol{margin:6px 0 14px;padding-left:22px}
+li{margin:3px 0}
+code{overflow-wrap:anywhere;font-family:var(--mono);font-size:.88em;background:var(--code-bg);color:var(--code-text);padding:1px 5px;border-radius:5px}
+pre{background:var(--code-bg);color:var(--code-text);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:12.8px;line-height:1.5;margin:10px 0 16px}
+pre code{background:none;padding:0;font-size:inherit}
+pre.mermaid{background:var(--surface);text-align:center;padding:12px}
+table{width:100%;border-collapse:collapse;margin:10px 0 18px;font-size:13.5px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+th{background:var(--surface-2);font-weight:600}
+tr:last-child td{border-bottom:none}
+td code{white-space:nowrap}
+.tbl-wrap{overflow-x:auto;margin:10px 0 18px}
+.tbl-wrap table{margin:0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 18px;margin:12px 0}
+.callout{border-left:4px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:0 var(--radius) var(--radius) 0;margin:12px 0}
+.callout.warn{border-left-color:var(--warn)}
+.callout.bad{border-left-color:var(--bad)}
+.badge{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:999px;color:#fff;vertical-align:middle;white-space:nowrap}
+.b-crit{background:var(--crit)} .b-high{background:var(--bad)} .b-med{background:var(--warn)} .b-low{background:#5a6b85} .b-ok{background:var(--ok)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:12px 0}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
+.kpi .n{font-size:24px;font-weight:700;letter-spacing:-.02em}
+.kpi .l{color:var(--muted);font-size:12.5px}
+.score td:nth-child(2){font-weight:700;text-align:center;width:70px}
+.small{font-size:13px;color:var(--muted)}
+.issue{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px;margin:12px 0}
+.issue h4{margin:0 0 6px;text-transform:none;letter-spacing:0;font-size:15px;color:var(--text)}
+.issue dl{display:grid;grid-template-columns:130px 1fr;gap:4px 12px;margin:6px 0 0;font-size:13.5px}
+.issue dt{color:var(--muted);font-weight:600}
+.issue dd{margin:0}
+
+/* platform diagram */
+.pd{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:14px 14px 6px;margin:12px 0 18px}
+.pd .band{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:stretch;margin:0 0 2px}
+.pd .band>.lbl{border-radius:8px;padding:10px 10px;font-size:12.5px;font-weight:700;line-height:1.3;display:flex;flex-direction:column;justify-content:center;color:#fff}
+.pd .band>.lbl small{font-weight:500;opacity:.9;font-size:11px;margin-top:3px}
+.pd .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+.pd .c{border:1px solid var(--line);border-radius:8px;background:var(--surface-2);padding:8px 10px;font-size:12.5px;line-height:1.35}
+.pd .c b{display:block;font-size:13px;margin-bottom:2px}
+.pd .c.ext{border-style:dashed}
+.pd .c.media{border-color:#7c3aed}
+.pd .conn{display:grid;grid-template-columns:150px 1fr;gap:10px;margin:2px 0}
+.pd .conn>span:first-child{text-align:center;color:var(--muted);font-size:16px;line-height:1}
+.pd .conn>span:last-child{font-size:11.5px;color:var(--muted);padding:2px 6px;border-left:2px dotted var(--line)}
+.pd .l1{background:#2457d6}.pd .l2{background:#1f6f8b}.pd .l3{background:#0f766e}.pd .l4{background:#4d7c0f}.pd .l5{background:#b45309}.pd .l6{background:#9f1239}.pd .l7{background:#6b21a8}.pd .l8{background:#475569}
+.pd .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:11.5px;color:var(--muted);margin:10px 0 4px}
+.pd .legend i{display:inline-block;width:14px;height:10px;border:1px solid var(--line);border-radius:3px;vertical-align:middle;margin-right:5px;background:var(--surface-2)}
+.pd .legend i.ext{border-style:dashed}.pd .legend i.media{border-color:#7c3aed}
+@media (max-width:720px){ .pd .band,.pd .conn{grid-template-columns:1fr} .pd .conn>span:first-child{display:none} }
+footer{margin-top:60px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px}
+@media (max-width:720px){ nav.toc{columns:1} .issue dl{grid-template-columns:1fr} header.hero h1{font-size:24px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>CoLab — Full Project Architecture Analysis</h1>
+  <div class="meta">
+    Repository <code>CoLab</code> · branch <code>run</code> · analysed 2026-10-08 · read-only inspection of source, configuration, build and deployment files.
+    Written for a senior engineer who has to maintain and scale this system. File references are relative to the repository root.
+  </div>
+</header>
+
+<nav class="toc">
+<ol>
+<li><a href="#s1">Project overview</a></li>
+<li><a href="#s2">Folder / module architecture</a></li>
+<li><a href="#s3">Application entry flow</a></li>
+<li><a href="#s4">Routing architecture</a></li>
+<li><a href="#s5">State management</a></li>
+<li><a href="#s6">API / backend communication</a></li>
+<li><a href="#s7">Authentication &amp; authorization</a></li>
+<li><a href="#s8">Component architecture</a></li>
+<li><a href="#s9">Data flows (5 features)</a></li>
+<li><a href="#s10">Build architecture</a></li>
+<li><a href="#s11">Desktop architecture</a></li>
+<li><a href="#s12">Offline architecture &amp; editors</a></li>
+<li><a href="#s13">Performance</a></li>
+<li><a href="#s14">Dependency architecture</a></li>
+<li><a href="#s15">Architecture diagrams (incl. platform diagram)</a></li>
+<li><a href="#s16">Import relationships</a></li>
+<li><a href="#s17">Problems and gaps</a></li>
+<li><a href="#s18">Target architecture</a></li>
+<li><a href="#s19">Architecture score</a></li>
+<li><a href="#s20">Final report &amp; roadmap</a></li>
+</ol>
+</nav>
+
+<!-- ============================================================ 1 -->
+<h2 id="s1">1. Project overview</h2>
+
+<p><strong>What it is.</strong> CoLab (branded "Collab") is an enterprise team-collaboration platform in the Slack/Teams class: real-time messaging (DMs, groups, threads, reactions, scheduled messages, forwarding), 1:1 calls and group huddles, scheduled meetings with lobby, polls, hand-raise, screen share, recording, a collaborative whiteboard, file sharing, tasks, reminders, calendar, presence, notifications (in-app, web push, FCM, APNs VoIP), organisations with RBAC, SSO (OIDC), MFA, and an optional end-to-end-encryption layer. It is deployed at a single corporate tenant (collab.resulticks.com) and shipped as a web app plus Windows/macOS/Linux Electron desktop clients that load the hosted web app.</p>
+
+<div class="grid">
+  <div class="kpi"><div class="n">149k</div><div class="l">frontend source lines (TS/TSX/CSS), 36k of them in one CSS file</div></div>
+  <div class="kpi"><div class="n">33k</div><div class="l">backend source lines (Express + Socket.IO)</div></div>
+  <div class="kpi"><div class="n">8.2k</div><div class="l">lines in the single hand-written MySQL driver</div></div>
+  <div class="kpi"><div class="n">130</div><div class="l">SQL migrations, applied automatically on boot</div></div>
+  <div class="kpi"><div class="n">33 / 58</div><div class="l">route files / service files in the backend</div></div>
+  <div class="kpi"><div class="n">2.8k</div><div class="l">lines in the Electron main process (one file, plain JS)</div></div>
+</div>
+
+<h3>Technology summary</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Layer</th><th>Technology</th><th>Where</th></tr>
+<tr><td>Frontend</td><td>Next.js 14.2 (App Router) rendered <em>client-only</em>, React 18.3, plain global CSS (no Tailwind/CSS modules), TipTap 3 composer, livekit-client 2.19, socket.io-client, MediaPipe (background effects), DOMPurify, WebCrypto-based E2EE</td><td><code>frontend/app</code></td></tr>
+<tr><td>Backend</td><td>Express 4 + Socket.IO 4 in TypeScript, executed with <code>tsx</code> directly (no compile step, also in production); jsonwebtoken + jose; livekit-server-sdk; web-push; raw FCM/APNs HTTP clients</td><td><code>backend/app/src</code></td></tr>
+<tr><td>Data</td><td>MySQL 8 via <code>mysql2</code> with a hand-written repository closure (no ORM); optional JSON-file driver for local dev; Redis 7 (Socket.IO adapter, caches, huddles, blocklist); MinIO/S3 and local disk for files</td><td><code>database/src</code>, services</td></tr>
+<tr><td>Media</td><td>Self-hosted LiveKit SFU 1.9, coturn TURN, LiveKit Egress for recordings</td><td><code>infrastructure/</code>, compose files</td></tr>
+<tr><td>Shared</td><td><code>config/</code> (env → frozen config), <code>shared/</code> (socket event names, HTTP envelope). <strong>The frontend does not import either.</strong></td><td><code>config/src</code>, <code>shared/src</code></td></tr>
+<tr><td>Desktop</td><td>Electron 32 thin shell (remote URL), custom updater, electron-builder (NSIS, portable, pkg/dmg, AppImage/deb), nut-js for remote control</td><td><code>desktop/</code></td></tr>
+<tr><td>Build / deploy</td><td>npm workspaces monorepo, Docker multi-stage images, docker-compose variants (base, live, production/Caddy, cloud, mumbai), nginx or Caddy edge, Azure DevOps pipelines (real) and GitHub Actions (inert)</td><td><code>docker/</code>, <code>docker-compose*.yml</code>, <code>azure-pipelines-*.yml</code>, <code>.github/</code></td></tr>
+<tr><td>Testing</td><td>Node test runner for backend (33 files, needs MySQL), Playwright smoke/a11y/responsive e2e, ad-hoc manual verification scripts; no frontend unit tests</td><td><code>backend/app/test</code>, <code>e2e/</code></td></tr>
+<tr><td>Optional seams</td><td><code>mcp/</code> (MCP tool registry) and <code>agents/</code> (scaffold) — off by default, not deployed</td><td></td></tr>
+</table></div>
+
+<h3>Application type and platforms</h3>
+<ul>
+  <li><strong>Type:</strong> authenticated single-page application. The Next.js server only serves the static shell and reverse-proxies <code>/api</code>, <code>/socket.io</code> and <code>/livekit</code> to the backend and SFU. There are no Next route handlers, no server components with data, and SSR is explicitly disabled for the app (<code>frontend/app/src/app/page.tsx</code>).</li>
+  <li><strong>Platforms:</strong> browsers (Chrome/Edge/Firefox/Safari 16.4+), Windows (NSIS installer and portable exe), macOS (pkg/dmg, universal), Linux (AppImage/deb). Mobile apps are out of this repo but served by the backend push services (FCM, APNs VoIP).</li>
+  <li><strong>Dev vs prod:</strong> dev runs <code>tsx watch</code> backend on :4000 and <code>next dev</code> on :3002 with Docker for MySQL/Redis/MinIO/LiveKit. Prod runs <code>next start</code> (:3000) and <code>tsx</code> backend (:4000) in containers behind nginx (:7530 internal, :7524 published on the live host) or Caddy, with LiveKit/coturn media ports published directly.</li>
+</ul>
+
+<h3>High-level architecture summary</h3>
+<p>The system is a classic three-tier chat platform with a realtime plane: a client-only React SPA keeps all state in one hook chain and talks to a single Express/Socket.IO process over same-origin REST and WebSocket; that process owns MySQL (raw SQL), Redis, file storage and LiveKit token issuance; media flows peer-to-SFU. The desktop apps are browsers in a native frame. The architecture is functionally rich and operationally hardened (health checks, leader election, graceful shutdown, retries, storage fallbacks), but structurally it is a set of very large monoliths: a 300-key untyped session bag on the client, 5k-line components, an 8k-line SQL driver, and a 2.8k-line Electron main file. There is no offline mode and no document editor; the "editors" are the TipTap chat composer and a whiteboard with last-writer-wins snapshots.</p>
+
+<!-- ============================================================ 2 -->
+<h2 id="s2">2. Complete folder / module architecture</h2>
+
+<pre>CoLab (npm workspaces monorepo)
+│
+├── Entry points
+│   ├── frontend/app/src/app/layout.tsx        root HTML, global CSS imports, fonts, theme pre-paint script, DesktopChrome
+│   ├── frontend/app/src/app/page.tsx          dynamic(ssr:false) → components/CoLabV1
+│   ├── backend/app/src/index.ts               boot guards, DB migrate, schedulers, HTTP+Socket.IO server
+│   └── desktop/main.js                        Electron main process (loads the hosted web URL)
+│
+├── Routing
+│   ├── frontend/app/src/app/{page,admin,dev,presenter-test}/page.tsx   the only 4 Next routes
+│   ├── frontend/app/src/components/colab/session/useCoLab0.tsx         `mode` string = in-app virtual router
+│   ├── frontend/app/src/lib/deepLink.ts                                 colab:// deep links (desktop only)
+│   └── frontend/app/next.config.js                                      /api, /socket.io, /livekit, /site rewrites
+│
+├── Components (frontend/app/src/components, 138 files)
+│   ├── Shell       CoLabV1, colab/CoLabShell (2001 lines), Rail, ConversationSidebar, DesktopChrome, AppSplash
+│   ├── Feature     ChatView + chat/*, CalendarView, TasksView, RemindersView, FilesView, ContactsView,
+│   │               SearchView, Settings, OrgAdmin, HelpCenter, colab/{DashboardView,CallsView,ActivityView}
+│   ├── Calls       colab/CallModal + colab/call/useCallSession{Core,Controls,Media}, MeetingRoom,
+│   │               MeetingStage (5414 lines), PreJoinMeeting, Whiteboard, meeting/*, RemoteControlLayer
+│   ├── Common      ui/{Button,Select,Spinner,Skeleton,EmptyState}, Modal, Avatar, FloatingMenu, GlobalTooltip,
+│   │               EmojiPicker (duplicated in chat/), PremiumSelect, SearchableSelect, QrCode, TimeZonePicker
+│   ├── Overlays    Modals (7 modals), DialogHost, DownloadModal, CommandPalette, Onboarding, OrgOnboarding
+│   ├── Portals     admin/* (AdminPortal + 12 views, own JWT), dev/DevPortal (3588 lines, ops JWT)
+│   └── Editors     RichTextEditor (TipTap composer), Whiteboard, MediaStudio (sticker/GIF studio)
+│
+├── State management
+│   └── components/colab/session/useCoLab0..6.tsx   seven "segments" of one former 11k-line component;
+│                                                   108 useState in segment 0; result spread into one `s` bag
+│
+├── Services (frontend/app/src/lib)
+│   ├── api.ts            fetch wrapper + ~262 untyped endpoint methods; 401 → /auth/me → refresh rotation
+│   ├── adminApi.ts       separate client for /api/admin with its own token
+│   ├── socket.ts         connectSocket() + hand-copied EVENTS map (duplicates shared/src/events.ts)
+│   ├── tokenStore.ts     localStorage on web, Electron safeStorage keychain on desktop
+│   ├── e2ee/*            manager.ts (5466 lines), SignalStore (IndexedDB), ratchet, epochs, recovery, media
+│   ├── mediaCache.ts     IndexedDB LRU of decrypted attachments (350 MB budget)
+│   ├── pushRegistration.ts, dispatchNotif.ts, deepLink.ts, desktopFiles.ts, remoteControl.ts
+│   └── presenter/*, meeting/*, studio/*, stageView, tileGrid, spatialAudio, callDiagnostics
+│
+├── Hooks       hooks/useBackgroundEffect, hooks/useMeetingPolicy (+ 31 hooks living in lib/ and components/)
+├── Styles      styles/v1.css (36,102 lines) + tokens.css, ui.css, call.css, chats.css, calendar.css, ... (960 KB)
+├── Assets      public/brand, public/mediapipe (9.4 MB wasm), public/sw.js (push + E2EE video stream),
+│               public/site (marketing), public/desktop (514 MB of installers, git-tracked)
+│
+├── Backend (backend/app/src)
+│   ├── app.ts            middleware chain + mount table (33 routers under /api)
+│   ├── routes/*          thin-ish Express routers (meetings.ts 1343, ops.ts 1718 lines)
+│   ├── services/*        58 domain services (meetingService 1687, taskService 1303, adminService 1275)
+│   ├── realtime/socket.ts  Socket.IO (1737 lines): auth handshake, rooms, calls signalling, huddles, whiteboard
+│   ├── realtime/notify.ts  in-app + web/mobile push fan-out
+│   ├── middleware/*      auth (JWT + session + device + org), rateLimit (in-memory), validate, requirePermission
+│   ├── serialize.ts      view-model layer (1324 lines)
+│   └── platform.ts       wires config + shared + db for the whole backend
+│
+├── Database (database/)
+│   ├── src/drivers/mysql.ts   8222-line repository closure, ~40 namespaces of raw SQL
+│   ├── src/drivers/json.ts    1983-line dev-only mirror
+│   ├── src/bootstrap.ts       ensureDatabase, migrate (statement splitter), promoteIfNeeded
+│   ├── src/orgContext.ts      AsyncLocalStorage tenant scope
+│   └── migrations/0001..0128  130 idempotent SQL files
+│
+├── Configuration
+│   ├── config/src/env.ts, index.ts   dotenv + frozen config (≈120 env names); 26 backend files still read process.env
+│   ├── shared/src/events.ts, http.ts  socket contract + {ok,data}/{ok:false,error} envelope
+│   └── .env.example, .env.live.template, docs/ENV_PROFILES.md
+│
+├── Desktop (desktop/)
+│   ├── main.js (2847), preload.js (434, contextBridge → window.collabDesktop), updater.js, config.js,
+│   ├── desktopNotif.js, mediaPermissions.js, remoteInput.js, screenpicker.html, reconnect.html, recovery.html
+│   └── electron-builder.yml, entitlements.mac.plist, gen-latest.mjs, collab.config.json
+│
+└── Build / deployment
+    ├── docker/Dockerfile.{backend,frontend}, docker-compose{,.live,.production,.cloud,.server,.mumbai}.yml
+    ├── infrastructure/{nginx,caddy,livekit,coturn,monitoring}
+    ├── azure-pipelines-sync.yml (run → Gitu mirror), azure-pipelines-desktop.yml (installers)
+    ├── .github/workflows/* (target `main`, which does not exist → inert)
+    └── scripts/ (92 files: dev bootstrap, deploy, DB backup/migrate, E2EE audits, diagnostics)
+</pre>
+
+<h3>Module responsibilities and reuse</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Module</th><th>Purpose</th><th>Depends on</th><th>Used by</th><th>Shared / feature</th></tr>
+<tr><td><code>config/</code></td><td>Single env boundary, frozen config, feature flag <code>DEMO_MODE</code></td><td>dotenv</td><td>backend, database, next.config (reads root .env manually)</td><td>Shared (backend only in practice)</td></tr>
+<tr><td><code>shared/</code></td><td>Socket event names, HTTP envelope</td><td>—</td><td>backend only</td><td>Intended shared; frontend keeps its own copy</td></tr>
+<tr><td><code>database/</code></td><td>Schema, migrations, drivers, tenant context</td><td>mysql2, config</td><td>backend <code>platform.ts</code>, scripts, tests</td><td>Shared</td></tr>
+<tr><td><code>backend/app/src/services</code></td><td>Domain logic</td><td>db, config, livekit, redis, push SDKs</td><td>routes, socket, schedulers</td><td>Feature-specific per service</td></tr>
+<tr><td><code>frontend/app/src/lib</code></td><td>Clients, crypto, media utils, platform bridge</td><td>browser APIs, socket.io-client, livekit-client</td><td>43 components import <code>api.ts</code> directly</td><td>Shared</td></tr>
+<tr><td><code>components/colab/session</code></td><td>All application state and handlers</td><td>lib/*</td><td>CoLabShell and every view through the <code>s</code> bag</td><td>Feature hub (god module)</td></tr>
+<tr><td><code>components/ui</code>, <code>Modal</code>, <code>Avatar</code></td><td>Primitives</td><td>CSS classes in v1.css/ui.css</td><td>views</td><td>Reusable</td></tr>
+<tr><td><code>desktop/</code></td><td>Native shell</td><td>electron, electron-store, nut-js</td><td>frontend via <code>window.collabDesktop</code></td><td>Platform-specific</td></tr>
+<tr><td><code>mcp/</code>, <code>agents/</code></td><td>AI integration seams</td><td>—</td><td>nothing at runtime</td><td>Dormant</td></tr>
+</table></div>
+
+<!-- ============================================================ 3 -->
+<h2 id="s3">3. Application entry flow</h2>
+
+<pre class="mermaid">
+flowchart TD
+  A[Browser or Electron loads /] --> B[app/layout.tsx<br>global CSS, Google Fonts, theme pre-paint script, DesktopChrome]
+  B --> C[app/page.tsx<br>dynamic import CoLabV1, ssr:false]
+  C --> D[CoLabV1.tsx<br>useCoLab0..6 hook chain → session bag s]
+  D --> E{CoLabShell.tsx gates}
+  E -->|authResolving| F[AppSplash]
+  E -->|!authed| G[LoginScreen<br>password / SSO redirect]
+  E -->|no org| H[OrgOnboarding]
+  E -->|authed| I[Rail + mode view + overlays]
+  G -->|api.login| J[lib/api.ts → POST /api/auth/login]
+  J --> K[useCoLab1.authSuccess<br>tokenStore.saveToken, initE2EE, setAuthed]
+  K --> L[useCoLab2 boot effect<br>connectSocket + Promise.all bootstrap fetches]
+  L --> M[Backend app.ts<br>authMiddleware → routes → services → mysql driver]
+  L --> N[realtime/socket.ts<br>handshake, join rooms, presence]
+  I --> O[ChatView / CalendarView / TasksView ...]
+  O --> P[props from s bag → lib/api.ts or socketRef.emit]
+</pre>
+
+<ol>
+  <li><strong>Server:</strong> <code>backend/app/src/index.ts</code> runs boot guards (weak-secret checks in production, LiveKit URL, DB profile, Redis-required), then <code>ensureDatabase → migrate → promoteIfNeeded → seedIfNeeded</code> with a retry-forever loop for a cold MySQL, records the boot in a <code>deployments</code> ledger, initialises web push and MySQL <code>GET_LOCK</code> leader election, creates the Express app (<code>app.ts</code>), attaches Socket.IO (<code>realtime/socket.ts</code>), then starts 15+ <code>setInterval</code> schedulers (scheduled messages, reminders, meeting reminders, end warnings, task due, org broadcasts, webhooks, GC jobs) and listens. SIGTERM triggers a graceful drain.</li>
+  <li><strong>Shell:</strong> <code>layout.tsx</code> imports ten global CSS files in a fixed order, loads six Google font families, applies the cached theme before paint, and mounts <code>DesktopChrome</code>. <code>page.tsx</code> loads <code>CoLabV1</code> client-only.</li>
+  <li><strong>Session:</strong> <code>CoLabV1</code> calls seven hooks in sequence, each receiving everything the previous ones returned, and spreads the result into one object <code>s</code> that is passed to <code>CoLabShell</code>.</li>
+  <li><strong>Auth gate:</strong> <code>useCoLab1</code> restores a saved token via <code>tokenStore.loadToken()</code> and validates it with <code>/api/auth/me</code> (backoff 2/4/8/15 s). <code>CoLabShell</code> renders splash → login → org onboarding → app.</li>
+  <li><strong>Bootstrap:</strong> after auth, one effect in <code>useCoLab2</code> connects the socket and fetches conversations, users, settings and unread count in parallel, then meetings, calls, tasks, reminders, folders, invites and notifications in an idle callback, and registers roughly 45 socket handlers.</li>
+  <li><strong>Views:</strong> the <code>mode</code> string selects which feature view <code>CoLabShell</code> renders; views call <code>lib/api.ts</code> (REST) or emit on the shared socket.</li>
+</ol>
+
+<!-- ============================================================ 4 -->
+<h2 id="s4">4. Routing architecture</h2>
+
+<p><strong>Router implementation.</strong> Next.js App Router is used only for four physical pages. All product navigation is a client-side state machine: a <code>mode</code> string in <code>useCoLab0.tsx</code> plus secondary selectors (<code>activeId</code>, <code>openTaskId</code>, <code>focusMeetingId</code>, <code>openFileId</code>, <code>orgTab</code>, <code>mobilePane</code>). The browser URL never changes while navigating; back/forward are internal arrays (<code>navHistory</code>, <code>forwardStack</code>) and <code>popstate</code> is not handled.</p>
+
+<pre>/                         app/page.tsx → CoLabV1 → CoLabShell   (protected by the `authed` state gate)
+├── [mode=dashboard]      colab/DashboardView
+├── [mode=chats]          ChatView  (+ activeId conversation, commsOpen side thread, mobilePane)
+├── [mode=calls]          colab/CallsView
+├── [mode=contacts]       ContactsView
+├── [mode=calendar]       CalendarView (+ focusMeetingId)
+├── [mode=activity]       colab/ActivityView
+├── [mode=search]         SearchView (feature flag NEXT_PUBLIC_FEATURE_GLOBAL_SEARCH)
+├── [mode=settings]       Settings
+├── [mode=help]           HelpCenter
+├── [mode=org]            OrgAdmin (+ orgTab; permission set from backend)
+├── [mode=agents]         AgentsView (feature flag)
+├── [mode=tasks]          TasksView      ┐
+├── [mode=reminders]      RemindersView  ├ currently hidden via lib/hiddenModules.ts (HIDDEN_MODULES)
+├── [mode=files]          FilesView      ┘
+├── overlays              CallModal, MeetingRoom → MeetingStage, PreJoinMeeting, CommandPalette, Modals, DialogHost
+│
+├── /admin                app/admin/page.tsx → admin/AdminPortal  (separate JWT scope "admin", lib/adminApi.ts)
+├── /dev                  app/dev/page.tsx → dev/DevPortal        (ops JWT in sessionStorage, raw fetch to /api/ops)
+├── /presenter-test       QA harness, no backend
+├── /site, /site/download static marketing pages (rewrites in next.config.js)
+└── error.tsx, global-error.tsx, loading.tsx, not-found.tsx
+</pre>
+
+<ul>
+  <li><strong>Protected vs public:</strong> one gate, <code>if (!authed) return &lt;LoginScreen/&gt;</code> in <code>CoLabShell.tsx</code>. No per-view guard; roles are not checked on the client except <code>OrgAdmin</code> which hides tabs by a permission set from the backend.</li>
+  <li><strong>Lazy loading:</strong> <code>CoLabShell.tsx</code> lazily loads 31 views/modals with <code>next/dynamic</code>; <code>ChatView</code>, <code>Rail</code>, <code>ConversationSidebar</code>, <code>DashboardView</code>, <code>LoginScreen</code> are eager.</li>
+  <li><strong>Dynamic routes:</strong> none in the URL. Inbound parameters are consumed once: SSO callback (<code>?code&amp;state</code>), push cold-start (<code>?notif_*</code>), and desktop <code>colab://</code> deep links (<code>lib/deepLink.ts</code>, whitelisted kinds <code>new|chat|message|meeting|call|presence</code>).</li>
+  <li><strong>Default route:</strong> <code>mode</code> defaults to <code>dashboard</code>; the last mode is persisted in <code>localStorage.clb_mode</code> and restored if it is in a known list.</li>
+  <li><strong>404:</strong> <code>not-found.tsx</code> only for real paths. An unknown <code>mode</code> falls through the ternary chain to <code>CallsView</code> (the last <code>else</code>).</li>
+  <li><strong>Consequence:</strong> conversations and meetings are not deep-linkable on the web, refresh loses the active conversation, and org switching uses <code>window.location.reload()</code> (<code>OrgSwitcher.tsx</code>) because there is no router to reset state.</li>
+</ul>
+
+<!-- ============================================================ 5 -->
+<h2 id="s5">5. State management architecture</h2>
+
+<p>There is no Redux, MobX, Zustand or React Context (<code>createContext</code> has zero hits in <code>frontend/app/src</code>). All application state is React <code>useState</code>/<code>useRef</code> inside one hook chain, and it is distributed by passing a single untyped object down the tree.</p>
+
+<div class="tbl-wrap"><table>
+<tr><th>Hook</th><th>Lines</th><th>Owns</th><th>Returns</th></tr>
+<tr><td><code>useCoLab0</code> (Core)</td><td>1627</td><td>108 <code>useState</code>, 49 refs: mode/nav, theme, search, <code>conversations</code>, <code>messagesByConv</code>, <code>readState</code>, <code>users</code>, <code>meetings</code>, <code>calls</code>, <code>notifications</code>, <code>invites</code>, <code>activeCall</code>, <code>roomState</code>, auth state, task/file/reminder paging, settings, toast, modal, handoff; <code>showToast</code>, <code>doLogout</code>, <code>onSelect</code>; listeners for <code>colab:unauthorized</code>, <code>colab:token-refreshed</code></td><td>287 keys</td></tr>
+<tr><td><code>useCoLab1</code> (Boot)</td><td>1215</td><td>login/signup/SSO callback, token restore with backoff, <code>refetch*</code> helpers, <code>appendMessage</code>/<code>replaceMessage</code></td><td>33</td></tr>
+<tr><td><code>useCoLab2</code> (Socket)</td><td>1705</td><td>one effect (~1,490 lines) that bootstraps data, connects the socket and registers ~45 handlers; 17-entry dependency array</td><td>8</td></tr>
+<tr><td><code>useCoLab3</code> (Messages)</td><td>1005</td><td><code>onSend</code>, <code>onSendMedia</code>, <code>onSendFile</code> incl. E2EE encryption and optimistic rows</td><td>12</td></tr>
+<tr><td><code>useCoLab4</code> (Actions)</td><td>1407</td><td>45 callbacks: reactions, pins, members, profile, invites, conversation CRUD, file paging</td><td>45</td></tr>
+<tr><td><code>useCoLab5</code> (Calls)</td><td>1252</td><td>start/accept call, join meeting, huddles, deep links, desktop bridge</td><td>52</td></tr>
+<tr><td><code>useCoLab6</code> (Misc)</td><td>1304</td><td>call-signalling socket listeners, task CRUD, back/forward, help</td><td>55</td></tr>
+</table></div>
+
+<pre class="mermaid">
+flowchart LR
+  U[User action] --> V[View component<br>e.g. ChatMainPane]
+  V --> H[Handler from s bag<br>e.g. onSend in useCoLab3]
+  H --> O[Optimistic setState<br>messagesByConv]
+  H --> X[socket.emit or lib/api]
+  X --> S[Backend route / socket handler]
+  S --> DB[(MySQL)]
+  S --> B[Broadcast message:new]
+  B --> L[useCoLab2 socket handler<br>reconcile by _clientId]
+  L --> O2[setMessagesByConv]
+  O2 --> R[CoLabV1 re-spreads s → CoLabShell → every child re-renders]
+</pre>
+
+<h3>Persistence and synchronisation</h3>
+<ul>
+  <li><strong>localStorage:</strong> tokens (<code>clb_token</code>, <code>clb_refresh</code>; desktop mirrors them into the OS keychain), <code>clb_mode</code>, <code>clb_theme</code>, drafts <code>clb_draft_&lt;convId&gt;</code>, UI prefs (<code>clb_nav_collapsed</code>, <code>clb_spatial_audio</code>, <code>clb_call_view_mode</code>…), E2EE bookkeeping (<code>e2ee_device_id</code>, <code>e2ee_recovery_*</code>), <code>clb_admin_token</code>; sessionStorage holds <code>clb_ops_token</code> and <code>clb_started_calls</code>.</li>
+  <li><strong>IndexedDB:</strong> <code>signal-store</code> (identity, prekeys, sessions, sender keys, plaintext cache, replay log), <code>signal-epochs</code>, <code>colab-media-cache</code> (decrypted attachments, LRU, 350 MB budget).</li>
+  <li><strong>Server sync:</strong> socket events update state directly; most domains also <em>refetch</em> on their change event (<code>TASK_CHANGED</code> → <code>refetchTasks</code>), so a create does a POST and then a full list GET, and the socket echo triggers a second GET.</li>
+  <li><strong>Cross-tab:</strong> token rotation is coordinated through the localStorage mirror (409 from refresh → wait for sibling tab to write the new token).</li>
+</ul>
+
+<h3>Architectural problems found</h3>
+<ul>
+  <li><span class="badge b-crit">CRITICAL</span> <strong>Untyped session bag.</strong> Every <code>CoLabSessionN</code> and <code>CoLabSessionShell</code> field is <code>any</code> (<code>CoLabShell.tsx</code> lines 60–140 declare ~300 <code>any</code> fields). <code>tsconfig</code> has <code>strict:false</code>. Refactors cannot be verified by the compiler.</li>
+  <li><span class="badge b-crit">CRITICAL</span> <strong>Whole-app re-render on any state atom.</strong> <code>CoLabV1.tsx</code> spreads seven objects into a new <code>s</code> every render; <code>CoLabShell</code> is not memoised and passes ten inline lambdas to <code>ChatView</code>, so <code>React.memo</code> on views never hits.</li>
+  <li><span class="badge b-high">HIGH</span> <strong>Duplicate state via shadow refs.</strong> ~20 refs (<code>meRef</code>, <code>modeRef</code>, <code>activeIdRef</code>, <code>conversationsRef</code>, <code>messagesByConvRef</code>, <code>settingsRef</code>, <code>tokenRef</code>…) mirror state by hand; the access token exists in four places (ref, localStorage mirror, keychain, <code>socket.auth</code>).</li>
+  <li><span class="badge b-high">HIGH</span> <strong>Prop drilling of 8 levels.</strong> <code>onReact</code>: useCoLab4 → CoLabV1 → CoLabShell → ChatView → useChatView0/1/2 → ChatViewShell → ChatColumn → ChatMainPane → MsgRow → MessageHoverToolbar. ChatView mirrors the same pattern with its own <code>useChatView0..2</code> and <code>s</code> bag.</li>
+  <li><span class="badge b-high">HIGH</span> <strong>Socket lifecycle tied to callback identity.</strong> The <code>useCoLab2</code> effect depends on 17 callbacks; if any changes identity, the socket is closed, re-created and the bootstrap fetches run again.</li>
+  <li><span class="badge b-med">MEDIUM</span> <strong>Hidden side channels.</strong> A <code>window.dispatchEvent</code> bus with 11 event names (<code>colab:toast</code>, <code>colab:unauthorized</code>, <code>colab:org-invalid</code>…) and module-level singletons in <code>lib/dialog.ts</code>, <code>lib/studio.ts</code>, <code>lib/errorReporter.ts</code>, <code>lib/e2ee/manager.ts</code> (which holds the token and keys at module scope).</li>
+  <li><span class="badge b-med">MEDIUM</span> <strong>Circular hook contracts.</strong> Later segments receive setters from earlier ones and earlier segments call later ones through refs (<code>loadMessagesRef</code>, <code>refetchTasksRef</code>, <code>onLeaveRoomRef</code>), which is the manual way of breaking an ordering cycle.</li>
+</ul>
+
+<!-- ============================================================ 6 -->
+<h2 id="s6">6. API / backend communication</h2>
+
+<pre class="mermaid">
+flowchart LR
+  UI[View / hook] --> API["lib/api.ts req()<br>fetch, Bearer token, X-CoLab-Device-Id"]
+  UI --> SOCK[lib/socket.ts<br>socket.io-client, polling→websocket]
+  API --> NX[Next server<br>rewrite /api/* → BACKEND_INTERNAL_URL]
+  SOCK --> NX2[Next rewrite /socket.io/*]
+  NX --> EDGE[nginx or Caddy<br>/api, /socket.io, /livekit, /minio]
+  NX2 --> EDGE
+  EDGE --> BE[Express app.ts<br>request id → security headers → CORS → limiters → auth → router]
+  EDGE --> IO[Socket.IO<br>handshake.auth.token → rooms conv:/user:/session:/meeting:]
+  BE --> SVC[services/*]
+  IO --> SVC
+  SVC --> MY[(MySQL via drivers/mysql.ts)]
+  SVC --> RD[(Redis: adapter, rbac cache, huddles, blocklist)]
+  SVC --> ST[(disk → MinIO/S3 → MySQL blob)]
+  SVC --> LK[LiveKit SFU<br>AccessToken, RoomService]
+  SVC --> PUSH[web-push / FCM / APNs]
+</pre>
+
+<h3>HTTP client (<code>frontend/app/src/lib/api.ts</code>)</h3>
+<ul>
+  <li><strong>Transport:</strong> native <code>fetch</code>; base URL is <code>NEXT_PUBLIC_API_BASE_URL || ""</code> (same origin by design, so no CORS in production). <code>uploadFile</code> uses XHR for progress and supports <code>AbortSignal</code>.</li>
+  <li><strong>Headers:</strong> <code>Authorization: Bearer</code> only when the caller passes <code>token</code> (every call site passes <code>tokenRef.current</code>), plus <code>X-CoLab-Device-Id</code> from localStorage.</li>
+  <li><strong>Retry:</strong> GET only, one retry after 600 ms on network error/429/5xx; writes are never retried. No request timeout or cancellation on ordinary requests.</li>
+  <li><strong>401 handling:</strong> a 401 on an authenticated call re-validates with <code>/api/auth/me</code>; a confirmed 401 runs a single-flight <code>POST /api/auth/refresh</code> (12 s timeout, 409 means a sibling tab is rotating → poll the localStorage mirror for 2 s). Success dispatches <code>colab:token-refreshed</code>; failure clears the refresh token and dispatches <code>colab:unauthorized</code> → logout. <strong>The original failed request is not replayed.</strong></li>
+  <li><strong>Errors:</strong> throws <code>Error</code> with <code>.status/.code/.details</code> from the <code>{ok:false,error}</code> envelope; <code>ORG_MEMBERSHIP_INVALID</code> → <code>colab:org-invalid</code>. Failures are logged to the diagnostics ring buffer and telemetry.</li>
+  <li><strong>Surface:</strong> one flat object with ~262 methods and untyped parameters. Groups: auth, orgs (~30), sessions, users/invites/blocks, conversations/messages, files, meetings (~45), calls, reminders, tasks (~35), e2ee (~30), notifications, push, telemetry, ai. <code>adminApi.ts</code> is a second client for <code>/api/admin</code>. Fifteen raw <code>fetch(</code> sites bypass both (Rail, UpdateWatcher, VoicePlayer, FileAttachment, MediaAlbum, DownloadModal, useCoLab4, downloadAttachment, DevPortal).</li>
+</ul>
+
+<h3>Backend HTTP chain (<code>backend/app/src/app.ts</code>)</h3>
+<p>Request id → security headers (HSTS in prod) → CORS allowlist (loopback and RFC1918 reflected outside prod) → per-path brute-force limiters (login/signup/SSO/token 30 per 15 min) → global limiter 600/min keyed by JWT subject or IP (<strong>in-memory per process</strong>) → raw body for the LiveKit webhook → JSON 5 MB (uploads stream) → optional redacted debug log → 33 routers mounted under <code>/api</code> → 404 → error handler that persists to <code>error_logs</code> and maps MySQL errno 1062/1451/1452 and <code>SIGNAL 45000</code> to 4xx. Auth is applied per router (<code>router.use(authMiddleware)</code>), with deliberate public endpoints only for file links/tickets, sticker/GIF proxies, public avatars, health, telemetry ingest and webhook ingest.</p>
+
+<h3>Realtime (<code>backend/app/src/realtime/socket.ts</code>)</h3>
+<ul>
+  <li>Single namespace, rooms <code>conv:&lt;id&gt;</code>, <code>user:&lt;id&gt;</code>, <code>session:&lt;jti&gt;</code>, <code>meeting:&lt;id&gt;</code>. Redis adapter when <code>REDIS_URL</code> is set, in-memory fallback after a 3 s gate.</li>
+  <li>Client→server: <code>conversation:join</code>, <code>message:send</code>, <code>message:react</code>, typing, <code>call:request/accept/decline/cancel/hangup</code>, <code>huddle:*</code>, <code>meeting:join/hand/reaction/chat/takeover</code>, <code>devices:list</code>, <code>handoff:*</code>, <code>wb:save/load</code>.</li>
+  <li>Server→client: <code>message:new/updated/deleted/read</code>, <code>conversation:*</code>, <code>presence:update</code>, <code>call:*</code>, <code>meeting:*</code>, <code>notification:*</code>, <code>task:changed</code>, <code>reminder:changed</code>, <code>file:changed</code>, <code>session:revoked</code>, <code>org:membership-revoked</code>, six <code>e2ee:*</code> events, <code>server:restarting</code>.</li>
+  <li>The frontend <code>EVENTS</code> map in <code>lib/socket.ts</code> is a hand-maintained copy of <code>shared/src/events.ts</code> and has already drifted (<code>meeting:lobby:update</code>, <code>meeting:presence</code>, and raw strings such as <code>"wb:save"</code>, <code>"call:error"</code>, <code>"message:rate_limited"</code>).</li>
+  <li>Polling: none for core data, but views poll where a socket event would do: OrgAdmin 5 s, MeetingRoom lobby 5 s and 20 s, PreJoinMeeting 5 s, CalendarView 10 s, Settings concerns 30 s. No Server-Sent Events.</li>
+</ul>
+
+<!-- ============================================================ 7 -->
+<h2 id="s7">7. Authentication &amp; authorization</h2>
+
+<pre class="mermaid">
+sequenceDiagram
+  participant L as LoginScreen.tsx
+  participant H as useCoLab1.doLogin
+  participant A as lib/api.ts
+  participant R as routes/auth.ts
+  participant S as authService.ts
+  participant M as middleware/auth.ts
+  L->>H: onLogin(email, pw, remember)
+  H->>A: api.login
+  A->>R: POST /api/auth/login (brute-force limiter 30/15min)
+  R->>S: verify scrypt hash, credentialPolicy, device limit
+  S-->>R: JWT HS256 {sub, jti, deviceId} 7d + refresh token (hashed, rotating) + session row
+  R-->>A: {ok, data:{token, refreshToken, user}}
+  A-->>H: authSuccess → tokenStore.saveToken / saveRefreshToken, initE2EE, setAuthed
+  Note over H: later: any request with Bearer token
+  H->>M: Authorization: Bearer
+  M->>M: jwt.verify → blocklist → session row (revoked/expired → 401, lookup error → ALLOW) → device check → org membership (30s cache)
+  M-->>H: 401 on revoked/expired
+  H->>A: /auth/me re-check → POST /auth/refresh (single-flight, 409 → wait for sibling tab)
+</pre>
+
+<div class="tbl-wrap"><table>
+<tr><th>Responsibility</th><th>Where</th><th>Notes</th></tr>
+<tr><td>Password login / signup</td><td><code>routes/auth.ts</code>, <code>services/authService.ts</code>, <code>credentialPolicy.ts</code></td><td>scrypt with per-user salt, constant-time compare; min 9 chars, common/disposable lists; <code>AUTH_SIGNUP_ENABLED</code></td></tr>
+<tr><td>Token format and TTL</td><td><code>authService.tokenFor</code></td><td>HS256 with <code>AUTH_JWT_SECRET</code>, 7-day default, <code>jti</code> = session id, optional <code>deviceId</code> binding for E2EE</td></tr>
+<tr><td>Sessions</td><td><code>db.sessions</code> (migration 0066), <code>routes/sessions.ts</code>, <code>sessionGcService</code></td><td>Device/UA/geo per session, list/revoke/revoke-others, org idle-timeout policy, live disconnect via <code>session:revoked</code>; max sessions per user with eviction prompt (<code>MaxDevicesModal</code>)</td></tr>
+<tr><td>Refresh tokens</td><td>migration 0079, <code>authService</code>, <code>api.ts attemptRefresh</code></td><td>Opaque, SHA-256 hashed, single use with replay detection, 30-day</td></tr>
+<tr><td>Logout</td><td><code>useCoLab0.doLogout</code>, <code>POST /auth/logout</code>, <code>tokenBlocklist</code></td><td>Client clears tokens, drafts, E2EE sessions, socket; server blocklists JWT signature in Redis or memory; SSO logout redirect</td></tr>
+<tr><td>MFA</td><td><code>mfaService.ts</code>, <code>totp.ts</code>, <code>/auth/mfa/*</code></td><td>TOTP seed sealed with AES-GCM under a key derived from the JWT secret, backup codes; <code>MFA_ENABLED</code>. <strong>No client UI exists for the MFA step.</strong></td></tr>
+<tr><td>SSO</td><td><code>ssoService.ts</code>, <code>LoginScreen</code> redirect, <code>useCoLab1</code> callback effect</td><td>OIDC code + PKCE, signed state, JWKS verification, optional <code>claims_jwe</code> envelope decrypted with an RSA private key; finds or creates a passwordless user; SAML not supported</td></tr>
+<tr><td>Token storage (client)</td><td><code>lib/tokenStore.ts</code></td><td>Web: localStorage. Desktop: Electron <code>safeStorage</code> keychain with a localStorage mirror for the access token</td></tr>
+<tr><td>Org context / tenancy</td><td><code>database/src/orgContext.ts</code>, <code>middleware/auth.ts</code></td><td>AsyncLocalStorage carries <code>activeOrgId</code>; driver appends <code>organization_id=?</code> in ~40 call sites; membership re-verified per request with 30 s cache, fail-closed on definitive "no"</td></tr>
+<tr><td>RBAC</td><td><code>services/rbacService.ts</code>, <code>middleware/requirePermission.ts</code></td><td>Permissions <code>org:manage, org:delete, members:invite, members:manage, teams:manage, roles:manage, billing:manage, audit:view, channels:manage, meetings:manage</code>; built-in owner/admin plus custom roles; Redis pub/sub invalidation</td></tr>
+<tr><td>Admin portal</td><td><code>routes/admin.ts</code>, <code>/admin</code> page, <code>lib/adminApi.ts</code></td><td>Single <code>ADMIN_EMAIL/ADMIN_PASSWORD</code>, JWT scope <code>admin</code> under the same secret</td></tr>
+<tr><td>Ops portal</td><td><code>routes/ops.ts</code>, <code>/dev</code> page</td><td><code>OPS_PORTAL_USER/PASSWORD</code>, JWT scope <code>ops</code>; disabled when password empty</td></tr>
+<tr><td>Route protection (client)</td><td><code>CoLabShell</code> gate; <code>hiddenModules.ts</code></td><td>Visibility only, not permission-driven</td></tr>
+</table></div>
+
+<div class="callout bad"><strong>Security findings with evidence.</strong>
+<ul>
+  <li><code>keys/AuthKey_37PG75SL4U.p8</code> (APNs auth key), <code>keys/GoogleService-Info.plist</code> and <code>cookies.txt</code> are tracked in git (<code>git ls-files</code>) although <code>.gitignore</code> excludes them and <code>keys/README.md</code> states only the README is tracked. The coturn config in <code>infrastructure/coturn/turnserver.conf</code> also carries a static credential. These must be rotated and purged from history.</li>
+  <li><code>config/src/index.ts</code> ships weak defaults: <code>ADMIN_PASSWORD</code> (line 51), <code>AUTH_JWT_SECRET</code> (39), <code>LIVEKIT_API_KEY</code> (163), MinIO credentials (250–251). <code>assertProductionSecrets</code> in <code>index.ts</code> gates the JWT, LiveKit and ops-portal secrets but <strong>not</strong> the admin password.</li>
+  <li><code>middleware/auth.ts</code> fails <em>open</em> when the session lookup throws (comment "FAIL-OPEN"), and the device-binding check fails open unless <code>E2EE_DEVICE_BOUND_JWT_STRICT</code>; the socket handshake has the same behaviour. A DB hiccup therefore admits revoked sessions.</li>
+  <li>E2EE escrow: <code>e2eeService.ts</code> line 327 derives the account-key escrow secret from <code>AUTH_JWT_SECRET</code> when <code>E2EE_ESCROW_SECRET</code> is empty, and <code>GET /e2ee/account-key</code> returns it to any authenticated device. The operator can open history backups; this was a deliberate product choice (prompt-free recovery) but it means the system is not end-to-end encrypted against the server.</li>
+  <li>Three JWT planes (user, admin, ops) share one secret and differ only by a <code>scope</code> claim.</li>
+  <li><code>/api/health/ready</code> is unauthenticated and reports dependency topology and timings. <code>routes/debug.ts</code> (non-prod only) opens raw MySQL connections and lets any authenticated user send messages.</li>
+  <li>Desktop: <code>sandbox:false</code> on every window, a plaintext-HTTP IdP origin is in the default <code>authOrigins</code> list for all environments, installers are unsigned and not notarised, the Windows updater runs an unsigned NSIS exe (hash-pinned to an unsigned manifest over TLS).</li>
+</ul></div>
+
+<!-- ============================================================ 8 -->
+<h2 id="s8">8. Component architecture</h2>
+
+<ul>
+  <li><strong>Style:</strong> 138 component files, 100% function components, no class components, no HOCs (one data helper named <code>withFileKeys</code>), no render-props. Composition is done through props and the <code>s</code> bag.</li>
+  <li><strong>Hooks:</strong> 33 exported custom hooks spread across <code>hooks/</code> (2), <code>lib/</code> (10) and <code>components/**</code> (21) with no placement rule. Nine of them are 1k–2.5k-line "session segments", i.e. former god components renamed.</li>
+  <li><strong>Container/presentational split:</strong> partially present and inverted: <code>CoLabShell</code>, <code>CallModal</code>, <code>ChatMainPane</code>, <code>ChatDetails</code> are hook-free render trees fed by hooks that hold everything. This is a legitimate pattern but the contracts between them are <code>any</code>.</li>
+</ul>
+
+<h3>The 15 largest components</h3>
+<div class="tbl-wrap"><table>
+<tr><th>File</th><th>Lines</th><th>Concerns mixed</th><th>Verdict</th></tr>
+<tr><td><code>components/MeetingStage.tsx</code></td><td>5414</td><td>LiveKit room lifecycle in one 1,190-line effect, imperative tile DOM (16 <code>createElement</code>), chat, polls, reactions, whiteboard, recording via MediaRecorder, PiP/popout, hotkeys, device pickers, 16 <code>room.on</code> handlers, 41 state atoms</td><td>Too large, too coupled</td></tr>
+<tr><td><code>components/CalendarView.tsx</code></td><td>3591</td><td>calendar grid + scheduler + availability; 7 unmemoised sorts; effect with 13 deps</td><td>Too large</td></tr>
+<tr><td><code>components/dev/DevPortal.tsx</code></td><td>3588</td><td>ops console, 269 inline styles, 8 polling intervals</td><td>Dev-only; acceptable but isolate</td></tr>
+<tr><td><code>colab/call/useCallSessionMedia.ts</code></td><td>2503</td><td>a single <code>useEffect</code> from line 107 to 2502: token, connect, subscribe, attach, relayout</td><td>Duplicates MeetingStage logic (278 identical long lines)</td></tr>
+<tr><td><code>components/TasksView.tsx</code></td><td>2317</td><td>33 states, 0 memos</td><td>Too large</td></tr>
+<tr><td><code>components/OrgAdmin.tsx</code></td><td>2284</td><td>22 states, 217 inline styles, 5 s poll, direct API calls</td><td>Too large</td></tr>
+<tr><td><code>components/Settings.tsx</code></td><td>2258</td><td>94 inline styles, desktop prefs, sessions, E2EE, concerns</td><td>Split by tab</td></tr>
+<tr><td><code>colab/CallModal.tsx</code></td><td>2107</td><td>JSX only</td><td>Acceptable once hooks are typed</td></tr>
+<tr><td><code>components/Whiteboard.tsx</code></td><td>2054</td><td>self-contained canvas editor</td><td>Cohesive; fine</td></tr>
+<tr><td><code>colab/CoLabShell.tsx</code></td><td>2001</td><td>destructures 312 keys from <code>s</code>; renders every mode</td><td>Needs a router + context</td></tr>
+<tr><td><code>chat/ChatMainPane.tsx</code></td><td>1772</td><td>tabs, AI summary, list, composer, portals; passes 39 props to <code>MsgRow</code></td><td>Split list vs composer</td></tr>
+<tr><td><code>colab/session/useCoLab2.tsx</code></td><td>1705</td><td>socket + bootstrap in one effect</td><td>Split per domain</td></tr>
+<tr><td><code>lib/api.ts</code></td><td>1675</td><td>262 methods, no namespaces/types</td><td>God module</td></tr>
+<tr><td><code>colab/session/useCoLab0.tsx</code></td><td>1627</td><td>108 states</td><td>God hook</td></tr>
+<tr><td><code>chat/MsgRow.tsx</code></td><td>1577</td><td>39 props, hand-written memo comparator</td><td>Memo is defeated (see §13)</td></tr>
+</table></div>
+
+<h3>Duplicated, dead and reusable</h3>
+<ul>
+  <li><strong>True duplicates:</strong> <code>components/EmojiPicker.tsx</code> and <code>components/chat/EmojiPicker.tsx</code> (same code, chat copy adds <code>Portal</code>). <code>pad/keyOf</code> re-defined in 7 files, <code>fmtTime</code> in 5, <code>fmtDate</code> in 3, <code>relativeTime</code> in 2, <code>localTime</code> shadowed in <code>ContactsView</code>.</li>
+  <li><strong>Dead:</strong> <code>components/Select.tsx</code> (re-export with zero importers); <code>lib/e2ee/callMedia.ts</code> insertable-stream path (<code>setCallMediaE2EE</code> has no caller, so call media is DTLS-SRTP only); <code>database/src/oneApiClient.ts</code>; backend <code>package.json</code> scripts pointing at non-existent <code>.js</code> files.</li>
+  <li><strong>Variants, not duplicates:</strong> <code>Modal</code> (primitive) / <code>Modals</code> (feature modals) / <code>DialogHost</code> (confirm singleton); <code>ui/Select</code> / <code>PremiumSelect</code> (class wrapper) / <code>SearchableSelect</code> (combobox); <code>MeetingsView</code> vs <code>admin/MeetingsView</code>; <code>colab/DashboardView</code> vs <code>admin/DashboardView</code>.</li>
+  <li><strong>Good reuse candidates:</strong> <code>ui/*</code> primitives and <code>tokens.css</code> (the newer design-token layer), <code>Avatar</code>, <code>FloatingMenu</code>, <code>GlobalTooltip</code>, <code>lib/stageView.ts</code>, <code>lib/tileGrid.ts</code>, <code>lib/spatialAudio.ts</code> (already shared by both media stacks), <code>Whiteboard</code>, <code>RichTextEditor</code>.</li>
+</ul>
+
+<!-- ============================================================ 9 -->
+<h2 id="s9">9. Data flow architecture (five features)</h2>
+
+<h3>9.1 Send a chat message</h3>
+<pre>Enter in composer
+ → chat/useChatView2.tsx submit() → props.onSend(html, replyTo, important)
+ → colab/session/useCoLab3.tsx onSend()
+     builds optimistic row {_clientId:"_opt_…", _status:"sending"} → appendMessage + bumpPreview
+     if isE2EEEnabled() && isConvE2EERequired(conv) → lib/e2ee/manager.encryptForUser / encryptForGroup (fail-closed)
+     if socket connected → socketRef.emit(EVENTS.MESSAGE_SEND, payload)   else → api.sendPayload / api.sendMessage (POST /api/conversations/:id/messages)
+ → backend/app/src/realtime/socket.ts  on(MESSAGE_SEND) → token bucket → messageService.send → db.messages.create (mysql.ts) → webhook enqueue
+ → io.to(conv:&lt;id&gt;).emit(MESSAGE_NEW) + notify.pushNotif (web push / FCM) for offline members
+ → useCoLab2.tsx on(MESSAGE_NEW): dedupe seenMsgIdsRef → decryptMessageList → match _clientId → replace optimistic row → setMessagesByConv
+ → CoLabV1 re-spreads s → CoLabShell → ChatView → ChatMainPane → MsgRow re-render (all rows; see §13)</pre>
+
+<h3>9.2 Start a 1:1 call and join the LiveKit room</h3>
+<pre>Call button in ChatColumn header
+ → useCoLab5.tsx onStartCall(peer, video) → setActiveCall({status:"calling"}) → socket.emit(CALL_REQUEST,{peerId,kind})
+ → realtime/socket.ts on(CALL_REQUEST) → callService.request → db.calls.requestAtomic (busy detection)
+     → io.to(user:&lt;peer&gt;).emit(CALL_INCOMING) + mobile/web push; in-process setTimeout → markMissed after CALL_MISSED_MS
+ → callee useCoLab6.tsx on(CALL_INCOMING) → setActiveCall({status:"ringing"}) + dispatchNotif.fire (desktop native notification with Answer/Decline)
+ → callee useCoLab5.onAcceptCall → socket.emit(CALL_ACCEPT) → caller receives CALL_ACCEPTED → status "connected"
+ → CoLabShell renders &lt;CallModal/&gt; (lazy chunk) → useCallSessionCore → useCallSessionControls → useCallSessionMedia
+ → useCallSessionMedia: api.getCallToken(token,{callId}) → POST /api/calls/token → routes/calls.ts → livekitService.roomToken (membership gated, room call_&lt;id&gt;)
+ → room.connect(wsUrl, token) via /livekit rewrite → nginx → LiveKit SFU; tracks published/attached imperatively; TURN via coturn</pre>
+
+<h3>9.3 Upload a file attachment</h3>
+<pre>File picked in composer → staged → useCoLab3.tsx onSendFile(file)
+ → optional encryptBlob / encryptBlobChunked (lib/e2ee/media.ts) → optimistic bubble
+ → api.uploadFile(token, file, convId, onProgress, encrypted, signal)   XHR POST /api/files?name&amp;mime&amp;conversationId
+ → routes/files.ts upload (uploadLimiter) → fileService.create walks FILE_STORAGE_ORDER = disk → s3 → db
+     diskStorageService (.part write, free-space preflight) → storageService (MinIO via AWS SDK) → LONGBLOB fallback ≤ FILE_BLOB_FALLBACK_MAX_BYTES
+ → returns file meta → message payload {fileId} → socket.emit(MESSAGE_SEND) → MESSAGE_NEW reconcile as 9.1
+ → FILE_CHANGED → refetchFiles; downloads via /api/files/:id/download (range), presigned URL, or /dl/:ticket; decrypted bytes cached in IndexedDB (lib/mediaCache.ts)
+ → background: fileTierService moves cold disk files to MinIO; fileGcService hard-deletes soft-deleted rows after retention</pre>
+
+<h3>9.4 Create a task</h3>
+<pre>TasksView onCreate → CoLabShell prop → useCoLab6.tsx onCreateTask(payload)
+ → api.createTask → POST /api/tasks → routes/tasks.ts → taskService.create → db.tasks (version column 0056, assignees 0060, FTS 0072)
+ → optional api.setTaskAssignees, api.addTaskDep loop (N extra requests)
+ → await refetchTasks() (useCoLab1) → applyTaskPage → setTasks/setTaskCount
+ → server emits TASK_CHANGED to each assignee's user room → useCoLab2 on(TASK_CHANGED) → refetchTasks() again (double fetch)
+ → taskDueFireService (leader-gated minute tick) later fires notifications when due</pre>
+
+<h3>9.5 Login with silent refresh</h3>
+<pre>LoginScreen onLogin → useCoLab1.doLogin → api.login → POST /api/auth/login
+ → authService: scrypt verify → createSession (jti) → JWT 7d + refresh token → limit check (MaxDevicesModal on limitReached)
+ → authSuccess: tokenRef.current = token; saveToken (keychain on desktop) ; saveRefreshToken ; initE2EE(token,userId) ; setAuthed(true)
+ … later a GET returns 401 → api.ts reqOnce → raw GET /api/auth/me → 401 confirmed → handleConfirmedUnauthorized
+ → attemptRefresh (single-flight) → POST /api/auth/refresh {refreshToken, deviceId} → routes/auth.ts → authService.rotateRefresh (hash compare, markUsed race, replay revoke)
+ → saveToken + saveRefreshToken → window event colab:token-refreshed → useCoLab0 updates tokenRef and socket.auth
+ → the request that hit 401 still rejects to its caller; the next call succeeds</pre>
+
+<!-- ============================================================ 10 -->
+<h2 id="s10">10. Build architecture</h2>
+
+<pre class="mermaid">
+flowchart LR
+  SRC[Source<br>frontend/app, backend, config, shared, database] --> NB[next build<br>next.config.js: rewrites baked, splitChunks framework/livekit/tiptap/commons, eslint ignored, cpus:1]
+  SRC --> BE[no backend build<br>tsx runs TS at runtime]
+  NB --> FI[docker/Dockerfile.frontend<br>node:20-alpine, ARG NEXT_PUBLIC_* + BACKEND_INTERNAL_URL baked, full node_modules copied, next start :3000]
+  BE --> BI[docker/Dockerfile.backend<br>npm ci --omit=dev, copies TS source, HEALTHCHECK /api/health/ready, tsx index.ts :4000]
+  FI --> CP[docker-compose.live.yml<br>mysql, redis, minio, livekit, coturn, egress, backend, frontend, nginx]
+  BI --> CP
+  CP --> NG["nginx :7530 → host :7524<br>/api, /socket.io, /livekit upgrade, /minio; no gzip, no static cache rules"]
+  NG --> LB[Corporate LB https://collab.resulticks.com]
+  LB --> BR[Browser]
+  LB --> EL[Electron shell loads the same URL]
+</pre>
+
+<div class="tbl-wrap"><table>
+<tr><th>Aspect</th><th>Finding</th></tr>
+<tr><td>Package scripts</td><td>Root <code>package.json</code>: <code>dev</code> (concurrently tsx watch + next dev :3002), <code>dev:web</code>, <code>dev:local</code>, <code>dev:json</code>, <code>build</code> (frontend only), <code>start</code> (<code>tsx backend/app/src/index.ts</code>), <code>typecheck</code>, <code>test:unit</code> (node test runner, needs MySQL), <code>test:e2e</code>/<code>a11y</code> (Playwright), <code>validate</code> (depcruise, madge, knip, depcheck), <code>truth</code>/<code>gate</code> (everything). <code>chromatic</code>/storybook scripts refer to tooling that is not installed.</td></tr>
+<tr><td>TypeScript</td><td>Root TS 6.0 with <code>strict:false</code>; frontend has its own TS 5.9, also non-strict. Two ESLint majors (10 root, 8 frontend).</td></tr>
+<tr><td>Environment</td><td><code>config/src</code> models ~120 variables, but 26 backend/database files still read <code>process.env</code> directly (~55 extra names). Frontend reads 22 <code>NEXT_PUBLIC_*</code> names; <code>next.config.js</code> copies the root <code>.env</code> into <code>process.env</code> at build time.</td></tr>
+<tr><td>Build-time vs runtime</td><td>All <code>NEXT_PUBLIC_*</code>, <code>BACKEND_INTERNAL_URL</code> and <code>LIVEKIT_INTERNAL_URL</code> are baked into the frontend image (Dockerfile ARG→ENV). The image is therefore environment-specific for E2EE flags, VAPID key, feature flags, proxy targets. API/socket URLs stay blank (same-origin), which keeps the image host-portable.</td></tr>
+<tr><td>Code splitting</td><td>Route-level: 4 pages. Component-level: 31 <code>next/dynamic</code> in <code>CoLabShell</code>, plus MeetingStage, MediaStudio, GifPicker, MediaPipe and push registration via <code>import()</code>. Custom cache groups isolate <code>livekit-client</code> and TipTap into async chunks. Eager first chunk still includes the full chat tree, TipTap (through <code>ChatMainPane → RichTextEditor</code>), <code>lib/e2ee/manager.ts</code> (5.5k lines), <code>lib/api.ts</code>, <code>icons.tsx</code>, <code>helpContent.json</code> (87 KB).</td></tr>
+<tr><td>Assets</td><td><code>public/mediapipe</code> 9.4 MB (lazy wasm + tflite, served locally), <code>public/desktop</code> 514 MB of installers tracked in git and copied into every frontend image, <code>public/sw.js</code> 24 KB, brand SVGs. Fonts from Google Fonts (external, six families). No other CDN.</td></tr>
+<tr><td>Caching</td><td><code>Cache-Control: no-cache, must-revalidate</code> on everything except <code>/_next/</code> and <code>/api/</code> (prevents a stale app shell after deploys); hashed chunks immutable. nginx adds no compression and no static cache rules; Caddy variant compresses by default.</td></tr>
+<tr><td>Source maps</td><td>Browser source maps off in production (Next default). Backend runs TS source directly, so stack traces are source-accurate but startup pays transpile cost and ships source.</td></tr>
+<tr><td>Bundle analysis</td><td><code>ANALYZE=true npm run analyze</code> wires <code>@next/bundle-analyzer</code>. <code>experimental.workerThreads:false, cpus:1</code> serialises page-data collection because parallel workers crashed intermittently.</td></tr>
+<tr><td>CI</td><td><strong>GitHub Actions (<code>web-build.yml</code>, <code>release-images.yml</code>, <code>desktop-build.yml</code>) trigger on <code>main</code>, which does not exist (<code>origin/HEAD → master</code>, work on <code>run</code>).</strong> The real CI is Azure DevOps: <code>azure-pipelines-sync.yml</code> mirrors <code>run</code> to Gitu, <code>azure-pipelines-desktop.yml</code> builds installers. <strong>No typecheck, test or build gate runs on the branch that is deployed.</strong> Deployment is manual <code>docker compose … up -d --build</code> on the host (<code>DEPLOY.md</code>).</td></tr>
+<tr><td>Quality tooling</td><td><code>.dependency-cruiser.cjs</code> forbids cycles and cross-boundary imports (frontend ↔ backend/database/mcp/agents). madge, knip, depcheck, audit-ci (6 Next 14 advisories allow-listed until a Next 16 upgrade), secretlint. All local-only.</td></tr>
+</table></div>
+
+<!-- ============================================================ 11 -->
+<h2 id="s11">11. Desktop architecture (Windows / macOS / Linux)</h2>
+
+<pre class="mermaid">
+flowchart TB
+  subgraph SG7413["Electron main process - desktop/main.js"]
+    CFG[config.js resolveConfig<br>env → collab.config.json → defaults]
+    WIN["BrowserWindow<br>contextIsolation:true nodeIntegration:false sandbox:false<br>loadURL(webUrl)"]
+    UPD[updater.js<br>fetch /desktop/latest.json, sha256 pin, NSIS /S or open pkg]
+    NOT[desktopNotif.js, tray, badge, jump list / dock menu]
+    MED[mediaPermissions.js<br>permission gate, TCC, screen picker, loopback audio]
+    RC[remoteInput.js + nut-js<br>OS mouse/keyboard injection when rc:arm]
+    DL[downloads, drag-out, save-file with Bearer token]
+    SEC[safeStorage secure-auth<br>authToken, refreshToken, e2ee recovery secret]
+    PROTO[colab:// protocol, second-instance, deep-link queue]
+  end
+  WIN --> PRE[preload.js contextBridge<br>window.collabDesktop ≈ 40 methods/events]
+  PRE --> WEB[Hosted Next.js app<br>https://collab.resulticks.com]
+  WEB --> P[lib/platform.ts isDesktopApp]
+  WEB --> T[lib/tokenStore.ts → secureStore]
+  WEB --> N[lib/dispatchNotif.ts → showNotification]
+  WEB --> D[lib/deepLink.ts → onDeepLink]
+  WEB --> F[lib/desktopFiles.ts → saveFile / revealInFolder]
+  WEB --> R[lib/remoteControl.ts → remoteInput / remoteArm]
+  WEB --> U[DesktopUpdateBanner, Rail badge, Settings prefs]
+  WEB --> C[DesktopChrome.tsx custom titlebar on win32]
+  CFG --> WIN
+  UPD --> WIN
+</pre>
+
+<h3>Shell model</h3>
+<ul>
+  <li><strong>Remote URL, nothing bundled.</strong> <code>main.js createWindow()/connectToApp()</code> calls <code>loadURL(cfg.webUrl)</code>. <code>electron-builder.yml</code> packages only the 13 Electron sources and icons; the Next.js output is never shipped. URL precedence: <code>COLLAB_*</code> env → <code>collab.config.json</code> (next to the app via <code>extraResources</code>, or in userData so IT can repoint without rebuild) → built-in defaults for development/staging/production.</li>
+  <li><strong>Window:</strong> <code>contextIsolation:true</code>, <code>nodeIntegration:false</code>, <code>webSecurity:true</code>, but <code>sandbox:false</code> and <code>backgroundThrottling:false</code>. Default session (cookies/localStorage/IndexedDB persist in the Chromium profile). No CSP for the remote origin. Navigation is allow-listed to the app origin plus configured IdP <code>authOrigins</code>; other links open externally. Screen-share pop-outs are allowed as hardened windows by frame name.</li>
+  <li><strong>Platform differences:</strong> macOS uses <code>hiddenInset</code> title bar, app menu, dock menu, TCC prompts, Accessibility trust for remote control, manual pkg install; Windows uses a frameless window with <code>DesktopChrome.tsx</code> pills, jump list, overlay badge, loopback system audio in screen share, silent NSIS update; Linux keeps the native frame and opens the browser for updates.</li>
+</ul>
+
+<h3>Native integrations</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Capability</th><th>Implementation</th><th>Frontend consumer</th></tr>
+<tr><td>Notifications with actions</td><td><code>desktopNotif.js</code> (Electron Notification, 5 s tag dedup)</td><td><code>lib/dispatchNotif.ts</code>, <code>useCoLab5</code></td></tr>
+<tr><td>Tray, badge, dock/jump list, taskbar progress</td><td><code>main.js</code> (hand-rasterised overlay badge on Windows)</td><td><code>useCoLab6</code> <code>setBadgeCount</code>, <code>useChatView0</code> recent conversations</td></tr>
+<tr><td>Deep links</td><td><code>setAsDefaultProtocolClient("colab")</code>, argv/second-instance/<code>open-url</code>, queue ≤16 until renderer ready</td><td><code>lib/deepLink.ts</code></td></tr>
+<tr><td>Media permissions</td><td><code>mediaPermissions.js</code> pure gate (unit-tested in <code>backend/app/test/desktop-media-permissions.test.ts</code>), <code>setPermissionRequestHandler</code>, macOS <code>askForMediaAccess</code></td><td>implicit</td></tr>
+<tr><td>Screen share</td><td><code>setDisplayMediaRequestHandler</code> with system picker, fallback <code>screenpicker.html</code> from <code>desktopCapturer</code></td><td>LiveKit <code>getDisplayMedia</code></td></tr>
+<tr><td>Remote control</td><td><code>remoteInput.js</code> + <code>@nut-tree-fork/nut-js</code>: normalised coordinates, keyboard; armed only via <code>rc:arm</code> from the main window</td><td><code>lib/remoteControl.ts</code> over LiveKit data channel, <code>RemoteControlLayer.tsx</code></td></tr>
+<tr><td>Secure storage</td><td><code>safeStorage</code> (DPAPI/Keychain/libsecret) keyed store; credential autofill file</td><td><code>lib/tokenStore.ts</code>, <code>LoginScreen</code></td></tr>
+<tr><td>Downloads</td><td><code>will-download</code> to <code>~/Downloads</code>, <code>desktop:save-file</code> streams with Bearer token (origin-pinned, 2 GB cap), drag-out temp dir, reveal/open</td><td><code>lib/desktopFiles.ts</code>, <code>lib/downloadAttachment.ts</code>, <code>DownloadModal</code></td></tr>
+<tr><td>Power/idle/presence</td><td><code>powerSaveBlocker</code> during calls, <code>powerMonitor</code> suspend/resume/lock, 30 s idle poll → auto-away</td><td><code>useCoLab5 onPresenceAuto</code></td></tr>
+<tr><td>Windows</td><td>chat pop-outs, share pop-outs, PiP (window shrink always-on-top), single-instance lock, global shortcuts (Cmd/Ctrl+Shift+C/M/D/A/J)</td><td><code>useCoLab4</code>, <code>ChatColumn</code>, <code>useCoLab0</code>, <code>MeetingStage</code></td></tr>
+<tr><td>Crash/offline</td><td><code>did-fail-load</code> → <code>reconnect.html</code> + HEAD probe loop (3 s → 30 s backoff); <code>render-process-gone</code> → reload ×3 then <code>recovery.html</code></td><td>—</td></tr>
+<tr><td>Logging</td><td><code>logger.js</code> → <code>userData/logs/main.log</code>, 1 MB × 3 rotation; no crash reporter</td><td>—</td></tr>
+</table></div>
+
+<h3>Updates, installers, release</h3>
+<ul>
+  <li><strong>Updater:</strong> custom (<code>updater.js</code>), not electron-updater. Fetches <code>&lt;webUrl&gt;/desktop/latest.json</code> (or <code>latest-&lt;channel&gt;.json</code>) 8 s after launch when the <code>autoUpdate</code> pref is on, compares versions, rejects cross-origin installer URLs, requires and verifies a SHA-256. Windows: downloads the NSIS exe and runs it silently; macOS: opens the pkg/dmg for manual install; Linux: opens the browser. No rollback, no delta. <strong>Portable builds get the NSIS installer run on "update".</strong> The manifest is produced by <code>gen-latest.mjs</code> and served as a static Next public file; the <code>DesktopUpdateBanner</code> and Rail badge consume <code>update:event</code>.</li>
+  <li><strong>Installers:</strong> <code>electron-builder.yml</code> — appId <code>com.resulticks.collab.desktop</code>, Windows NSIS (one-click, per-user, <code>deleteAppDataOnUninstall:true</code>) + portable, macOS dmg/zip/pkg universal with hardened runtime but <code>disable-library-validation</code> and <code>allow-unsigned-executable-memory</code> entitlements, Linux AppImage + deb. <strong>Not code-signed and not notarised</strong> (<code>CSC_IDENTITY_AUTO_DISCOVERY=false</code>, <code>notarize:false</code>).</li>
+  <li><strong>Pipelines:</strong> Azure (<code>azure-pipelines-desktop.yml</code>, on <code>run</code> when <code>desktop/**</code> changes) builds all three OSes and rsyncs to the served <code>/desktop/</code> path; a parallel GitHub workflow (inert) publishes GitHub Releases. Two manifests exist (<code>desktop/latest.json</code> has Linux, <code>frontend/app/public/desktop/latest.json</code> does not).</li>
+  <li><strong>Version-bump storage wipe:</strong> on first run after a version change, <code>main.js</code> clears cookies, localStorage, IndexedDB, service workers and caches. Every desktop update therefore logs the user out and wipes E2EE key caches (recovered via the keychain-held recovery secret).</li>
+</ul>
+
+<h3>Shared vs platform-specific code</h3>
+<ul>
+  <li><strong>Shared (100% of the UI):</strong> the entire Next.js app is loaded from the server by both web and desktop. Feature gating is runtime (<code>isDesktopApp = !!window.collabDesktop</code>), optional build target (<code>NEXT_PUBLIC_BUILD_TARGET</code>, a "Mode B" separate desktop frontend container exists in <code>docker-compose.live.yml</code> but its nginx upstream is commented out), and build flags (<code>NEXT_PUBLIC_FLAGS</code>).</li>
+  <li><strong>Desktop-only:</strong> everything in <code>desktop/</code> plus the frontend bridge consumers listed above; 500 MB inline attachment cap vs 100 MB on web (<code>lib/fileLimits.ts</code>).</li>
+  <li><strong>Problems:</strong> monolithic plain-JS <code>main.js</code> (2847 lines) with no TypeScript and no typed bridge (every consumer uses <code>(window as any).collabDesktop</code>); only <code>mediaPermissions.js</code> is tested; duplicate <code>desktop:set-pip</code> IPC handlers (one without a sender check, re-registered on macOS <code>activate</code>); 514 MB of installers in git and in every frontend image; two byte-identical mac pkgs published as different versions; stale <code>DESKTOP_RELEASE.md</code>.</li>
+</ul>
+
+<!-- ============================================================ 12 -->
+<h2 id="s12">12. Offline architecture and the editors</h2>
+
+<div class="callout warn"><strong>Honest finding.</strong> CoLab has no offline mode and no document editor. The brief asked for a document-editor offline lifecycle (open → load → cache → edit → save → sync); that lifecycle does not exist in this codebase. There is no OnlyOffice/Collabora/docx integration (zero hits in backend and frontend; "docx" appears only as a file-type icon mapping in <code>FilesView.tsx</code>). The editors that do exist are the TipTap chat composer, the collaborative whiteboard, and a sticker/GIF studio. The rest of this section documents what is actually there.</div>
+
+<h3>What works offline</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Capability</th><th>Offline?</th><th>Evidence</th></tr>
+<tr><td>Loading the app shell</td><td>No</td><td><code>public/sw.js</code> has no precache and no runtime cache; the only <code>fetch</code> handler intercepts <code>/__e2ee_stream__/&lt;fileId&gt;</code> for decrypt-on-play video. No <code>caches.*</code> anywhere in <code>src</code>. Electron bundles nothing and shows <code>reconnect.html</code> when the URL fails to load.</td></tr>
+<tr><td>Reading past messages</td><td>No (only decrypted text/media caches for E2EE conversations exist in IndexedDB, but the app cannot boot without the server)</td><td><code>lib/e2ee/SignalStore.ts plaintextCache</code>, <code>lib/mediaCache.ts</code></td></tr>
+<tr><td>Composing while offline</td><td>Partial</td><td>Drafts persist per conversation in <code>localStorage.clb_draft_&lt;id&gt;</code> (<code>useChatView0.tsx</code>). Sends are optimistic; failure sets <code>_status:"failed"</code> and offers manual <code>retryMessage</code>. There is no outbox: failed rows live only in React state and a reload loses them.</td></tr>
+<tr><td>Connectivity awareness</td><td>Partial</td><td><code>navigator.onLine</code> is read only in <code>MeetingStage.tsx</code> and <code>useCallSessionCore.ts</code> for call indicators; the app relies on socket.io reconnection and a zombie detector (<code>lastRealtimeAtRef</code>) plus "Still connecting" toasts.</td></tr>
+<tr><td>Tokens, theme, prefs</td><td>Yes</td><td>localStorage / keychain</td></tr>
+<tr><td>Sync / conflict handling</td><td>None</td><td>No vector clocks, no queue replay; tasks have a <code>version</code> column (migration 0056) and a <code>taskConflict</code> prompt, which is the only optimistic-concurrency check in the product.</td></tr>
+</table></div>
+
+<h3>Editor 1: chat composer (<code>components/RichTextEditor.tsx</code>, 804 lines)</h3>
+<p>TipTap 3 with StarterKit, Link, Placeholder, CodeBlockLowlight (common grammars plus dockerfile/dart/powershell), TaskList/TaskItem, Typography, Mention, Underline, Table family, TextAlign, TextStyle, Color, Highlight, Image and a custom block-indent extension. Content is serialised as <strong>HTML</strong> (<code>editor.getHTML()</code>) and sanitised on render with DOMPurify (<code>lib/sanitizeHtml.ts</code>). Lifecycle: type → draft saved to localStorage on switch/unmount → send HTML → optimistic row → server echo. No versioning, no co-editing, no offline queue. The TipTap chunk is isolated by webpack cache group but still reached eagerly through <code>ChatMainPane</code>.</p>
+
+<h3>Editor 2: whiteboard (<code>components/Whiteboard.tsx</code>, 2054 lines)</h3>
+<pre class="mermaid">
+flowchart LR
+  O[Open board in meeting/call<br>MeetingStage wbBoardKey] --> L["socket.emit wb:load → db.whiteboards.get<br>snapshot {v,pages}"]
+  L --> E[Edit: strokes with globally unique ids<br>undo/redo action log, 200 entries]
+  E --> RT["Realtime: op broadcast over LiveKit data channel<br>room.localParticipant.publishData; late joiner sync-request/sync"]
+  E --> S[scheduleSave debounce 1.5 s<br>socket.emit wb:save]
+  S --> DB[(whiteboards table<br>board_key call:id / meeting:id, MEDIUMTEXT JSON, last-writer-wins upsert)]
+  RT -.no server relay.-> P[Other participants merge by stroke id]
+  E --> X[Export: lib/canvasPdf.ts single-page PDF]
+</pre>
+<ul>
+  <li><strong>Model:</strong> pages of normalised strokes; tools pen/highlighter/eraser/shapes/text/select; op-based "CRDT-lite" keyed by stroke id so re-delivery is idempotent.</li>
+  <li><strong>Persistence:</strong> <code>realtime/socket.ts</code> <code>wb:save</code>/<code>wb:load</code> gated by <code>canAccessBoard</code> (meeting/call membership), rate-limited, 6 MB cap, <code>db.whiteboards.save</code> upsert → table from migration 0070. Conflict handling is <strong>last-writer-wins snapshot</strong>; the migration comment itself names an append-only op log as the follow-up.</li>
+  <li><strong>Offline:</strong> none; state lives in peers and the server snapshot. Leaving with no peers and a failed save loses up to 1.5 s of strokes (a final flush on close mitigates).</li>
+</ul>
+
+<h3>Editor 3: media studio</h3>
+<p><code>components/MediaStudio.tsx</code> + <code>lib/studio/*</code>: canvas compositing with text/emoji overlays, MediaPipe background cut-out, GIF export via <code>gifenc</code>, upload to the sticker tray. A creation tool, not a document editor.</p>
+
+<h3>Service worker summary (<code>public/sw.js</code>, 541 lines)</h3>
+<p>Push handling with per-type action buttons and socket-path dedup, notification click routing (<code>postMessage NOTIFICATION_ACTION</code> or <code>openWindow(?notif_*)</code>), and the E2EE video range-decrypt shim (AES-GCM chunks, 206 responses, 4 MB window). Registered by <code>lib/pushRegistration.ts</code>. It is not an offline or caching worker.</p>
+
+<!-- ============================================================ 13 -->
+<h2 id="s13">13. Performance architecture</h2>
+
+<div class="tbl-wrap"><table>
+<tr><th>Severity</th><th>Issue</th><th>Evidence</th><th>Why it matters</th></tr>
+<tr><td><span class="badge b-crit">CRITICAL</span></td><td>Message-list memo is defeated</td><td><code>chat/useChatView2.tsx</code> has zero hooks; <code>startReply</code> (line 389) is a new closure each render; <code>ChatMainPane.tsx:667</code> passes it as <code>onReplyTo</code>; <code>MsgRow.tsx</code> comparator (line ~1562) compares <code>onReplyTo</code> by identity</td><td>Every keystroke, typing indicator or presence tick re-renders every visible row (sanitised HTML, avatars, attachments). This is the jank the memo comment claims to prevent.</td></tr>
+<tr><td><span class="badge b-crit">CRITICAL</span></td><td>Whole shell re-renders on any state atom</td><td><code>CoLabV1.tsx</code> re-spreads <code>s</code> each render; <code>CoLabShell</code> is unmemoised and passes 10 inline lambdas to <code>ChatView</code></td><td>~100 state atoms in <code>useCoLab0</code> each trigger Rail, sidebar, chat and dashboard renders; <code>React.memo</code> on views cannot help.</td></tr>
+<tr><td><span class="badge b-high">HIGH</span></td><td>Monolithic effects tear down connections</td><td><code>useCoLab2</code> effect (17 deps) closes and re-creates the socket and refetches bootstrap; <code>useCallSessionMedia</code> effect lines 107–2502 (6 deps) and <code>MeetingStage</code> effect lines 940–2126 rebuild the LiveKit room</td><td>A device toggle or callback identity change becomes a full reconnect.</td></tr>
+<tr><td><span class="badge b-high">HIGH</span></td><td>1 s timers re-render the two largest trees</td><td><code>MeetingStage.tsx:767</code>, <code>useCallSessionCore.ts:920</code> <code>setState</code> every second for the duration label</td><td>5.4k-line and 2.1k-line JSX trees reconcile 60×/min for the whole call.</td></tr>
+<tr><td><span class="badge b-high">HIGH</span></td><td>~960 KB of global CSS before login</td><td>ten CSS files imported in <code>layout.tsx</code>; <code>v1.css</code> 36,102 lines, 81 media queries, 115 <code>!important</code> (call.css another 109), ~130 duplicated selector blocks, ≥594 class names not referenced anywhere in <code>src</code></td><td>Blocks first paint, slows style recalculation, and makes every style change risky.</td></tr>
+<tr><td><span class="badge b-med">MEDIUM</span></td><td>Eager first chunk</td><td><code>ChatView</code> → TipTap/lowlight, <code>lib/e2ee/manager.ts</code> (5.5k lines) imported by <code>ChatMainPane</code>, <code>MsgRow</code>, <code>useChatView1</code>; <code>helpContent.json</code> 87 KB; <code>icons.tsx</code> 32 KB; <code>emojiData.ts</code>, <code>timezones.ts</code></td><td>Login screen pays for the chat stack; slow startup on corporate laptops.</td></tr>
+<tr><td><span class="badge b-med">MEDIUM</span></td><td>Polling next to a live socket</td><td>5 s: OrgAdmin, MeetingRoom (×2), PreJoinMeeting; 10 s: CalendarView, OnlineUsersView; 30 s: Settings, RichCards, useChatView1; DevPortal ×8</td><td>Wasted requests, backend load scaled by open tabs.</td></tr>
+<tr><td><span class="badge b-med">MEDIUM</span></td><td>Duplicate fetches</td><td>Create/update flows refetch lists and the socket echo refetches again (tasks, reminders, files, meetings); no request dedupe or cache in <code>lib/api.ts</code></td><td>Doubled read load, flicker.</td></tr>
+<tr><td><span class="badge b-med">MEDIUM</span></td><td>Per-render work</td><td><code>ChatMainPane.tsx:105-128</code> two regexes per row per render; <code>ChatViewShell</code> re-injects a <code>&lt;style&gt;</code> each render; 7 unmemoised sorts in <code>CalendarView</code>, 3 in <code>TasksView</code>; E2EE crypto on the main thread</td><td>Main-thread time on the hot path.</td></tr>
+<tr><td><span class="badge b-med">MEDIUM</span></td><td>Backend multi-instance state</td><td>in-memory rate limiter Maps, <code>callTimers</code>, adapter-local room lookups for "peer online", <code>selfMuteIntents</code>, link-preview cache; 9 schedulers run on every replica</td><td>Horizontal scaling silently breaks limits and call timeouts; wasted work.</td></tr>
+<tr><td><span class="badge b-low">LOW</span></td><td>Leaks and listeners</td><td><code>lib/stageView.ts</code> adds pointer listeners without removal; <code>useCallSessionControls.ts:581</code> <code>ended</code> listener never removed; 45 <code>socket.on</code> without <code>off</code> (cleanup closes the socket)</td><td>Long meetings accumulate handlers.</td></tr>
+<tr><td><span class="badge b-low">LOW</span></td><td>514 MB installers in the web image</td><td><code>frontend/app/public/desktop</code></td><td>Image size, push time, git clone time.</td></tr>
+<tr><td><span class="badge b-low">LOW</span></td><td>Backend transpiles at startup</td><td><code>tsx</code> in <code>Dockerfile.backend</code> CMD</td><td>Slower cold starts; no compile-time check in the image build.</td></tr>
+</table></div>
+
+<!-- ============================================================ 14 -->
+<h2 id="s14">14. Dependency architecture</h2>
+
+<div class="tbl-wrap"><table>
+<tr><th>Category</th><th>Packages</th><th>Notes</th></tr>
+<tr><td>Core framework</td><td>next 14.2, react / react-dom 18.3.1 (pinned via root overrides)</td><td>Single React copy confirmed in the lockfile. Six Next 14 advisories allow-listed in <code>audit-ci.json</code> pending Next 16/React 19.</td></tr>
+<tr><td>UI</td><td>gsap + @gsap/react (2 files), qrcode-generator (1 file), dompurify (1 file)</td><td>Light use; gsap could be replaced by CSS transitions.</td></tr>
+<tr><td>State management</td><td>none</td><td>See §5.</td></tr>
+<tr><td>Routing</td><td>Next App Router only</td><td>No client router.</td></tr>
+<tr><td>Editors</td><td>21 <code>@tiptap/*</code> packages + lowlight</td><td>All in <code>RichTextEditor.tsx</code>. <code>@tiptap/core</code>, <code>@tiptap/extension-underline</code> and <code>highlight.js</code> are imported but <strong>not declared</strong> (hoisted transitive deps); <code>@tiptap/pm</code> and <code>@tiptap/suggestion</code> are declared but never imported directly.</td></tr>
+<tr><td>Media / RTC</td><td>livekit-client (6 files), @mediapipe/tasks-vision (2, lazy), gifenc (1)</td><td>MediaPipe assets vendored in <code>public/</code>.</td></tr>
+<tr><td>Crypto</td><td>@signalapp/libsignal-client ^0.94 (frontend dependency)</td><td><strong>A native Node NAPI module in a browser package.</strong> Webpack aliases it to <code>false</code>; the only two <code>import()</code> sites are placeholders that catch to null. Real E2EE is WebCrypto. It inflates every install and Docker build for nothing.</td></tr>
+<tr><td>Networking</td><td>socket.io-client (frontend ^4.7.5, root ^4.8.3), axios + form-data (root, used only by two ad-hoc scripts)</td><td>Lockfile resolves one socket.io-client 4.8.3.</td></tr>
+<tr><td>Backend</td><td>express, cors, socket.io, @socket.io/redis-adapter, redis, jose, jsonwebtoken, livekit-server-sdk, web-push; mysql2 (database); dotenv (config)</td><td>@aws-sdk/client-s3, lib-storage, s3-request-presigner live in the <strong>root</strong> package.json but are used only by backend services.</td></tr>
+<tr><td>Build tools</td><td>typescript (6.0 root, 5.9 frontend), tsx, prettier, eslint (10 root, 8 frontend), dependency-cruiser, madge, knip, depcheck, audit-ci, secretlint, concurrently, cross-env, @next/bundle-analyzer, chromatic (no storybook present)</td><td>Two TypeScripts and two ESLints installed.</td></tr>
+<tr><td>Testing</td><td>@playwright/test, @axe-core/playwright; node:test for backend</td><td>No frontend unit-test runner.</td></tr>
+<tr><td>Desktop</td><td>electron 32, electron-builder 24, electron-store, @nut-tree-fork/nut-js (remote control), sharp, png-to-ico</td><td>nut-js is a robotics automation library; unusual and security-relevant.</td></tr>
+<tr><td>Analytics</td><td>none external</td><td>Telemetry goes to the backend's own tables.</td></tr>
+</table></div>
+
+<p><strong>Recommended dependency actions:</strong> remove <code>@signalapp/libsignal-client</code> from the frontend; move the AWS SDK into <code>backend/package.json</code>; drop <code>axios</code>/<code>form-data</code> or make them dev deps; declare the three phantom TipTap/highlight packages; align TypeScript and ESLint to one version each; remove the dead <code>chromatic</code>/storybook/react-scan references; fix <code>backend/package.json</code> scripts that point at <code>.js</code> files that do not exist.</p>
+
+<!-- ============================================================ 15 -->
+<h2 id="s15">15. Architecture diagrams</h2>
+
+<h3>15.0 Platform architecture (layered view)</h3>
+<p class="small">Every card is a real module or container in this repository. Layers are stacked in runtime dependency order (top calls down); the connector rows name the protocol between layers. Purple cards form the media plane, which bypasses the API tier. The container-level view with explicit arrows follows in 15.1.</p>
+<div class="pd" id="platform-diagram">
+
+<div class="band"><div class="lbl l1">① Client platforms<small>browser, desktop shells, mobile</small></div><div class="cards">
+<div class="c"><b>Web browser</b>Chrome · Edge · Firefox · Safari 16.4+<br>loads the SPA from the hosted origin</div>
+<div class="c"><b>Windows desktop</b>Electron 32 · NSIS installer + portable exe<br>frameless window, <code>DesktopChrome</code> title bar, jump list, overlay badge</div>
+<div class="c"><b>macOS desktop</b>Electron 32 · pkg / dmg universal<br>hiddenInset title bar, dock menu, TCC media prompts</div>
+<div class="c"><b>Linux desktop</b>AppImage / deb (built, lightly used)</div>
+<div class="c ext"><b>Mobile apps</b>iOS / Android (separate repos)<br>consume the same REST + push services</div>
+</div></div>
+
+<div class="band"><div class="lbl l1" style="opacity:.85">② Desktop shell<small>desktop/ · thin remote-URL shell</small></div><div class="cards">
+<div class="c"><b>main.js</b>BrowserWindow(loadURL webUrl) · tray · badge · deep links <code>colab://</code> · permissions gate · screen picker · downloads · PiP · pop-outs · global shortcuts</div>
+<div class="c"><b>preload.js → window.collabDesktop</b>secure store (safeStorage keychain) · notifications · remote input · prefs · about 40 IPC methods/events</div>
+<div class="c"><b>updater.js</b>fetches <code>/desktop/latest.json</code> from the web origin, sha256-pinned, NSIS silent install / open pkg</div>
+<div class="c"><b>config.js · collab.config.json</b>env → shipped config → defaults (dev / staging / prod URLs, IdP origins)</div>
+</div></div>
+
+<div class="conn"><span>▼</span><span>HTTPS 443 and WSS to one origin: <code>https://collab.resulticks.com</code> (desktop and browser identical from here down)</span></div>
+
+<div class="band"><div class="lbl l2">③ Edge<small>TLS, routing, WebSocket upgrade</small></div><div class="cards">
+<div class="c"><b>Corporate load balancer</b>terminates TLS on :443 → forwards to the host on :7524</div>
+<div class="c"><b>nginx :7530 (or Caddy)</b><code>/</code> → frontend:3000 · <code>/api/</code>, <code>/socket.io/</code> → backend:4000 (Upgrade) · <code>/livekit/</code> → livekit:7534 (prefix stripped, 24 h read timeout) · <code>/minio/</code> console · 2 GB bodies, no gzip, no static cache rules</div>
+</div></div>
+
+<div class="conn"><span>▼</span><span>HTTP to Next (shell + proxied paths)</span></div>
+
+<div class="band"><div class="lbl l3">④ Web application tier<small>frontend/app · Next.js 14</small></div><div class="cards">
+<div class="c"><b>Next.js server :3000</b>serves the static shell only; <code>next.config.js</code> rewrites <code>/api</code>, <code>/socket.io</code>, <code>/livekit</code>, <code>/site</code>; <code>Cache-Control: no-cache</code> on HTML, immutable hashed chunks</div>
+<div class="c"><b>Client-only React SPA</b><code>page.tsx</code> → <code>CoLabV1</code> → <code>useCoLab0..6</code> → <code>CoLabShell</code> → mode views (31 lazy chunks); no SSR, no URL routing</div>
+<div class="c"><b>lib/ clients</b><code>api.ts</code> (fetch, Bearer, refresh rotation) · <code>socket.ts</code> (polling → websocket) · <code>tokenStore</code> · <code>e2ee/manager</code> (WebCrypto) · <code>mediaCache</code> (IndexedDB) · <code>platform</code> (desktop bridge)</div>
+<div class="c"><b>Service worker sw.js</b>push notifications with actions · E2EE video range decrypt · <em>no offline cache</em></div>
+<div class="c media"><b>Media plane (browser ↔ SFU)</b><code>livekit-client</code> publishes/subscribes tracks directly to LiveKit over SRTP (UDP 7532 / TCP 7531), TURN relay via coturn; signalling via the <code>/livekit</code> proxy; whiteboard and remote-control ops ride the LiveKit data channel</div>
+</div></div>
+
+<div class="conn"><span>▼</span><span>REST <code>/api/*</code> (JSON envelope <code>{ok,data}</code>, GET retried once) · Socket.IO <code>/socket.io</code> (auth token in handshake) · media bypasses this tier entirely</span></div>
+
+<div class="band"><div class="lbl l4">⑤ API + realtime tier<small>backend/app/src · one Node process, tsx</small></div><div class="cards">
+<div class="c"><b>Express app.ts :4000</b>request id → security headers → CORS → brute-force + global limiters (in-memory) → body parsing → 33 routers under <code>/api</code> → error handler to <code>error_logs</code></div>
+<div class="c"><b>middleware/auth.ts</b>JWT HS256 → blocklist → session row (jti) → device binding → org membership → <code>orgContext.run</code>; <code>requirePermission</code> → RBAC</div>
+<div class="c"><b>Socket.IO realtime/socket.ts</b>rooms <code>conv:</code> <code>user:</code> <code>session:</code> <code>meeting:</code> · message send · typing/presence · call signalling · huddles · hands/reactions · handoff · whiteboard snapshots · Redis adapter</div>
+<div class="c"><b>Schedulers (index.ts)</b>minute-aligned: scheduled messages, reminders, meeting reminders, end warnings, task due, broadcasts, webhooks (leader-gated via MySQL <code>GET_LOCK</code>) · daily GC sweeps (not gated)</div>
+</div></div>
+
+<div class="conn"><span>▼</span><span>in-process calls; results broadcast back through Socket.IO rooms and <code>notify.ts</code> push</span></div>
+
+<div class="band"><div class="lbl l5">⑥ Domain services<small>backend/app/src/services · 58 files</small></div><div class="cards">
+<div class="c"><b>Identity</b>authService · sessions · refresh tokens · mfaService/totp · ssoService (OIDC + PKCE, claims_jwe) · credentialPolicy · tokenBlocklist</div>
+<div class="c"><b>Tenancy</b>orgService · rbacService (Redis-invalidated cache) · inviteService · blockService · orgBroadcastService</div>
+<div class="c"><b>Messaging</b>conversationService · messageService · scheduledMessageService · searchService (FULLTEXT) · linkPreviewService · webhookService (HMAC, SSRF guard)</div>
+<div class="c"><b>Calls &amp; meetings</b>callService · meetingService · meetingPolicy · meetingPollService · livekitService (AccessToken, RoomService) · huddleStore · recordingService (Egress) · voicemail</div>
+<div class="c"><b>Work items</b>taskService (projects, views, deps, CSV) · reminderService · reminderNL · recurrenceRule · due/fire services</div>
+<div class="c"><b>Files</b>fileService chain disk → MinIO/S3 → MySQL blob · diskStorageService · storageService · fileTierService · fileGcService · virusScanService (stub)</div>
+<div class="c"><b>Notifications</b>notificationService · notify.ts · webPushService (VAPID) · fcmService · apnsVoipService · mobilePushService</div>
+<div class="c"><b>E2EE server side</b>e2eeService (devices, prekeys, epoch keys, history sync) · e2eeEscrow (account key, recovery wraps)</div>
+<div class="c"><b>Ops &amp; admin</b>telemetryService · logService · auditService · deploymentService · adminService · settingsService · aiService (LLM) · leaderElectionService</div>
+</div></div>
+
+<div class="conn"><span>▼</span><span>SQL via <code>database/src/drivers/mysql.ts</code> (8.2k lines, <code>orgFilter</code>) · Redis clients · AWS SDK v3 · livekit-server-sdk · HTTP/2 to push vendors</span></div>
+
+<div class="band"><div class="lbl l6">⑦ Data and infrastructure<small>containers from docker-compose.live.yml</small></div><div class="cards">
+<div class="c"><b>MySQL 8</b>130 migrations applied on boot · <code>schema_migrations</code> · live profile points at the corporate shared instance · tenant column <code>organization_id</code></div>
+<div class="c"><b>Redis 7</b>Socket.IO adapter · RBAC cache invalidation · huddles/hands · JWT blocklist · all with in-memory fallbacks</div>
+<div class="c"><b>MinIO / S3</b>file tier 2 · recordings · presigned downloads via public endpoint</div>
+<div class="c"><b>files_data volume</b>file tier 1 (hot) · <code>.part</code> uploads · cold-tier job to MinIO</div>
+<div class="c media"><b>LiveKit SFU 1.9</b>:7534 signalling · 7531 tcp / 7532 udp media · 7533 udp TURN · rooms <code>call_</code>, <code>conv_</code>, <code>meeting_</code></div>
+<div class="c media"><b>coturn</b>TURN/STUN 3478, TLS 5349/443 · lt-cred-mech · regional node sketch in <code>docker-compose.mumbai.yml</code></div>
+<div class="c media"><b>LiveKit Egress</b>room recordings → MinIO, finalised by the <code>/livekit/webhook</code> route</div>
+</div></div>
+
+<div class="conn"><span>▼</span><span>outbound integrations (all from the backend except fonts)</span></div>
+
+<div class="band"><div class="lbl l7">⑧ External systems<small>vendors and identity</small></div><div class="cards">
+<div class="c ext"><b>OIDC identity provider</b>authorisation code + PKCE, JWKS, optional <code>claims_jwe</code> envelope (RSA-OAEP)</div>
+<div class="c ext"><b>Firebase Cloud Messaging</b>v1 API, service-account JWT → OAuth</div>
+<div class="c ext"><b>Apple Push (VoIP)</b>HTTP/2 with .p8 ES256 key</div>
+<div class="c ext"><b>GIF provider</b>Giphy proxy for the picker</div>
+<div class="c ext"><b>LLM (optional)</b>OpenAI-compatible chat completions when <code>LLM_BASE_URL</code> is set</div>
+<div class="c ext"><b>Google Fonts</b>six families loaded by the browser from <code>layout.tsx</code></div>
+</div></div>
+
+<div class="band" style="margin-top:8px"><div class="lbl l8">⑨ Delivery<small>as practised today</small></div><div class="cards">
+<div class="c"><b>Azure DevOps (branch run)</b><code>azure-pipelines-sync.yml</code> mirrors to Gitu · <code>azure-pipelines-desktop.yml</code> builds Win/mac/Linux installers and rsyncs them to <code>/desktop/</code></div>
+<div class="c"><b>Host build and deploy</b><code>docker compose --env-file .env.live -f docker-compose.live.yml --profile production up -d --build</code> on the server; images from <code>docker/Dockerfile.frontend</code> and <code>Dockerfile.backend</code></div>
+<div class="c ext"><b>GitHub Actions</b><code>web-build.yml</code>, <code>release-images.yml</code>, <code>desktop-build.yml</code> target <code>main</code>, which does not exist → inert</div>
+</div></div>
+
+<div class="legend"><span><i></i>repository module or container</span><span><i class="ext"></i>external or dormant</span><span><i class="media"></i>media plane (bypasses the API tier)</span><span>▼ primary runtime dependency direction</span></div>
+</div>
+
+<div class="tbl-wrap"><table>
+<tr><th>Layer</th><th>Responsibility</th><th>Scales by</th><th>Single points of failure today</th></tr>
+<tr><td>Client platforms</td><td>Render the SPA; desktop adds native integrations through <code>window.collabDesktop</code></td><td>n/a</td><td>Desktop cannot start without the server (no bundled shell)</td></tr>
+<tr><td>Edge</td><td>TLS termination at the corporate LB, path routing and WebSocket upgrade in nginx/Caddy</td><td>Stateless</td><td>Single nginx container; no compression or static cache rules</td></tr>
+<tr><td>Web application tier</td><td>Serve the static shell, proxy <code>/api</code>, <code>/socket.io</code>, <code>/livekit</code></td><td>Stateless, could run N replicas</td><td>Proxy targets baked at build time</td></tr>
+<tr><td>API + realtime tier</td><td>Auth, REST, Socket.IO fan-out, background schedulers</td><td>Needs Redis for N replicas; limiters, call timers and presence lookups are still per-process</td><td>One backend container; <code>REDIS_REQUIRED</code> defaults off</td></tr>
+<tr><td>Domain services</td><td>Business logic grouped by domain, all in one process</td><td>With the API tier</td><td>Shared code paths; no service isolation</td></tr>
+<tr><td>Data and infrastructure</td><td>MySQL (corporate shared instance on live), Redis, MinIO, disk tier, LiveKit, coturn, Egress</td><td>MySQL vertically; LiveKit via regional nodes (<code>docker-compose.mumbai.yml</code>)</td><td>Single Redis, single MinIO, single SFU node</td></tr>
+<tr><td>External</td><td>OIDC IdP, FCM, APNs, GIF provider, optional LLM, Google Fonts</td><td>Vendor</td><td>Fonts block first paint if unreachable</td></tr>
+<tr><td>Delivery</td><td>Azure sync + desktop installers; images built by hand on the host</td><td>n/a</td><td>No CI gate on the deployed branch</td></tr>
+</table></div>
+
+<h3>15.1 System architecture (as deployed on the live host)</h3>
+<pre class="mermaid">
+flowchart TB
+  subgraph SG7111["Clients"]
+    WB[Browser]
+    DT[Electron desktop<br>Win / macOS / Linux]
+    MB[Mobile apps<br>separate repos]
+  end
+  subgraph SG2763["Edge"]
+    LB[Corporate LB :443]
+    NG[nginx :7524→7530<br>/api /socket.io /livekit /minio /]
+  end
+  subgraph SG4562["App containers"]
+    FE[Next.js frontend :3000<br>static shell + rewrites]
+    BE[Express + Socket.IO backend :4000<br>33 routers, 58 services, schedulers, leader election]
+  end
+  subgraph SG7132["Data and media"]
+    MY[(MySQL 8<br>130 migrations, corporate shared instance on live)]
+    RD[(Redis 7)]
+    MN[(MinIO / S3)]
+    FS[(files_data volume)]
+    LK[LiveKit SFU :7534 ws<br>7531 tcp / 7532 udp media]
+    TN[coturn TURN]
+    EG[LiveKit Egress]
+  end
+  subgraph SG477["External"]
+    IDP[OIDC IdP]
+    FCM[FCM]
+    APNS[APNs]
+    LLM[OpenAI-compatible LLM optional]
+  end
+  WB --> LB
+  DT --> LB
+  MB --> LB
+  LB --> NG
+  NG --> FE
+  NG -->|/api, /socket.io| BE
+  NG -->|/livekit| LK
+  FE -->|rewrites| BE
+  BE --> MY
+  BE --> RD
+  BE --> MN
+  BE --> FS
+  BE -->|tokens, RoomService| LK
+  LK --> EG
+  EG --> MN
+  WB -. SRTP .-> LK
+  WB -. relay .-> TN
+  BE --> IDP
+  BE --> FCM
+  BE --> APNS
+  BE --> LLM
+</pre>
+
+<h3>15.2 Frontend layering (actual)</h3>
+<pre class="mermaid">
+flowchart TD
+  L[app/layout.tsx + 10 global CSS] --> P[app/page.tsx]
+  P --> V1[CoLabV1: useCoLab0 → 1 → 2 → 3 → 4 → 5 → 6]
+  V1 -->|s bag, ~312 keys, all any| SH[CoLabShell]
+  SH --> RAIL[Rail / ConversationSidebar]
+  SH --> CV[ChatView → useChatView0/1/2 → ChatViewShell → ChatColumn → ChatMainPane → MsgRow]
+  SH --> LAZY[31 lazy views and modals]
+  SH --> CALL[CallModal → useCallSessionCore/Controls/Media]
+  SH --> MR[MeetingRoom → MeetingStage]
+  CV --> API[lib/api.ts]
+  LAZY --> API
+  MR --> API
+  CALL --> API
+  V1 --> SOCK[lib/socket.ts + socketRef passed by prop]
+  CV --> E2EE[lib/e2ee/manager.ts]
+  V1 --> E2EE
+  MR --> LKC[livekit-client]
+  CALL --> LKC
+  SH -. window CustomEvents .-> V1
+</pre>
+
+<h3>15.3 Backend request and realtime flow</h3>
+<pre class="mermaid">
+flowchart LR
+  REQ[HTTP /api/*] --> MW[app.ts middleware chain]
+  MW --> AUTH[middleware/auth.ts<br>JWT → blocklist → session → device → org membership → orgContext.run]
+  AUTH --> RT[routes/*.ts<br>asyncRouter + validate + requirePermission]
+  RT --> SV[services/*.ts]
+  SV --> DRV[database/src/drivers/mysql.ts<br>~40 namespaces, $n → ? bind, orgFilter]
+  DRV --> MY[(MySQL)]
+  SV --> IOE[app.get io → io.to room emit]
+  WS[Socket.IO handshake auth.token] --> SIO[realtime/socket.ts<br>rooms, calls, huddles, meeting events, whiteboard]
+  SIO --> SV
+  SV --> NT[realtime/notify.ts<br>notification:new + web-push + mobilePushService]
+  SCH[index.ts setInterval jobs<br>leader-gated via MySQL GET_LOCK] --> SV
+</pre>
+
+<h3>15.4 Local storage and the absence of offline</h3>
+<pre class="mermaid">
+flowchart LR
+  subgraph SG3939["Browser storage"]
+    LS[(localStorage<br>tokens, mode, theme, drafts, prefs, e2ee bookkeeping)]
+    SS[(sessionStorage<br>ops token, started calls)]
+    IDB1[(IndexedDB signal-store<br>keys, sessions, plaintext cache)]
+    IDB2[(IndexedDB colab-media-cache<br>decrypted attachments LRU 350 MB)]
+    SW["Service worker sw.js<br>push + E2EE video range decrypt; no cache"]
+  end
+  subgraph SG7049["Desktop extra"]
+    KC[(OS keychain via safeStorage<br>access + refresh token, recovery secret)]
+    ES[(electron-store<br>window-state, desktop-prefs)]
+  end
+  APP[App boot] -->|requires| NET[Server reachable]
+  NET -.->|no| REC[reconnect.html / blank]
+  APP --> LS
+  APP --> IDB1
+  APP --> IDB2
+  APP --> KC
+</pre>
+
+<!-- ============================================================ 16 -->
+<h2 id="s16">16. Dependency / import relationships</h2>
+<ul>
+  <li><strong>Circular imports (madge, verified):</strong> (1) <code>components/GifPicker.tsx ↔ lib/studio.ts</code> — a <em>lib → component</em> layering violation (<code>studio.ts</code> imports a type from a component); (2) <code>ChatView → ChatViewShell → ChatColumn → ChatMainPane → MediaAlbum</code>; (3) <code>chat/MediaAlbum.tsx ↔ chat/FileAttachment.tsx</code>. The backend and shared packages have no cycles reported by the repo's own <code>lint:circular</code> configuration.</li>
+  <li><strong>UI → API direct coupling:</strong> 43 of 138 component files import <code>lib/api.ts</code> directly, including leaf rows (<code>MsgRow</code>, <code>TabPane</code>, <code>FileAttachment</code>). There is no data-access hook layer, caching or deduplication. Fifteen raw <code>fetch(</code> sites bypass even that.</li>
+  <li><strong>Socket subscriptions scattered:</strong> <code>socket.on</code> appears in <code>useCoLab2</code> (45), <code>useCoLab6</code> (11), <code>MeetingStage</code> (5), <code>MeetingRoom</code> (3), <code>PollsPanel</code> (2), <code>useMeetingPolicy</code>, <code>useCallSessionControls</code>; <code>lib/socket.ts</code> exports only <code>connectSocket</code> and <code>EVENTS</code>.</li>
+  <li><strong>God modules (fan-in / size):</strong> <code>lib/icons.tsx</code> fan-in 66, <code>lib/api.ts</code> 44 (1675 lines), <code>lib/e2ee/manager.ts</code> 15 (5466 lines), <code>lib/dialog.ts</code> 13, <code>v1.css</code> global; backend <code>drivers/mysql.ts</code> (8222), <code>realtime/socket.ts</code> (1737), <code>routes/ops.ts</code> (1718), <code>serialize.ts</code> (1324).</li>
+  <li><strong>Feature → feature coupling:</strong> low in the frontend (Settings imports 6 siblings; CallModal imports <code>meeting/chatGroups</code> and <code>Modals.AddParticipantsModal</code>; MeetingStage imports <code>EmojiPicker</code>, <code>Whiteboard</code>, <code>RemoteControlLayer</code>). The real coupling is vertical through the untyped <code>s</code> bag.</li>
+  <li><strong>Shared → feature:</strong> the <code>shared/</code> workspace is imported by nothing in the frontend; the socket contract is duplicated by hand and has drifted.</li>
+  <li><strong>Backend coupling:</strong> routes reach into <code>db</code> directly (e.g. <code>routes/calls.ts</code> → <code>db.conversations.isMember</code>), services import the socket module (<code>sessionGcService</code> ← <code>realtime/socket</code>), routes emit through <code>app.get("io")</code>, and <code>index.ts</code> wires 15 jobs inline. <code>adminService</code>, <code>ops.ts</code>, <code>deploymentService</code>, <code>remoteControl.ts</code> and <code>health.ts</code> use <code>db.pool.query</code> directly, bypassing the driver.</li>
+  <li><strong>Config boundary:</strong> 26 backend/database files read <code>process.env</code> directly despite the documented single-boundary rule in <code>config/src/env.ts</code>.</li>
+</ul>
+
+<!-- ============================================================ 17 -->
+<h2 id="s17">17. Architecture problems and missing gaps</h2>
+
+<div class="issue"><h4><span class="badge b-crit">CRITICAL</span> Secrets and credentials committed to the repository</h4>
+<dl><dt>Problem</dt><dd>APNs auth key, Firebase service plist, a cookie jar and a static TURN credential are git-tracked.</dd>
+<dt>Why it exists</dt><dd><code>.gitignore</code> rules were added after the files were committed; <code>git add -A</code> habits (the ignore file itself documents prior accidental sweeps).</dd>
+<dt>Impact</dt><dd>Anyone with repo access can send push notifications as the app and relay through the TURN server. History retains them even after deletion.</dd>
+<dt>Severity</dt><dd>Critical</dd>
+<dt>Solution</dt><dd>Rotate the APNs key, Firebase credentials and TURN secret; purge with <code>git filter-repo</code>; add secretlint to the Azure pipeline as a blocking step.</dd>
+<dt>Files</dt><dd><code>keys/AuthKey_37PG75SL4U.p8</code>, <code>keys/GoogleService-Info.plist</code>, <code>cookies.txt</code>, <code>infrastructure/coturn/turnserver.conf</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-crit">CRITICAL</span> No CI gate on the deployed branch</h4>
+<dl><dt>Problem</dt><dd>GitHub workflows target <code>main</code>, which does not exist; Azure pipelines only mirror and build installers. Deploys are manual <code>docker compose up --build</code>.</dd>
+<dt>Why</dt><dd>Repo moved from GitHub-style workflows to Azure DevOps; the gate was never ported.</dd>
+<dt>Impact</dt><dd>Type errors, failing backend tests and secret leaks reach production undetected; the build-reliability hack (<code>cpus:1</code>) exists because a failed build on the host means an outage.</dd>
+<dt>Severity</dt><dd>Critical</dd>
+<dt>Solution</dt><dd>Add an Azure pipeline on <code>run</code>/<code>UAT</code> that runs <code>typecheck</code>, <code>test:unit</code> (with a MySQL service), <code>secrets</code>, <code>security</code> and <code>next build</code>; publish images from CI and switch the host to <code>deploy-pull.sh</code>.</dd>
+<dt>Files</dt><dd><code>.github/workflows/*.yml</code>, <code>azure-pipelines-*.yml</code>, <code>DEPLOY.md</code>, <code>scripts/deploy-pull.sh</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-crit">CRITICAL</span> Untyped, monolithic client state</h4>
+<dl><dt>Problem</dt><dd>All state in a seven-hook chain returning ~312 <code>any</code>-typed keys; whole tree re-renders; memoisation defeated; 8-level prop drilling.</dd>
+<dt>Why</dt><dd>An 11k-line component was split "mechanically" by statement ranges rather than by domain; <code>strict:false</code> hides the cost.</dd>
+<dt>Impact</dt><dd>Jank in chat and calls, fragile refactors, socket reconnects on identity churn, impossible to unit-test.</dd>
+<dt>Severity</dt><dd>Critical</dd>
+<dt>Solution</dt><dd>Introduce domain stores (Zustand or React Context + reducers) with typed selectors: session/auth, conversations+messages, calls, meetings, tasks, settings. Migrate one domain at a time behind the existing <code>s</code> bag.</dd>
+<dt>Files</dt><dd><code>components/CoLabV1.tsx</code>, <code>components/colab/session/*.tsx</code>, <code>components/colab/CoLabShell.tsx</code>, <code>components/chat/useChatView*.tsx</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-high">HIGH</span> Fail-open authentication paths and weak defaults</h4>
+<dl><dt>Problem</dt><dd>Session and device checks allow requests when the lookup throws; admin password default is not gated at boot; escrow secret falls back to the JWT secret; three JWT planes share one secret.</dd>
+<dt>Impact</dt><dd>A DB blip admits revoked sessions; a forgotten env leaves the admin portal with a known password; the server can decrypt "E2EE" backups.</dd>
+<dt>Severity</dt><dd>High</dd>
+<dt>Solution</dt><dd>Fail closed with a short cached grace window; extend <code>assertProductionSecrets</code> to <code>ADMIN_PASSWORD</code> and require <code>E2EE_ESCROW_SECRET</code> when E2EE is on; separate secrets per JWT scope.</dd>
+<dt>Files</dt><dd><code>backend/app/src/middleware/auth.ts</code>, <code>realtime/socket.ts</code>, <code>index.ts</code>, <code>config/src/index.ts</code>, <code>services/e2eeService.ts</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-high">HIGH</span> Two divergent LiveKit lifecycles in 5k+2.5k-line files</h4>
+<dl><dt>Problem</dt><dd><code>MeetingStage.tsx</code> and <code>useCallSessionMedia.ts</code> both implement connect/subscribe/attach/relayout imperatively, with 278 identical lines, inside single effects.</dd>
+<dt>Impact</dt><dd>Bugs fixed in one path reappear in the other; any dependency change rebuilds the room; untestable.</dd>
+<dt>Severity</dt><dd>High</dd>
+<dt>Solution</dt><dd>Extract a <code>useLiveKitRoom(roomKey, tokenFn)</code> hook + a <code>ParticipantTile</code> component; move chat/polls/recording/whiteboard into siblings; share between calls and meetings.</dd>
+<dt>Files</dt><dd><code>components/MeetingStage.tsx</code>, <code>components/colab/call/useCallSession*.ts</code>, <code>lib/stageView.ts</code>, <code>lib/tileGrid.ts</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-high">HIGH</span> No data-access layer; API contract untyped and duplicated</h4>
+<dl><dt>Problem</dt><dd>262 untyped methods in one object; 43 components call it directly; <code>shared/</code> unused by the frontend; socket event map hand-copied and drifted.</dd>
+<dt>Impact</dt><dd>Double fetches, no caching, silent contract breaks between backend and frontend.</dd>
+<dt>Severity</dt><dd>High</dd>
+<dt>Solution</dt><dd>Generate or hand-write typed DTOs in <code>shared/</code>, import them from both sides; wrap endpoints in domain hooks (or TanStack Query) with cache keys that socket events invalidate; make the frontend import <code>shared/src/events.ts</code>.</dd>
+<dt>Files</dt><dd><code>frontend/app/src/lib/api.ts</code>, <code>lib/socket.ts</code>, <code>shared/src/events.ts</code>, <code>backend/app/src/serialize.ts</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-high">HIGH</span> No offline support and no outbox</h4>
+<dl><dt>Problem</dt><dd>App cannot load without the server; failed sends live only in memory; service worker caches nothing.</dd>
+<dt>Impact</dt><dd>Laptop users on flaky corporate Wi-Fi lose messages on reload; desktop app shows a reconnect page instead of history.</dd>
+<dt>Severity</dt><dd>High for a desktop-class product</dd>
+<dt>Solution</dt><dd>See §18: app-shell precache, IndexedDB message store, outbox with idempotent <code>clientId</code> replay (the server already reconciles by <code>_clientId</code>).</dd>
+<dt>Files</dt><dd><code>public/sw.js</code>, <code>lib/mediaCache.ts</code> (pattern to copy), <code>useCoLab3.tsx</code>, <code>realtime/socket.ts</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-high">HIGH</span> CSS monolith</h4>
+<dl><dt>Problem</dt><dd>36k-line <code>v1.css</code> plus nine satellites, all global, ~130 duplicated selector blocks, ≥24% dead classes, 224 <code>!important</code>, two token vocabularies, 1,917 inline styles.</dd>
+<dt>Impact</dt><dd>Slow first paint, cascade conflicts, fear of deleting rules.</dd>
+<dt>Severity</dt><dd>High</dd>
+<dt>Solution</dt><dd>Adopt <code>tokens.css</code>/<code>ui.css</code> as the only base, move view styles to CSS modules per feature, run a coverage pass (Chrome CSS coverage against e2e flows) to delete dead rules, forbid new <code>!important</code>.</dd>
+<dt>Files</dt><dd><code>frontend/app/src/styles/*</code>, <code>app/layout.tsx</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-med">MEDIUM</span> Backend monoliths and missing repository abstraction</h4>
+<dl><dt>Problem</dt><dd>8.2k-line SQL closure with business logic inside (account deletion cascade, atomic call request), JSON driver that must mirror it, 1.7k-line socket file, 15 inline schedulers, 7 local error factories, 3 Redis bootstraps.</dd>
+<dt>Impact</dt><dd>High change cost, parity drift between drivers, hard to test in isolation.</dd>
+<dt>Severity</dt><dd>Medium</dd>
+<dt>Solution</dt><dd>Split the driver into per-aggregate repository modules with a shared query helper; a scheduler registry module; one <code>httpErr</code>; one Redis client factory; socket handlers per domain.</dd>
+<dt>Files</dt><dd><code>database/src/drivers/mysql.ts</code>, <code>backend/app/src/realtime/socket.ts</code>, <code>index.ts</code>, <code>optimization/httpError.ts</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-med">MEDIUM</span> Multi-instance correctness</h4>
+<dl><dt>Problem</dt><dd>In-process rate limiters, call timers, adapter-local presence lookups, non-leader-gated GC jobs, <code>REDIS_REQUIRED=false</code> default.</dd>
+<dt>Impact</dt><dd>Running two backend replicas breaks rate limits and ringing timeouts silently.</dd>
+<dt>Severity</dt><dd>Medium (single instance today)</dd>
+<dt>Solution</dt><dd>Redis-backed limiter and call timers; adapter <code>fetchSockets()</code> for presence; leader-gate all sweepers; default <code>REDIS_REQUIRED=true</code> in production profiles.</dd>
+<dt>Files</dt><dd><code>middleware/rateLimit.ts</code>, <code>realtime/socket.ts</code>, <code>services/livekitService.ts</code>, <code>index.ts</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-med">MEDIUM</span> Desktop hardening and release hygiene</h4>
+<dl><dt>Problem</dt><dd>Unsigned/un-notarised installers; <code>sandbox:false</code>; plaintext IdP origin by default; 514 MB of binaries in git and images; two manifests and two pipelines; storage wipe on every version.</dd>
+<dt>Severity</dt><dd>Medium</dd>
+<dt>Solution</dt><dd>Code-sign and notarise; move installers to object storage/release assets; one manifest generator; scope the version-bump wipe to caches; enable <code>sandbox:true</code> after moving Node-dependent preload logic to main.</dd>
+<dt>Files</dt><dd><code>desktop/electron-builder.yml</code>, <code>desktop/main.js</code>, <code>desktop/config.js</code>, <code>frontend/app/public/desktop/</code></dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-med">MEDIUM</span> Testing gaps</h4>
+<dl><dt>Problem</dt><dd>No frontend unit tests; backend tests silently skip without MySQL; no HTTP-level tests for the biggest routers (conversations, tasks, orgs, meetings); no socket tests; e2e is smoke/a11y only; <code>strict:false</code> everywhere.</dd>
+<dt>Severity</dt><dd>Medium</dd>
+<dt>Solution</dt><dd>Vitest for hooks/lib; supertest for routers; a socket.io-client harness for <code>socket.ts</code>; make test skips fail in CI; turn on <code>strictNullChecks</code> per folder.</dd></dl></div>
+
+<div class="issue"><h4><span class="badge b-low">LOW</span> Documentation drift</h4>
+<dl><dt>Problem</dt><dd><code>docs/ARCHITECTURE.md</code> says there is no driver switch and that authorization is open; both are outdated. <code>desktop/DESKTOP_RELEASE.md</code> contradicts <code>electron-builder.yml</code>. 60+ docs with overlapping deployment runbooks.</dd>
+<dt>Solution</dt><dd>Keep one architecture doc (this report can seed it) and one deployment runbook; archive the rest.</dd></dl></div>
+
+<!-- ============================================================ 18 -->
+<h2 id="s18">18. Recommended target architecture</h2>
+
+<pre class="mermaid">
+flowchart LR
+  subgraph SG6658["CURRENT"]
+    C1[Client-only SPA<br>7-hook chain, any-typed s bag]
+    C2[lib/api.ts 262 methods<br>43 direct importers]
+    C3[Express monolith<br>8k-line SQL closure]
+    C4[Electron remote shell<br>no cache]
+  end
+  subgraph SG9051["PROBLEMS"]
+    P1[Re-render storms, no types]
+    P2[No cache, drift, double fetch]
+    P3[God modules, multi-instance hazards]
+    P4[No offline, unsigned]
+  end
+  subgraph SG8461["TARGET"]
+    T1[Feature modules with typed domain stores<br>URL router for mode/conversation]
+    T2[Typed shared contracts<br>query layer with socket invalidation]
+    T3[Modular backend<br>repositories per aggregate, scheduler registry, Redis-backed state]
+    T4["Offline-capable shell<br>precache + IndexedDB store + outbox; signed desktop"]
+  end
+  C1 --> P1 --> T1
+  C2 --> P2 --> T2
+  C3 --> P3 --> T3
+  C4 --> P4 --> T4
+</pre>
+
+<h3>Target frontend</h3>
+<ul>
+  <li><strong>Keep:</strong> Next.js 14 App Router, React 18, client-only rendering, TipTap, livekit-client, the <code>ui/</code> + <code>tokens.css</code> layer, the rewrite-based same-origin model, the lazy-loading already in <code>CoLabShell</code>.</li>
+  <li><strong>Add a real router:</strong> map <code>mode</code>/<code>activeId</code>/<code>focus*</code> to URL segments (<code>/chats/:conversationId</code>, <code>/calendar/:meetingId</code>, <code>/org/:tab</code>) using Next routes under one layout, so refresh, deep links and back/forward work on web and desktop alike; <code>deepLink.ts</code> becomes a URL mapper.</li>
+  <li><strong>Domain stores:</strong> replace the seven-hook chain with typed stores (Zustand recommended: no provider tree, selector-based subscriptions, works with the existing imperative handlers): <code>auth</code>, <code>conversations</code> (list + messages by id + read state + drafts), <code>calls</code>, <code>meetings</code>, <code>tasks/reminders/files</code>, <code>settings/ui</code>. Views subscribe to slices; <code>s</code> bag disappears incrementally.</li>
+  <li><strong>Data layer:</strong> typed endpoint modules per domain (<code>lib/api/conversations.ts</code>…) returning DTOs from <code>shared/</code>; a query cache (TanStack Query) keyed per entity; socket events call <code>invalidate</code>/<code>setQueryData</code> instead of ad-hoc setters; one socket subscription registry per domain.</li>
+  <li><strong>Media stack:</strong> one <code>useLiveKitRoom</code> hook and declarative <code>ParticipantTile</code> components shared by calls and meetings; chat/polls/recording/whiteboard as sibling components receiving the room by context; duration timers in a leaf component.</li>
+  <li><strong>Offline:</strong> service worker precache of the app shell and hashed chunks (Workbox or hand-written, network-first for HTML); IndexedDB store for conversations and the last N messages per conversation (extend the <code>mediaCache.ts</code> pattern); an outbox table replayed on <code>connect</code> using the existing <code>_clientId</code> reconciliation; whiteboard op log kept locally and flushed on reconnect.</li>
+  <li><strong>Styles:</strong> feature-scoped CSS modules on top of <code>tokens.css</code>; delete <code>v1.css</code> rules by coverage; cap inline styles.</li>
+</ul>
+
+<h3>Target backend</h3>
+<ul>
+  <li><strong>Keep:</strong> Express + Socket.IO, MySQL + migrations, LiveKit, the health/leader/graceful-shutdown machinery, the storage chain.</li>
+  <li><strong>Compile:</strong> build the backend with <code>tsc</code> (or esbuild) in the image; run <code>node dist/index.js</code>; enable <code>strictNullChecks</code> gradually.</li>
+  <li><strong>Repositories:</strong> split <code>drivers/mysql.ts</code> into <code>repositories/&lt;aggregate&gt;.ts</code> sharing a query helper and <code>orgFilter</code>; move business rules (cascade deletes, atomic call request) into services with transactions; retire or freeze the JSON driver.</li>
+  <li><strong>Realtime:</strong> <code>realtime/handlers/&lt;domain&gt;.ts</code> registered by a small registry; Redis-backed call timers and limiters; <code>fetchSockets()</code> for presence; leader-gate every sweeper via a <code>scheduler.ts</code> registry.</li>
+  <li><strong>Contracts:</strong> <code>shared/</code> holds DTO types and event payload types; <code>serialize.ts</code> returns those types; the frontend imports them.</li>
+  <li><strong>Security:</strong> fail-closed auth with cached grace; secret per JWT scope; mandatory escrow secret; remove weak defaults in production profiles; move <code>debug.ts</code> behind an explicit flag.</li>
+</ul>
+
+<h3>Target desktop</h3>
+<ul>
+  <li>Keep the remote-URL model (it is what makes one build serve both platforms), but add: signed and notarised installers, electron-updater with a signed feed (or keep the custom updater and sign the manifest), <code>sandbox:true</code>, a typed <code>collabDesktop</code> bridge declared in <code>shared/</code>, <code>main.js</code> split into modules (windows, ipc, tray, media, downloads, updater) in TypeScript, cache-only storage wipe on upgrade, installers hosted outside git.</li>
+</ul>
+
+<h3>Migration plan</h3>
+<ol>
+  <li><strong>Stabilise:</strong> rotate secrets, CI gate on <code>run</code>, fix memo/lambda hot spots, dependency cleanup (weeks 1–2).</li>
+  <li><strong>Types first:</strong> define <code>shared/</code> DTOs from <code>serialize.ts</code>; type <code>api.ts</code> methods; type the <code>s</code> bag fields one domain at a time; turn on <code>strictNullChecks</code> for <code>lib/</code> (weeks 2–6).</li>
+  <li><strong>Stores and router:</strong> extract <code>auth</code> and <code>conversations</code> stores behind the bag; add URL routes; move ChatView to selectors; measure with React Profiler (weeks 4–10).</li>
+  <li><strong>Media unification:</strong> <code>useLiveKitRoom</code> + tiles; migrate calls first, then meetings (weeks 8–16).</li>
+  <li><strong>Backend modularisation:</strong> repositories per aggregate, scheduler registry, Redis-backed shared state, compiled image (parallel track, weeks 4–16).</li>
+  <li><strong>Offline:</strong> precache + message store + outbox; whiteboard op log (weeks 12–20).</li>
+  <li><strong>Desktop hardening:</strong> signing, sandbox, TypeScript main, release pipeline consolidation (parallel, weeks 6–14).</li>
+</ol>
+
+<!-- ============================================================ 19 -->
+<h2 id="s19">19. Architecture score</h2>
+<div class="tbl-wrap"><table class="score">
+<tr><th>Area</th><th>Score</th><th>Reason</th></tr>
+<tr><td>Code organization</td><td>4</td><td>Clear monorepo boundaries and naming, but god modules everywhere (5.4k/2.5k/2k-line components, 8.2k-line driver, 2.8k-line main.js) and "mechanical" splits.</td></tr>
+<tr><td>Scalability</td><td>5</td><td>Leader election, Redis adapter, storage tiers and health checks exist; in-memory limiters/timers/presence lookups and non-gated sweepers break at two replicas.</td></tr>
+<tr><td>Performance</td><td>4</td><td>Good lazy loading and chunking, but defeated memoisation, whole-app re-renders, 1 s timers in giant trees, ~960 KB global CSS, polling beside a socket.</td></tr>
+<tr><td>Maintainability</td><td>3</td><td><code>strict:false</code>, ~312 <code>any</code> session keys, duplicated LiveKit lifecycles, duplicated utilities, drifted contracts, stale docs.</td></tr>
+<tr><td>Reusability</td><td>4</td><td>Primitives and token layer are reusable; feature code is tightly bound to the session bag and global CSS.</td></tr>
+<tr><td>Security</td><td>5</td><td>Strong feature set (sessions, refresh rotation, MFA, OIDC+PKCE, RBAC, tenant scoping, SSRF guards) undermined by committed keys, fail-open checks, weak defaults, shared JWT secret, unsigned desktop builds.</td></tr>
+<tr><td>Web architecture</td><td>5</td><td>Same-origin proxy model is elegant and portable; no URL routing, no SSR, client state monolith.</td></tr>
+<tr><td>Desktop architecture</td><td>6</td><td>Thin, well-featured shell with a rich bridge, secure token storage, media permission gate, updater with hash pinning; unsigned, unsandboxed, monolithic JS.</td></tr>
+<tr><td>Offline capability</td><td>2</td><td>Only drafts, prefs, tokens and E2EE caches persist; app cannot boot offline; no outbox.</td></tr>
+<tr><td>Document editor architecture</td><td>3</td><td>No document editor. Composer is solid; whiteboard has good realtime ops but last-writer-wins persistence and no offline log.</td></tr>
+<tr><td>Build/deployment</td><td>5</td><td>Multi-stage images, healthchecks, compose profiles and runbooks are thorough; no CI gate on the deployed branch, manual host builds, 514 MB binaries in images, backend not compiled.</td></tr>
+<tr><td><strong>Overall architecture</strong></td><td><strong>4</strong></td><td>Feature-complete and operationally thoughtful, structurally fragile.</td></tr>
+</table></div>
+
+<!-- ============================================================ 20 -->
+<h2 id="s20">20. Final architecture report</h2>
+
+<h3>A. Current architecture in simple terms</h3>
+<p>A browser (or an Electron window pointing at the same URL) downloads a Next.js shell and renders one big React application entirely on the client. That application keeps everything it knows in a chain of seven hooks and passes the result down as one object. It talks to a single Node process over same-origin REST calls and a Socket.IO connection, both proxied by Next and nginx. That Node process authenticates with JWTs and sessions, writes to MySQL through hand-written SQL, uses Redis for fan-out and caches, stores files on disk then MinIO then MySQL, mints LiveKit tokens so browsers can exchange audio/video with a self-hosted SFU, and runs timers for reminders and clean-up. Nothing works without the server.</p>
+
+<h3>B. Top 10 architecture problems</h3>
+<ol>
+  <li>Push credentials and a TURN secret committed to git (§7, §17).</li>
+  <li>No CI gate on the branch that is deployed; manual builds on the production host (§10).</li>
+  <li>Untyped ~312-key session bag and seven god hooks; <code>strict:false</code> (§5).</li>
+  <li>Memoisation defeated in the message list and shell (every keystroke re-renders all rows) (§13).</li>
+  <li>Two duplicated LiveKit lifecycles inside 5.4k- and 2.5k-line files (§8).</li>
+  <li>Fail-open authentication checks, weak default admin password, escrow key derived from the JWT secret (§7).</li>
+  <li>No offline support, no outbox, service worker caches nothing (§12).</li>
+  <li>36k-line global CSS with ≥24% dead rules and two token systems (§13).</li>
+  <li>No data-access layer: 43 components call a 262-method untyped API object; socket contract hand-copied and drifted (§6, §16).</li>
+  <li>Backend monoliths (8.2k-line SQL driver, 1.7k-line socket file) and in-memory state that breaks with two replicas (§17).</li>
+</ol>
+
+<h3>C. Top 10 recommended improvements (by impact)</h3>
+<ol>
+  <li>Rotate and purge committed secrets; make secretlint blocking.</li>
+  <li>Azure CI gate on <code>run</code>: typecheck, unit tests with MySQL, build, audit; deploy by pulling images.</li>
+  <li>Fix the memo hot spots (<code>useCallback</code> in <code>useChatView2</code>, memoise <code>CoLabShell</code> props, move 1 s timers to leaf components).</li>
+  <li>Typed contracts in <code>shared/</code> used by both sides; type <code>api.ts</code>; frontend imports <code>shared/src/events.ts</code>.</li>
+  <li>Domain stores replacing the hook chain, starting with auth and conversations.</li>
+  <li>URL-based routing for modes and conversations.</li>
+  <li>Unified <code>useLiveKitRoom</code> + tile components for calls and meetings.</li>
+  <li>Fail-closed auth, gated admin password, mandatory escrow secret, per-scope JWT secrets.</li>
+  <li>Offline shell precache + IndexedDB message store + outbox.</li>
+  <li>Backend repositories per aggregate, scheduler registry, Redis-backed limiter/timers, compiled image.</li>
+</ol>
+
+<h3>D. Quick wins (no major refactor)</h3>
+<ul>
+  <li>Wrap the 12 plain closures in <code>useChatView2.tsx</code> with <code>useCallback</code>; hoist the inline lambdas in <code>CoLabShell.tsx</code> lines 656–795.</li>
+  <li>Move <code>setDuration</code>/<code>setSec</code> timers into a tiny <code>CallTimer</code> component.</li>
+  <li>Add <code>ADMIN_PASSWORD</code> to <code>assertProductionSecrets</code>; set <code>REDIS_REQUIRED=true</code> in live profiles.</li>
+  <li>Delete <code>components/Select.tsx</code>, <code>chat/EmojiPicker.tsx</code>, <code>oneApiClient.ts</code>, dead <code>callMedia.ts</code> path; consolidate <code>pad/keyOf/fmtTime/fmtDate/relativeTime</code> into <code>lib/time.ts</code>.</li>
+  <li>Remove <code>@signalapp/libsignal-client</code> from the frontend; move AWS SDK to backend; declare phantom TipTap deps.</li>
+  <li>Stop tracking <code>public/desktop/*.exe|*.pkg</code>; add a <code>.dockerignore</code> rule so they never enter the frontend image.</li>
+  <li>Replace the 5 s/10 s polls in OrgAdmin, MeetingRoom, PreJoinMeeting and CalendarView with the existing socket events.</li>
+  <li>Enable gzip/brotli and immutable caching for <code>/_next/static</code> in <code>infrastructure/nginx/nginx.conf</code>.</li>
+  <li>Point the GitHub workflows at <code>master</code>/<code>run</code> or delete them to stop the false sense of CI.</li>
+  <li>Fix the duplicate <code>desktop:set-pip</code> IPC handler and remove the plaintext IdP origin from production defaults.</li>
+</ul>
+
+<h3>E. Long-term improvements</h3>
+<ul>
+  <li>Typed domain stores and URL routing (replaces the session bag).</li>
+  <li>Query/cache layer with socket invalidation (replaces refetch-on-everything).</li>
+  <li>Unified media stack with declarative tiles.</li>
+  <li>Offline-first chat (precache, local store, outbox, whiteboard op log).</li>
+  <li>Backend modularisation and compiled deployable; <code>strictNullChecks</code> across the repo.</li>
+  <li>Desktop: TypeScript main split into modules, signing/notarisation, sandboxed renderer, electron-updater.</li>
+  <li>Next 15/16 + React 19 upgrade once the advisories allow-listed in <code>audit-ci.json</code> are due.</li>
+</ul>
+
+<h3>F. Critical risks</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Risk</th><th>Trigger</th><th>Consequence</th></tr>
+<tr><td>Production failure</td><td>A type error or failing migration merged to <code>run</code> and built on the host</td><td>Containers are torn down before build; failed build = outage (<code>next.config.js</code> comment documents this)</td></tr>
+<tr><td>Performance degradation</td><td>Long conversations, many participants, long calls</td><td>Row-level re-renders per keystroke; 1 s re-renders of 5k-line trees; socket reconnect storms on callback churn</td></tr>
+<tr><td>Data loss</td><td>Reload or crash with failed sends; whiteboard save races; <code>migrate-local-to-prod.sh</code> replaces prod tables; <code>promoteIfNeeded</code> auto-imports a bundled dump on first boot</td><td>Lost messages/strokes; destructive prod migration by design</td></tr>
+<tr><td>Offline failure</td><td>Any network loss</td><td>App cannot boot; desktop shows reconnect page; no queued work</td></tr>
+<tr><td>Desktop instability</td><td>Version bump wipes storage; unsigned updater; portable build runs installer; duplicate PiP handler</td><td>Forced logouts, SmartScreen/Gatekeeper warnings, inconsistent PiP</td></tr>
+<tr><td>Security</td><td>Committed APNs/FCM keys and TURN secret; fail-open auth; default admin password; shared JWT secret; escrow key = JWT secret; sandbox off + remote input</td><td>Credential misuse, revoked-session acceptance under DB stress, operator-readable "E2EE" history</td></tr>
+</table></div>
+
+<h3>G. Recommended development roadmap</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Phase</th><th>Scope</th><th>Exit criteria</th></tr>
+<tr><td><strong>Phase 1 – Critical fixes</strong> (2–3 weeks)</td><td>Secret rotation and history purge; Azure CI gate on <code>run</code>; admin-password boot guard; fail-closed auth with grace; memo/lambda/timer hot fixes; dependency cleanup; installers out of git</td><td>CI green on every push; no tracked secrets; React Profiler shows no full-list re-render on typing</td></tr>
+<tr><td><strong>Phase 2 – Performance</strong> (4–6 weeks)</td><td>Typed <code>shared/</code> DTOs and events; query layer with socket invalidation; remove polling; CSS coverage purge and nginx compression; split eager chat chunk (lazy TipTap, lazy E2EE manager)</td><td>First-load JS and CSS halved; no duplicate fetches on create flows</td></tr>
+<tr><td><strong>Phase 3 – Architecture cleanup</strong> (8–12 weeks)</td><td>Domain stores replacing the hook chain; URL routing; <code>useLiveKitRoom</code> + tiles; backend repositories, scheduler registry, Redis-backed state, compiled image; <code>strictNullChecks</code> in <code>lib/</code> and services</td><td><code>s</code> bag gone from ChatView and calls; MeetingStage &lt; 1k lines; two replicas pass the call/limit tests</td></tr>
+<tr><td><strong>Phase 4 – Offline / desktop</strong> (6–8 weeks)</td><td>App-shell precache; IndexedDB conversation store; outbox replay; whiteboard op log; desktop TypeScript split, sandbox, signing/notarisation, electron-updater, cache-only upgrade wipe</td><td>App opens and shows history offline; queued messages send on reconnect; signed installers auto-update on both OSes</td></tr>
+<tr><td><strong>Phase 5 – Long-term scalability</strong> (ongoing)</td><td>Next/React upgrade; per-scope JWT secrets and key rotation; regional media nodes (mumbai compose already sketches it); observability (OpenTelemetry on the existing error/telemetry tables); frontend unit tests and router-level backend tests as standard</td><td>Horizontal backend scaling validated; upgrade path clear</td></tr>
+</table></div>
+
+<h3>How the application works end to end</h3>
+<p><strong>Startup:</strong> the backend boots, migrates MySQL, elects a scheduler leader and listens on :4000; Next serves the shell on :3000 behind nginx. <strong>UI:</strong> the browser renders <code>CoLabV1</code> client-only; <code>CoLabShell</code> shows splash, login or the app. <strong>State:</strong> seven hooks hold everything and hand it to views as one object; views mutate it through handlers that call REST (<code>lib/api.ts</code>) or emit on the socket. <strong>API:</strong> same-origin <code>/api</code> and <code>/socket.io</code> are proxied to Express, which authenticates the JWT, checks session/device/org, dispatches to a service, runs raw SQL, and broadcasts a socket event that the client reconciles against its optimistic state. <strong>Editor:</strong> the TipTap composer produces sanitised HTML; the whiteboard syncs strokes over the LiveKit data channel and snapshots to MySQL every 1.5 s. <strong>Storage:</strong> files go disk → MinIO → MySQL blob; decrypted media is cached in IndexedDB; tokens in localStorage or the OS keychain. <strong>Deployment:</strong> two Docker images built on the host by <code>docker compose</code>, nginx in front, LiveKit and coturn exposed for media; desktop builds from Azure load the same URL and update themselves from a static manifest.</p>
+
+<footer>
+Generated 2026-10-08 from a read-only inspection of the <code>run</code> branch. No files were modified and no packages installed. Secret values were not read or reproduced; only file names and variable names are referenced.
+</footer>
+</div>
+<script type="module">
+  // Diagrams render client-side with Mermaid (loaded from jsDelivr). If the CDN is
+  // unreachable the diagram source stays visible as preformatted text.
+  try {
+    const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+    const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral", securityLevel: "loose", flowchart: { useMaxWidth: true, htmlLabels: true }, sequence: { useMaxWidth: true } });
+    await mermaid.run({ querySelector: "pre.mermaid" });
+  } catch (e) {
+    document.querySelectorAll("pre.mermaid").forEach(p => { p.style.textAlign = "left"; p.setAttribute("data-mermaid-fallback", "1"); });
+    console.warn("Mermaid unavailable; showing diagram source", e);
+  }
+</script>
+</body>
+</html>

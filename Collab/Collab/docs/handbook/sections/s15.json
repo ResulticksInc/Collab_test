@@ -1,0 +1,1126 @@
+[
+  {"t":"h","level":1,"text":"15. Troubleshooting Handbook"},
+
+  {"t":"p","text":"This section is the operational field manual for CoLab. It is organized as a set of self-contained playbooks, one per failure domain, so that an on-call engineer who has never seen the code can move from a user-reported symptom to a confirmed root cause and a verified fix. Every playbook follows the same six-part structure: **Symptoms** (what the user or the dashboard sees), **Possible Causes** (the real fault tree, grounded in the code), **Diagnosis Steps** (the ordered checks that narrow the cause), **Commands** (copy-pasteable shell), **Expected Results** (what a healthy system returns), and **Fixes** (the concrete remediation)."},
+
+  {"t":"p","text":"CoLab is a single-page Next.js app (`frontend/app`) talking to an Express + Socket.IO backend (`backend/app`), backed by MySQL 8, Redis, MinIO (S3), a LiveKit SFU for call/meeting media, and coturn for TURN relay. In production everything sits behind a single TLS front (corporate LB → nginx, or Caddy) so the browser only ever sees one same-origin host. Most production incidents are **not** application bugs — they are environment faults: a port mismatch, a closed firewall, a far-region SFU, an insecure HTTP origin, or a down dependency. The playbooks below are weighted accordingly."},
+
+  {"t":"callout","kind":"note","title":"The single most useful first move","text":"Before deep-diving any incident, run `docker ps` on the affected box and open the in-app Diagnostics panel (Ctrl+Alt+D or append `?diag=1` to the URL). Roughly half of all CoLab incidents are 'a container is not running' or 'served over plain HTTP' — both visible in under thirty seconds. Do not start reading code until you have ruled these out."},
+
+  {"t":"diagram","kind":"flow","title":"Production request path (the spine of every playbook)","nodes":[{"label":"Browser","sub":"HTTPS / WSS"},{"label":"LB :443","sub":"TLS terminate"},{"label":"nginx :7530","sub":"reverse proxy"},{"label":"backend :4000","sub":"Express + Socket.IO"},{"label":"MySQL / Redis / MinIO","sub":"data plane"}]},
+
+  {"t":"callout","kind":"tip","title":"How to read the 'Expected Results' rows","text":"Throughout this section, an HTTP 'expect 400' on a LiveKit validate probe is HEALTHY, not an error — it means signalling reached LiveKit and LiveKit correctly rejected an empty join request. Likewise a `200 {ok:true}` on `/api/health` only proves the backend booted, not that media works. Read each Expected Result in context."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.1 Authentication Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Login or signup returns 401 with `{ok:false, error:'UNAUTHORIZED'}` or a generic 'Invalid credentials'.",
+    "User is silently bounced to the sign-in screen mid-session (the 'unexpected logout' class).",
+    "Signup is rejected with a password-policy or disposable-email message, or the signup form is missing entirely.",
+    "Login or signup returns 429 `RATE_LIMITED` after several rapid attempts.",
+    "Realtime works but every REST call returns 401 (or vice-versa) — a split-brain auth state.",
+    "After a logout on one tab, an old tab keeps working (or stops working) unexpectedly."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"Authentication in CoLab is a **stateless HS256 JWT** issued by `authService.tokenFor`, signed with `config.auth.jwtSecret` (env `AUTH_JWT_SECRET`), carrying payload `{sub:userId, name}`. The default session TTL is **7 days** (`AUTH_TOKEN_TTL`, default `7d`) — note this is the API session token, which is a different token from the 1-hour LiveKit room token. The token is stored client-side in `localStorage` under `clb_token`. Revocation is handled by `tokenBlocklist.ts` (Redis `jwt:block:<signature>` with TTL = token exp, or an in-memory Map swept every 60s when Redis is absent). Passwords are scrypt `saltHex:hashHex`, verified in constant time."},
+  {"t":"ul","items":[
+    {"text":"401 on a valid-looking token","items":["`AUTH_JWT_SECRET` changed between the time the token was issued and now (a redeploy with a fresh secret invalidates every outstanding session).","The token's signature is on the blocklist because the user logged out or deleted their account.","Clock skew or an expired token (older than 7 days)."]},
+    {"text":"Unexpected mid-session logout","items":["A transient 401 from a backend restart or network blip. CoLab guards against this: `lib/api.ts` re-validates via `/api/auth/me` before dispatching `colab:unauthorized`, so a single blip no longer forces logout. If you still see spurious logouts, an older frontend build is deployed."]},
+    {"text":"Signup rejected","items":["`credentialPolicy.ts` is the server-side authority: email must pass shape/length/disposable-domain checks (~70 blocked providers, extendable via `DISPOSABLE_EMAIL_DOMAINS`); password must be 9–200 chars with lower+upper+digit+special and not in the ~60 common-password list."]},
+    {"text":"Signup form absent","items":["`config.features.signup` is off — `NEXT_PUBLIC_FEATURE_SIGNUP` was not `1` at build time. `LoginScreen.tsx` gates the form on this flag."]},
+    {"text":"429 on auth","items":["The auth limiter fired: 30 requests / 15 minutes / IP on `/api/auth/login` and `/api/auth/signup`."]},
+    {"text":"Split-brain (REST 401 but socket OK)","items":["The socket handshake verifies the JWT but does NOT re-check the blocklist (only HTTP middleware does). A logged-out token can keep a live socket until reconnect, while REST correctly rejects it."]},
+    "Production boot guard tripped: the backend refuses to start with a default/weak `AUTH_JWT_SECRET` (under 32 chars) in production, so 'auth never works' can actually be 'backend never booted'."
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Confirm the backend is up and which env it thinks it is: hit `/api/health`.",
+    "Decode the JWT client-side (DevTools → Application → Local Storage → `clb_token`) and check `exp` and `sub`.",
+    "Reproduce the 401 against `/api/auth/me` directly with the token to isolate REST vs socket.",
+    "If signup fails, read the exact `error` string — it names the policy that rejected it.",
+    "If logouts are spurious, confirm the deployed frontend has the `/auth/me` re-validation (network tab should show a `/api/auth/me` call before any logout).",
+    "Check the backend logs for the production secret guard message if the backend will not boot at all."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# 1. Backend alive + which env",
+    "curl -s https://collab.resulticks.com/api/health",
+    "",
+    "# 2. Does THIS token authenticate? (replace <JWT>)",
+    "curl -s -H 'Authorization: Bearer <JWT>' https://collab.resulticks.com/api/auth/me",
+    "",
+    "# 3. Login round-trip (watch for 401 vs 429)",
+    "curl -i -s -X POST https://collab.resulticks.com/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"u@x.com\",\"password\":\"...\"}'",
+    "",
+    "# 4. Is the JWT secret a bundled default? (on the box)",
+    "docker exec colab-backend printenv AUTH_JWT_SECRET | wc -c   # must be > 32",
+    "",
+    "# 5. Boot guard / startup errors",
+    "docker logs --tail=80 colab-backend | grep -iE 'secret|jwt|boot|listen'"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["`/api/health`","`200 {ok:true,data:{status:'ok',env:'production',dbDriver:'mysql'}}`","Connection refused = backend down / port wrong"],
+    ["`/api/auth/me` with token","`200 {ok:true,data:{...user}}`","`401 UNAUTHORIZED` = bad/expired/revoked token or secret changed"],
+    ["Login","`200` with `{token}`","`401` invalid creds; `429 RATE_LIMITED`"],
+    ["`AUTH_JWT_SECRET` length","> 32 chars","<= 32 in production → boot refused"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**Secret rotation invalidated sessions:** this is expected. Communicate that all users must re-login after a secret change; never rotate `AUTH_JWT_SECRET` casually in production.",
+    "**Spurious logouts:** rebuild and redeploy the frontend so the `/auth/me` re-validation guard is present.",
+    "**Signup blocked legitimately:** adjust `DISPOSABLE_EMAIL_DOMAINS` or relax the password rule in `credentialPolicy.ts` only with security sign-off; the client mirror in `lib/passwordPolicy.ts` is non-authoritative and must be kept in sync for good UX.",
+    "**Signup form missing:** rebuild frontend with `NEXT_PUBLIC_FEATURE_SIGNUP=1`.",
+    "**429:** wait out the 15-minute window or raise the auth limiter only behind a trusted proxy; remember the limiter keys on the X-Forwarded-For first hop, so a misconfigured proxy can lump all users under one IP.",
+    "**Boot guard tripped:** set a real 32+ char `AUTH_JWT_SECRET` (and a non-default `LIVEKIT_API_SECRET`) and restart."
+  ]},
+  {"t":"callout","kind":"warning","title":"The X-Forwarded-For trap","text":"Rate limiting and audit logging both key on the first hop of X-Forwarded-For with `trust proxy` enabled. If a load balancer or CDN does not set this header correctly, every user appears to come from one IP and the auth limiter will lock out the entire workspace after 30 attempts. Always verify the LB forwards a real client IP before blaming the limiter."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.2 Message Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "A sent message shows as pending/optimistic and never confirms.",
+    "Messages only appear after a manual refresh (realtime not flowing).",
+    "`message:rate_limited` or `message:send_failed` toast on send.",
+    "A DM send fails with a BLOCKED error.",
+    "Reactions, edits, pins, or 'delete for everyone' do not propagate to other clients.",
+    "Message previews in the conversation list show raw HTML or look wrong.",
+    "Full-text search returns nothing for short words."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"A message send is `MESSAGE_SEND` over Socket.IO. The room echo (`MESSAGE_NEW`) **is** the acknowledgement — there is no separate ACK event. The client renders optimistically and reconciles when the echo arrives, matching on `_clientId`. So 'stuck pending' almost always means the echo never came back, which is a socket/room problem, not a database problem."},
+  {"t":"ul","items":[
+    {"text":"Stuck optimistic message","items":["The socket dropped between send and echo (see 15.4 WebSocket).","The send was throttled: a per-user token bucket (cap 20 burst, refill 5/s) on `MESSAGE_SEND` emits `message:rate_limited` to the sender only.","The service threw — e.g. a blocked DM — emitting `message:send_failed{code}` to the sender."]},
+    {"text":"Only-on-refresh delivery","items":["Classic Socket.IO transport failure: the WebSocket upgrade is being blocked by a proxy that does not pass Upgrade/Connection headers, so the client falls back to polling but the server is not fanning out, OR the Redis adapter swap dropped room membership (see 15.4 and 15.11)."]},
+    {"text":"Reactions/edits/pins not propagating","items":["These ride `MESSAGE_UPDATED` (a full updated-message broadcast). If the socket is healthy but updates lag, suspect the same adapter/room issue. There is a durable REST fallback (`POST /:id/messages/:mid/react`) that broadcasts even when the socket is down."]},
+    {"text":"BLOCKED DM","items":["`messageService` enforces DM block: if either party blocked the other (`user_blocks`), the send fails closed. This is intended behavior, not a bug."]},
+    {"text":"Garbled previews","items":["Messages are stored as rich sanitized HTML in `messages.body`. Every preview MUST go through `lib/messageText.ts` (`messagePreview`/`messageRowPreview`); only the chat bubble renders the HTML. A preview showing raw tags means a code path bypassed `messageText.ts`."]},
+    {"text":"Empty FTS results","items":["The MySQL InnoDB full-text index (`idx_messages_fts`) has a minimum token length of 3 characters and runs in BOOLEAN mode. Words of 1–2 characters are not indexed."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Open Diagnostics (Ctrl+Alt+D) and check the realtime health chip — is the socket connected?",
+    "In DevTools → Network → WS, confirm a Socket.IO frame is open and that `message:new` frames arrive when another client sends.",
+    "If the send is rejected, look for the sender-only side-channel events `message:rate_limited` / `message:send_failed` in the console (the logger mirrors them).",
+    "For propagation lags affecting only some users, check whether Redis is up (multi-instance fan-out depends on it).",
+    "For BLOCKED, check `user_blocks` for the pair.",
+    "For previews, confirm the offending surface calls `messageText.ts`."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# Fetch recent messages via REST (bypasses socket; proves persistence)",
+    "curl -s -H 'Authorization: Bearer <JWT>' 'https://collab.resulticks.com/api/conversations/<cid>/messages?limit=20'",
+    "",
+    "# Is the block relationship the cause? (on the box)",
+    "docker exec colab-db mysql -ucolab -pcolab colab -e \"SELECT * FROM user_blocks WHERE blocker_id IN ('<a>','<b>') AND blocked_id IN ('<a>','<b>');\"",
+    "",
+    "# Confirm the FTS index exists and its tokenizer min length",
+    "docker exec colab-db mysql -ucolab -pcolab colab -e \"SHOW INDEX FROM messages WHERE Key_name='idx_messages_fts'; SHOW VARIABLES LIKE 'innodb_ft_min_token_size';\""
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["REST message fetch","`200` with message array","Message present here but missing in UI = realtime fault, not persistence"],
+    ["WS frames","`message:new` arrives on peer send","No frame = socket down / room not joined"],
+    ["Block lookup","Empty for a non-blocked pair","A row explains a BLOCKED send (intended)"],
+    ["FTS min token","`innodb_ft_min_token_size = 3`","1–2 char queries simply won't match"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**Stuck/only-on-refresh:** fix the WebSocket path (15.4). The message is almost always already persisted — a reconnect triggers the resync logic in `CoLabV1` that refetches the active conversation and reconciles.",
+    "**Throttled:** back off; the bucket refills at 5/s. This is a deliberate anti-spam guard.",
+    "**BLOCKED:** if unintended, the user must unblock via Contacts; there is no admin override in code.",
+    "**Garbled preview:** route the preview through `messagePreview`/`messageRowPreview`; never render `messages.body` directly outside the bubble.",
+    "**Short-word search:** this is a MySQL design limit; lowering `innodb_ft_min_token_size` requires a server restart and a `REPAIR TABLE ... QUICK` to rebuild the index — coordinate carefully."
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.3 File Upload Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Upload fails or stalls; progress bar freezes.",
+    "Upload returns 429 after several files in quick succession.",
+    "Upload returns 413 / 'request entity too large' for big files.",
+    "Download shows 'Couldn't load' or 404 for an attachment.",
+    "Files appear to upload but silently land in the database instead of object storage.",
+    "Avatars/wallpapers render but uploaded file attachments do not (or vice-versa)."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"The upload path is deliberately unusual: the frontend POSTs **raw bytes** (XHR, for progress) to `/api/files?name=&mime=&conversationId=`, and the route uses `express.raw({type:'*/*', limit:'100mb'})` — not multipart/multer. `fileService.create` then calls `storage.upload` to MinIO; on S3 failure it **silently** falls back to writing the bytes into the MySQL `data` LONGBLOB. Downloads stream back through the auth-gated `/api/files/:id/download` on the same origin (never directly to MinIO)."},
+  {"t":"ul","items":[
+    {"text":"Stall / failure","items":["MinIO is down — the upload still 'succeeds' but silently lands in MySQL (no operator alert; this is a known honest limitation).","The upload rate limiter fired: 60 uploads / IP / minute (`uploadLimiter`, applied BEFORE `express.raw` so a 429 never buffers 100 MB)."]},
+    {"text":"413 too large","items":["The file exceeds the 100 MB `express.raw` limit, or an intermediate proxy caps body size. nginx and Caddy are both configured for `client_max_body_size 100M` / `max_size 100MB`; a different edge (corporate LB) may cap lower."]},
+    {"text":"Download 'Couldn't load' / 404","items":["Cross-host origin mismatch — the historical bug. Fixed by the same-origin proxy: attachments must be served from `/api/files/:id/download` on the SAME origin via the Next/nginx/Caddy rewrites. If the frontend was built pointing at a different API origin, downloads break with mixed-content or CORS.","No effective permission: `fileService.permissionFor` returns owner>edit>comment>view from share grants, link permission, or conversation membership; no permission yields 404 (not 403, to avoid leaking existence)."]},
+    {"text":"Avatars work but attachments don't","items":["Avatars/wallpapers are a SEPARATE path — downscaled JPEG data: URLs stored directly in the DB (`users.avatar_url` / `conversations.avatar_url` TEXT), so they need no auth header or presigned URL. If avatars render but attachments 404, the fault is in the MinIO/proxy path, not the DB."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Confirm MinIO is running and reachable from the backend container.",
+    "Check whether recent uploads have a `storage_key` (S3) or a populated `data` blob (the silent fallback).",
+    "Test a download directly and read the HTTP status (404 = permission or missing; 5xx = stream error).",
+    "Verify the edge body-size limit if 413.",
+    "Confirm the frontend build uses same-origin (`NEXT_PUBLIC_API_BASE_URL` blank)."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# MinIO container up?",
+    "docker ps --filter name=colab-minio",
+    "",
+    "# Backend can reach MinIO internally?",
+    "docker exec colab-backend sh -c 'wget -qO- http://minio:9000/minio/health/live; echo'",
+    "",
+    "# Are new uploads going to S3 (storage_key) or the silent DB fallback (data)?",
+    "docker exec colab-db mysql -ucolab -pcolab colab -e \"SELECT id,name, storage_key IS NOT NULL AS in_s3, data IS NOT NULL AS in_db FROM files ORDER BY id DESC LIMIT 10;\"",
+    "",
+    "# Try a download (auth-gated)",
+    "curl -s -o /dev/null -w '%{http_code}\\n' -H 'Authorization: Bearer <JWT>' https://collab.resulticks.com/api/files/<id>/download"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["MinIO health","`200` from `/minio/health/live`","Unreachable = uploads silently fall to DB blob"],
+    ["Upload storage","`in_s3 = 1`, `in_db = 0`","`in_db = 1` cluster = MinIO was down during those uploads"],
+    ["Download","`200`","`404` = permission/missing; `5xx` = stream/MinIO error"],
+    ["Edge body limit","100 MB at nginx/Caddy","Lower cap at corporate LB → 413"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**MinIO down:** restart `colab-minio`; then audit recent `files` rows with `in_db=1` and consider re-uploading them to S3 (they work, but bloat the DB and lose the storage tier).",
+    "**429:** back off; 60/min/IP is the cap.",
+    "**413:** raise the body limit on the offending edge (corporate LB) to match 100 MB, or compress the file.",
+    "**Download 404 cross-host:** rebuild the frontend with a blank `NEXT_PUBLIC_API_BASE_URL` so it is same-origin; confirm the `/api/files/...` rewrite reaches the backend.",
+    "**Encryption at rest:** there is none by default (no MinIO SSE). If required, enable app-level E2EE file upload (off by default) or configure MinIO SSE at the infra layer."
+  ]},
+  {"t":"callout","kind":"risk","title":"Silent DB-blob fallback","text":"If MinIO is down, uploads quietly succeed into MySQL with no alert. Over a sustained outage this can bloat the database and degrade DB performance. Add external monitoring of MinIO health and periodically audit `files WHERE storage_key IS NULL AND data IS NOT NULL` so the fallback never becomes the silent norm."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.4 WebSocket Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Realtime only works after a page refresh; messages/presence/notifications do not push live.",
+    "Incoming-call ring and notification badges never arrive, but the app otherwise works.",
+    "A single 'connection problem' toast appears after a few seconds, then realtime recovers.",
+    "Socket repeatedly connects and disconnects (flapping) behind a proxy.",
+    "After a backend or Redis restart, targeted events (`call:incoming`, `notification:new`) silently stop for everyone."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"The client connects with `transports:['polling','websocket']` — **polling first**, then upgrade — because some reverse proxies cannot carry a raw WebSocket upgrade. Auth is `handshake.auth.token`, verified server-side. Two room namespaces matter: `conv:<cid>` (per conversation) and `user:<uid>` (every socket auto-joins its own, used for ALL targeted fan-out — calls, notifications, presence)."},
+  {"t":"ul","items":[
+    {"text":"Only-on-refresh / no live push","items":["The WebSocket upgrade is blocked because the proxy does not forward `Upgrade`/`Connection` headers on `/socket.io/`. nginx and Caddy are configured to do this; a misconfigured edge breaks it.","`addTrailingSlash:false` mismatch — the proxy path must match `/socket.io` without a trailing slash."]},
+    {"text":"Calls/notifications stop after Redis restart","items":["THE classic multi-instance bug: when `REDIS_URL` is set, the `@socket.io/redis-adapter` swap MUST complete before any socket joins a room. The swap creates an empty-rooms instance; sockets on the old adapter silently stop receiving `io.to(userRoom)`. CoLab guards this with an `adapterReady` promise awaited inside the auth middleware (with a 3s hard cap → in-memory fallback). If a stale build lacks this guard, targeted events vanish after the adapter initializes."]},
+    {"text":"Flapping","items":["Aggressive proxy idle timeouts closing the long-poll/WS; the `/livekit` and `/socket.io` locations need long read/send timeouts (nginx sets 86400s on `/livekit`)."]},
+    "Single toast then recovery: by design — `connect_error` surfaces ONE toast on the 4th consecutive failure while Socket.IO auto-retries; this is informational, not a fault."
+  ]},
+
+  {"t":"diagram","kind":"pipeline","title":"Socket connect + reconnect lifecycle","steps":[
+    {"label":"connectSocket(token)","detail":"polling-first, same-origin, auth:{token}"},
+    {"label":"io.use auth","detail":"await adapterReady, verify JWT, set socket.userId"},
+    {"label":"join user:<uid>","detail":"register all listeners, then set presence on"},
+    {"label":"emit READY","detail":"client re-joins active conversation room"},
+    {"label":"on reconnect","detail":"refetch active conv messages + conversations + unread"}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "DevTools → Network → WS: is there an open Socket.IO connection? Did it upgrade from polling to websocket?",
+    "If stuck on polling forever, the proxy is dropping the upgrade — inspect the edge config for `/socket.io/`.",
+    "If targeted events (calls/notifications) are the only thing broken, suspect the Redis adapter swap — check Redis health and backend logs for adapter readiness.",
+    "Trigger an event from a second client (send a message, start a call) and watch for the frame.",
+    "Check backend logs for `unauthorized` handshake rejections (bad/expired token)."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# Socket.IO handshake reachable through the edge? (expect a session payload, not 404)",
+    "curl -s 'https://collab.resulticks.com/socket.io/?EIO=4&transport=polling'",
+    "",
+    "# Redis up (the adapter + huddle/blocklist depend on it)?",
+    "docker exec colab-redis redis-cli ping   # expect PONG",
+    "",
+    "# Backend log: adapter readiness + handshake auth",
+    "docker logs --tail=120 colab-backend | grep -iE 'adapter|redis|unauthorized|socket'"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["`/socket.io/?EIO=4&transport=polling`","`0{\"sid\":\"...\",...}` handshake payload","`404`/`502` = edge not routing `/socket.io/`"],
+    ["WS upgrade","Transport becomes `websocket`","Stuck on `polling` = proxy blocks Upgrade"],
+    ["`redis-cli ping`","`PONG`","Down → adapter falls back to in-memory (single-instance only)"],
+    ["Targeted event","`call:incoming` / `notification:new` arrives","Missing after adapter init = stale build without the readiness guard"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**Upgrade blocked:** ensure the edge forwards `Upgrade: $http_upgrade` and `Connection: \"upgrade\"` on `/socket.io/` (nginx) or uses `reverse_proxy` (Caddy). Polling-only still works but is heavier and flakier.",
+    "**Adapter swap bug:** ensure the deployed backend contains the `adapterReady` guard; restart the backend after Redis is healthy.",
+    "**Flapping:** raise proxy read/send timeouts for the realtime locations.",
+    "**Handshake unauthorized:** the token is expired/invalid — re-login (this is the same JWT as REST auth, see 15.1).",
+    "Remember the resync safety net: on reconnect the client refetches the active conversation's messages, the conversation list, and the unread count, so nothing sent during a gap is lost once the socket recovers."
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.5 LiveKit (SFU) Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "'Unable to reach media server' / 'media server error' when starting or joining a call or meeting.",
+    "Call connects but no audio/video flows; the call drops after ~15–30 seconds.",
+    "Works for some users, fails for others, drops mid-call — network-dependent.",
+    "A 1:1 call tears itself down immediately with a DUPLICATE_IDENTITY-style eviction.",
+    "Meeting tiles cap at two participants even with more people present.",
+    "Signalling 404 on `/livekit/rtc/v1/validate`."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"LiveKit is the SFU. Signalling (port 7534) is proxied as `wss://<host>/livekit` (the `/livekit` prefix is STRIPPED before proxying because LiveKit serves at `/rtc`). Media (ICE/DTLS) goes DIRECT to the box on `7532/udp`, `7531/tcp`, with a built-in TURN on `7533/udp`. The single most important production lesson: **signalling and media fail independently** — a healthy `wss://.../livekit` does not mean media will connect."},
+  {"t":"ul","items":[
+    {"text":"'Media server error' on start","items":["Insecure context: the page is served over plain HTTP at a bare IP, so `navigator.mediaDevices` is undefined and `getUserMedia` throws before LiveKit is even reached. `mediaSupport.ts` detects this and shows a clear HTTPS message. See 15.6.","A stale `ws://` LiveKit URL on an HTTPS page (mixed content) — `preferSecureWsUrl` upgrades it, but a bad explicit `LIVEKIT_WS_URL` can still break it."]},
+    {"text":"Connects then drops (DTLS timeout)","items":["The media plane cannot be reached: the SFU advertises an internal `node_ip` (e.g. `10.200.3.17`) that off-network clients cannot reach, and TURN is missing or unreachable. This is the canonical 'works for some, fails for others' fault — fixed live by setting `use_external_ip:true` (advertise BOTH the internal host candidate AND a STUN-discovered public IP) plus a working coturn relay. See 15.6 TURN."]},
+    {"text":"Signalling 404","items":["The `/livekit` prefix is not being stripped before proxying, so LiveKit returns 404 on `/livekit/rtc/v1/validate`. nginx uses `rewrite ^/livekit/?(.*)$ /$1 break`; Caddy uses `handle_path /livekit*`. A misconfigured edge that forwards the prefix breaks signalling."]},
+    {"text":"DUPLICATE_IDENTITY eviction","items":["A client double-connect race: a `ringing→connected` re-render opened a SECOND `room.connect()` with the same identity. Fixed by a stable-call-key connect guard (`lkConnectingRef`) plus a ~500ms settle. With the per-join UUID identity, a legitimate DUPLICATE_IDENTITY now only means 'you answered on another tab/device' and surfaces a message instead of tearing down."]},
+    {"text":"2-tile cap","items":["A stale build used the deprecated `room.participants` alias (removed in client SDK 2.x); the fix is `room.remoteParticipants`. If only two tiles show, the deployed frontend is old."]},
+    "Wrong key/secret: the SFU rejects tokens if `LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET` in the backend env do not match the keys the SFU loaded (overridden at runtime by `LIVEKIT_KEYS`)."
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "First, is the page HTTPS? If not, stop — that is the cause (15.6).",
+    "Probe signalling: a `400` on the validate endpoint is HEALTHY (LiveKit rejecting an empty join). A 404 means the prefix strip is broken.",
+    "Open `chrome://webrtc-internals` during a failing call; look at the selected candidate pair and DTLS state.",
+    "Enable the in-app call debug panel (`localStorage colab_call_debug=1` or `?calldebug=1`) and read the `[CALLDIAG]` trail for `turnUsed`/`turnAdvertised`.",
+    "Confirm the LiveKit container is up and shows BOTH internal and public candidates in its logs (live config)."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# Signalling reaches LiveKit? 400 = HEALTHY (empty join rejected). 404 = prefix not stripped.",
+    "curl -s -o /dev/null -w '%{http_code}\\n' https://collab.resulticks.com/livekit/rtc/v1/validate",
+    "",
+    "# LiveKit container up + advertising candidates (live config expects BOTH IPs)",
+    "docker logs colab-livekit | grep -i candidate",
+    "",
+    "# Backend key matches what the SFU loaded?",
+    "docker exec colab-backend printenv LIVEKIT_API_KEY LIVEKIT_API_SECRET",
+    "docker exec colab-livekit printenv LIVEKIT_KEYS"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["validate probe","`400`","`404` = `/livekit` prefix not stripped; connection refused = SFU down"],
+    ["candidate log","Internal host IP AND a public IP","Only the internal IP = off-network media impossible (set use_external_ip)"],
+    ["webrtc-internals (internal client)","selected pair `host`, DTLS `connected`","DTLS `timeout` = media path unreachable"],
+    ["webrtc-internals (external client)","selected pair `relay`, DTLS `connected`","No relay pair = TURN missing/unreachable (15.6)"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**404 signalling:** fix the edge so the `/livekit` prefix is stripped (nginx `rewrite`/Caddy `handle_path`).",
+    "**DTLS timeout off-network:** set `use_external_ip:true` with `node_ip` unset, AND provision a reachable coturn relay (15.6). Internal LAN/VPN calls work from the config alone; external needs the relay.",
+    "**DUPLICATE_IDENTITY teardown:** deploy the frontend with the connect-guard + settle fix.",
+    "**2-tile cap:** deploy the frontend that uses `remoteParticipants`.",
+    "**Key mismatch:** align `LIVEKIT_API_KEY`/`_SECRET` (backend) with `LIVEKIT_KEYS` (SFU) and restart both.",
+    "**Token TTL too short for long meetings:** raise `LIVEKIT_TOKEN_TTL_SEC` (live raised 3600 → 43200 so long meetings do not hit a 1-hour token expiry)."
+  ]},
+  {"t":"callout","kind":"note","title":"Latency is a topology problem, not a code problem","text":"If calls connect cleanly but feel laggy (~200–300ms even in the same room), the SFU is in a far region relative to the users. The SFU is NOT peer-to-peer — every stream goes client → SFU → client. A US-East SFU with India users adds a transcontinental round trip. The fix is to relocate ONLY the media engine (LiveKit SFU + coturn + a LiveKit-state Redis) to a near region (e.g. asia-south1), per `docs/DEPLOY_MUMBAI_REGION.md`. No app code changes — env/config only; the app, DB, and signalling stay put."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.6 TURN Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Calls work on the office LAN/VPN but fail from home, mobile/4G, or hotel/corporate guest Wi-Fi.",
+    "`[CALLDIAG]` shows `turnAdvertised=true` but `turnUsed=false` and the call drops (DTLS timeout).",
+    "`[CALLDIAG]` shows `turnAdvertised=false` (no relay offered at all).",
+    "coturn rejects allocations with 401 even though credentials 'look right'.",
+    "TURN over TLS (5349/443) fails but plain 3478 works."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"TURN bridges clients that cannot reach the SFU's internal IP. CoLab's coturn uses **static long-term credentials** (`lt-cred-mech`), NOT HMAC/`use-auth-secret` — the backend sends a fixed `TURN_USERNAME`/`TURN_PASSWORD` verbatim, so the `user=` line in `turnserver.conf` must match `.env.live` byte-for-byte. coturn listens on 3478 (plain), 5349 (TLS), and 443 (alt-TLS, the only transport that reliably crosses locked-down NATs). A peer ACL allows only the SFU's internal IP so the relay can forward to LiveKit while staying closed to the rest of RFC1918."},
+  {"t":"ul","items":[
+    {"text":"`turnAdvertised=false`","items":["`TURN_URLS`/`TURN_USERNAME`/`TURN_PASSWORD` are blank in the backend env, so the minted token carries no `iceServers` relay entry. Off-network calls then have no fallback and fail."]},
+    {"text":"`turnAdvertised=true` but `turnUsed=false` (relay never connects)","items":["coturn is unreachable: a firewall blocks the relay (3478/5349/443 and the relay UDP range 49152–49251/65535), or DNS for `turncollab.resulticks.com` is wrong, or the TURN box has no real public IP.","TLS cert for the TURN host is missing/invalid, so `turns:5349/443` fail and only plain 3478 (often egress-blocked) remains."]},
+    {"text":"401 on allocation","items":["The `user=` line in `turnserver.conf` does not match `.env.live` byte-for-byte (the password contains shell-special chars `$ ! # @ ^ & *` that must NOT be quoted/escaped inside the conf), OR an `use-auth-secret` line is shadowing the static user (intentionally omitted in the shipped config)."]},
+    {"text":"Relay connects but media still blocked","items":["The peer ACL does not allow the SFU's internal IP, so coturn cannot forward to LiveKit. The shipped config allows `10.200.3.17` (live) and `10.205.11.8` (teams) before the RFC1918 deny."]},
+    "Port-443 clash: the corporate LB owns public 443, so coturn cannot also bind 443 on the same box. Live runs coturn on a SEPARATE public box (turncollab.resulticks.com) for exactly this reason; the co-located coturn service is profile-gated OFF in the live compose."
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Read `[CALLDIAG]` (enable with `?calldebug=1`): distinguish `turnAdvertised=false` (env blank) from `turnUsed=false` (relay unreachable).",
+    "Confirm DNS for the TURN host resolves to its OWN public IP (not the app LB, not the internal SFU IP).",
+    "Confirm the TURN TLS cert is valid for that hostname.",
+    "Run a real relay allocation against coturn with the static creds and an `-e <SFU IP>` peer.",
+    "From the coturn box, confirm it can reach the SFU media ports over the LAN."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# coturn up + parsed its public IP (no 'cannot parse external-ip')",
+    "docker logs --tail=50 colab-coturn",
+    "",
+    "# Listening on the host (host networking)",
+    "ss -lunp | grep -E ':3478|:5349' ; ss -ltnp | grep -E ':3478|:5349|:443'",
+    "",
+    "# DNS + TLS for the TURN host",
+    "getent hosts turncollab.resulticks.com",
+    "echo | openssl s_client -connect turncollab.resulticks.com:5349 -servername turncollab.resulticks.com 2>/dev/null | openssl x509 -noout -subject -dates",
+    "",
+    "# Static-auth relay allocation to the SFU (proves auth + peer-ACL)",
+    "docker exec colab-coturn turnutils_uclient -v -y -u collab-turn -w '<TURN_PASSWORD>' -e 10.200.3.17 -p 3478 127.0.0.1",
+    "",
+    "# coturn box can reach the SFU media ports over the LAN",
+    "docker exec colab-coturn sh -c 'nc -vz -u 10.200.3.17 7532; nc -vz 10.200.3.17 7531'"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["coturn log","Parsed external-ip, listening","`cannot parse external-ip` = placeholder left in `.env`"],
+    ["DNS","TURN host → its own public IP","Resolves to LB or internal IP = relay unreachable"],
+    ["TLS","Valid cert for the TURN hostname","Expired/wrong CN = `turns:` fails, only 3478 left"],
+    ["`turnutils_uclient`","Allocation + relay to SFU succeeds","401 = cred mismatch; relay fail = peer-ACL/firewall"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**`turnAdvertised=false`:** set `TURN_URLS` (lead with `turns:...:5349` and `turn:...:3478`, 443 last), `TURN_USERNAME`, `TURN_PASSWORD` in the backend env and restart the backend so new tokens carry the relay.",
+    "**Relay unreachable:** open inbound `3478/udp+tcp`, `5349/udp+tcp`, `443` (if used), and the relay range `49152-65535/udp` on the TURN box's public IP; fix DNS and TLS; ensure the TURN box has a genuinely routable public IP.",
+    "**401:** make the `user=` line match `.env.live` byte-for-byte; do not quote the password in the conf.",
+    "**Relay forwards nowhere:** keep the `allowed-peer-ip` exception for the SFU's internal IP ahead of the RFC1918 deny.",
+    "**443 clash:** run coturn on a dedicated public box (the live pattern) instead of co-locating it with nginx; or drop the `:443` entry from `TURN_URLS` and comment `alt-tls-listening-port=443` (accepting that the strictest networks may fail)."
+  ]},
+  {"t":"callout","kind":"warning","title":"A static TURN password lives in the committed config","text":"`infrastructure/coturn/turnserver.conf` (and the deploy docs) contain a real static TURN credential. It is a rotation candidate. When rotating, change it in BOTH `turnserver.conf` and `.env.live` (`TURN_USERNAME`/`TURN_PASSWORD`) simultaneously and restart coturn and the backend together, or new tokens will carry creds the relay rejects."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.7 Meeting Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Cannot join a meeting: 403 with 'ended', 'removed', 'locked', or 'not admitted yet'.",
+    "Stuck in the lobby; host never admits.",
+    "Host controls (mute-all, mute, eject, promote/demote) appear to do nothing.",
+    "A previously-ejected participant rejoins via a re-minted token.",
+    "In-meeting chat history is missing on join.",
+    "Scheduling a meeting in the past is rejected.",
+    "Recording start returns 503."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"Meeting media uses the same LiveKit SFU as calls, so all of 15.5/15.6 applies. The meeting-specific logic lives in `meetingService.enterRoom`, which is the real access gate: it consults eject → lock → lobby BEFORE minting a room token. The meeting UUID is itself the access credential (anyone with the ID/link can attempt to join), so refusals are about host controls, not membership."},
+  {"t":"ul","items":[
+    {"text":"403 on join","items":["'ended'/'removed' = the meeting is cancelled/completed or the user is in `meeting_ejected` (which persists across token re-mint — checked FIRST).","'locked' = the meeting is locked to non-host/co-host.","'not admitted yet' = lobby is enabled and the user is still waiting."]},
+    {"text":"Stuck in lobby","items":["No host/co-host is present to admit, or the admit event was missed. Lobby changes ride `MEETING_UPDATED` (the dedicated `MEETING_LOBBY_UPDATE` event is declared but not emitted in current code)."]},
+    {"text":"Host controls no-op","items":["Host controls act on the LiveKit identity PREFIX (`userId__<uuid>`); a stale build that passed the wrong identity made them silent no-ops. The fix resolves the live identity via `findLiveIdentity`/`baseUid`. If controls do nothing, the deployed frontend/backend may predate this fix.","`removeParticipant` is a graceful no-op if the target is not currently in the room (`inRoom:false`) — that is not a failure."]},
+    {"text":"Eject not sticking","items":["Without the `meeting_ejected` table (migration 0045) an ejected user could re-mint a token and rejoin. With it, `enterRoom` consults the eject list first."]},
+    {"text":"Missing chat history","items":["In-meeting chat is persisted in `meeting_messages` (migration 0040) and replayed (last 100) on `MEETING_JOIN`. If a DB write fails it degrades to ephemeral, so history can be absent after a DB hiccup."]},
+    {"text":"Past-time scheduling rejected","items":["DB triggers (`trg_meetings_reject_past_*`) SIGNAL on `starts_at < NOW() - 2min`, also enforced in-app."]},
+    {"text":"Recording 503","items":["Server-side LiveKit Egress is gated by `EGRESS_ENABLED` + an egress worker container; if not provisioned it returns an honest 503. Client-side MediaRecorder recording works without egress."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Read the exact 403 reason string — it names the gate (ended/removed/locked/not admitted).",
+    "Check the meeting row for `status`, `locked`, `lobby_enabled`.",
+    "Check `meeting_ejected` for the user if they cannot rejoin.",
+    "For host-control no-ops, confirm the deployed build has the identity-prefix fix.",
+    "For recording 503, check `EGRESS_ENABLED` and whether the egress container runs."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# Meeting gate state",
+    "docker exec colab-db mysql -ucolab -pcolab colab -e \"SELECT id,status,locked,lobby_enabled FROM meetings WHERE id='<mid>';\"",
+    "",
+    "# Is the user ejected (persists across re-mint)?",
+    "docker exec colab-db mysql -ucolab -pcolab colab -e \"SELECT * FROM meeting_ejected WHERE meeting_id='<mid>' AND user_id='<uid>';\"",
+    "",
+    "# Egress enabled / worker running?",
+    "docker exec colab-backend printenv EGRESS_ENABLED",
+    "docker ps --filter name=colab-egress"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["meeting row","`status=scheduled`, `locked=0`, `lobby_enabled=0` for open join","`locked=1`/`lobby_enabled=1` explains a gated 403"],
+    ["eject lookup","Empty for a normal user","Row = persistent eject (host must readmit)"],
+    ["`EGRESS_ENABLED`","`true` + egress container running for server recording","Unset/absent → recording start returns 503 (expected)"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**403 gated:** host/co-host must unlock, admit from the lobby, or readmit an ejected user; or reschedule a cancelled/completed meeting.",
+    "**Host controls silent:** deploy the build with the identity-prefix resolution; verify the operator is host (meeting.createdBy) or co-host.",
+    "**Missing chat:** restore DB health; persisted chat returns once `meeting_messages` writes succeed.",
+    "**Recording 503:** provision the egress container and set `EGRESS_ENABLED=true`, or use client-side recording (works today, stores to S3, served via the auth-gated download route)."
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.8 Media Errors (getUserMedia / devices)"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "'Calls and meetings need a secure connection' banner before any call.",
+    "'Cannot read properties of undefined (reading getUserMedia)' in the console.",
+    "Permission denied: no camera/mic prompt, or the OS/browser blocked access.",
+    "Mid-call device switch (mic/camera/speaker) does nothing, or a newly plugged USB/Bluetooth device is not picked up.",
+    "Self-view appears mirrored or the camera-off avatar shows when it should not."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"Browsers expose `navigator.mediaDevices` ONLY in a secure context: HTTPS, or the loopback origins `http://localhost` / `http://127.0.0.1`. Over plain HTTP at a bare LAN IP (e.g. `http://10.205.11.8:3002`), `navigator.mediaDevices` is `undefined` and the first media step throws the cryptic getUserMedia error. `mediaSupport.ts` detects this with `window.isSecureContext` and shows a clear HTTPS message instead of crashing. This is a browser security rule — no client code can bypass it."},
+  {"t":"ul","items":[
+    {"text":"Insecure context","items":["The app is served over plain HTTP at a non-loopback origin. This is the #1 cause of 'media server error' in new deployments and is why a TLS front is mandatory."]},
+    {"text":"Mixed content","items":["The page is HTTPS but a stale `ws://` LiveKit URL is used; `preferSecureWsUrl` upgrades it, but a hard-coded bad `LIVEKIT_WS_URL` defeats that."]},
+    {"text":"Permission denied","items":["The user or OS/browser policy blocked mic/camera; on macOS/Windows the browser itself may lack OS-level permission."]},
+    {"text":"Device switch / hotplug not working","items":["Mid-call switching uses `switchActiveDevice` + `setSinkId` + `ActiveDeviceChanged` in both the call and meeting paths. A stale build without this won't hot-swap; also `setSinkId` (speaker selection) is only supported in some browsers."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Check the address bar scheme: is it HTTPS (or localhost on the server)?",
+    "In DevTools console, evaluate `window.isSecureContext` — `false` is the smoking gun.",
+    "Check the browser's site permissions for camera/microphone.",
+    "If switching fails, confirm the deployed build includes the device-switch logic and test in Chrome/Edge (broadest support)."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# In the browser DevTools console:",
+    "window.isSecureContext",
+    "navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia",
+    "",
+    "# Confirm the app is reachable over HTTPS at the edge",
+    "curl -sI https://collab.resulticks.com/ | head -1"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["`window.isSecureContext`","`true`","`false` = insecure origin, media blocked by the browser"],
+    ["`typeof getUserMedia`","`'function'`","`undefined` = `mediaDevices` missing (insecure context)"],
+    ["site permission","camera/mic Allowed","Blocked = no prompt, immediate failure"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**Insecure context:** serve CoLab over HTTPS. Use the Caddy TLS front (`tls internal` self-signed works on any network/bare IP, or Let's Encrypt with a real domain) or terminate TLS at the corporate LB. This is the single most common fix for 'media server error'.",
+    "**Mixed content:** leave `LIVEKIT_WS_URL` blank so the backend derives `wss://<host>/livekit` from the request origin; `preferSecureWsUrl` then matches the page scheme.",
+    "**Permission denied:** grant camera/mic at both the browser-site level and the OS level; reload.",
+    "**Hotplug/switch:** deploy the build with `switchActiveDevice`/`setSinkId`; prefer Chrome/Edge for speaker selection."
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Camera-slash is usually not a bug","text":"A camera-off (slashed) state in a call is the device feed being off, not a failure. Likewise a self-view that looks un-mirrored is the intended premium behavior. Confirm the actual device state before treating these as defects."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.9 Screen Sharing Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Screen share button does nothing, or the share immediately stops.",
+    "Screen video shares but tab/system audio does not.",
+    "Other participants cannot see the shared screen.",
+    "Sharing works in meetings but not in 1:1/group calls (or vice-versa)."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"Both the call path (`CoLabV1.tsx toggleScreen`) and the meeting path (`MeetingStage.tsx toggleScreen`) use the same call: `localParticipant.setScreenShareEnabled(next, { audio:true, systemAudio:'include' })`. Audio is best-effort: if the browser or user declines audio capture, the VIDEO share still publishes. The meeting path reverts the `screen` state on a throw; the call path swallows the throw (user cancelled the picker)."},
+  {"t":"ul","items":[
+    {"text":"Button no-op / instant stop","items":["The user cancelled the OS screen-picker (a thrown exception that is intentionally swallowed in the call path).","Insecure context (same as 15.8) — screen capture also needs a secure context.","Browser/OS screen-recording permission missing (notably macOS Screen Recording permission)."]},
+    {"text":"No shared-screen audio","items":["Best-effort by design: the user did not check 'share tab/system audio' in the picker, or the browser doesn't support `systemAudio`. The video still publishes."]},
+    {"text":"Others can't see it","items":["A media-plane problem (15.5/15.6) — the screen track is just another published track; if media won't traverse, neither will the share."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Confirm secure context (15.8) and OS screen-recording permission.",
+    "Reproduce and watch the console for a swallowed/throw on the screen toggle.",
+    "If the share publishes locally but peers can't see it, treat it as a media-plane issue and run the 15.5/15.6 checks."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# In DevTools while sharing: enumerate published tracks (look for a screen_share source)",
+    "# (Run inside the app context; the LiveKit room exposes localParticipant tracks.)",
+    "window.isSecureContext   # must be true for getDisplayMedia"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"ul","items":[
+    "Secure context true; OS grants screen recording.",
+    "A `screen_share` video track is published locally; peers receive it when the media plane is healthy.",
+    "Audio track present only if the user opted into tab/system audio — its absence is not a fault."
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**No-op:** ensure HTTPS and grant OS screen-recording permission (macOS System Settings → Screen Recording).",
+    "**No audio:** instruct users to tick 'share audio' in the picker; accept that some browsers won't offer it.",
+    "**Peers can't see:** resolve the underlying SFU/TURN media issue (15.5/15.6)."
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.10 Database (MySQL) Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Backend fails to boot, or boots then crash-loops on migrations.",
+    "Signup/message-send intermittently crashes under load (slow shared DB).",
+    "'Something went wrong' generic 500s on writes.",
+    "Data appears missing after a redeploy.",
+    "A migration appears to re-run or partially apply.",
+    "Backend connected to the wrong database (empty/unexpected data)."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"CoLab uses a single MySQL 8 / InnoDB / utf8mb4 persistence layer via a `mysql2/promise` pool (`database/src/drivers/mysql.ts`). Connection target is resolved by `DB_PROFILE` → `DATABASE_URL_<PROFILE>` (e.g. `DB_PROFILE=live` → `DATABASE_URL_LIVE`), falling back to `DATABASE_URL`. Migrations run at boot via a statement-by-statement, idempotent runner tracked in `schema_migrations`; it swallows 'already applied' errnos and resumes from the failure point, so it does not crash-loop."},
+  {"t":"ul","items":[
+    {"text":"Boot/migration failure","items":["A real DDL error (not an idempotent one) re-throws. The runner is BEGIN/END-aware so trigger bodies don't split on internal `;`. A non-SUPER user skips CREATE TRIGGER (errno 1419) because the rules are also app-enforced.","Production secret/DB guard: the backend refuses to boot if `AUTH_JWT_SECRET`/`LIVEKIT_API_SECRET`/the DB password/MinIO creds are bundled defaults in production."]},
+    {"text":"Intermittent write crashes under load","items":["A slow shared corporate DB caused read-after-write races on signup/message-send. This was fixed; if it recurs, the DB is overloaded or far away (network latency)."]},
+    {"text":"Generic 500 on writes","items":["The central error handler maps MySQL integrity errnos (1062 dup, 1451/1452 FK, 1048 null, 1264/1366 range/type) and SIGNAL (45000) to friendly 400s; anything >=500 is masked as 'Something went wrong'. The real error is in the backend log."]},
+    {"text":"Data 'missing' after redeploy","items":["Almost always `docker compose down -v` deleted the `colab_mysqldata` volume. The named volume persists across `down`/`up --build` but NOT across `-v`. `initdb/*.sql` only runs on an EMPTY volume."]},
+    {"text":"Wrong DB","items":["The live site historically defaulted `DB_PROFILE` to `local`, writing to the bundled container's volume rather than the corporate DB. Confirm which target the running backend actually uses."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Read the backend boot log for the actual DDL error or secret-guard message.",
+    "Confirm the DB container is healthy and accepting connections.",
+    "Confirm which `DB_PROFILE`/URL the backend resolved.",
+    "Check `schema_migrations` for the last applied file.",
+    "For 'missing data', confirm the volume still exists and was never removed with `-v`."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# DB container health",
+    "docker ps --filter name=colab-db",
+    "docker exec colab-db mysqladmin ping -h 127.0.0.1 -u colab -pcolab",
+    "",
+    "# Which DB target did the backend resolve?",
+    "docker exec colab-backend printenv DB_PROFILE DATABASE_URL DATABASE_URL_LIVE",
+    "",
+    "# Migration ledger",
+    "docker exec colab-db mysql -ucolab -pcolab colab -e \"SELECT filename, applied_at FROM schema_migrations ORDER BY filename DESC LIMIT 5;\"",
+    "",
+    "# Volume still present?",
+    "docker volume ls | grep colab_mysqldata",
+    "",
+    "# Backup BEFORE any change",
+    "docker exec colab-db mysqldump -u colab -pcolab --single-transaction --routines --triggers colab > backup_$(date +%Y%m%d_%H%M%S).sql"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["`mysqladmin ping`","`mysqld is alive`","Refused = DB down / wrong creds"],
+    ["Resolved DB target","The intended profile/URL","`DB_PROFILE=local` on a live box = writing to the wrong DB"],
+    ["`schema_migrations`","Latest migration present (e.g. 0047)","A gap = a migration failed mid-apply"],
+    ["volume","`colab_mysqldata` listed","Absent = volume was deleted (`-v`) = data loss"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**Migration error:** fix the offending DDL; the idempotent runner resumes from the failure point on next boot. Never hand-edit `schema_migrations` to skip a failure without understanding it.",
+    "**Overload/latency:** move the DB closer or scale it; the app is hardened (retries, atomic busy-checks) but cannot fix a far/slow DB.",
+    "**500 on write:** read the backend log for the real errno; integrity errors usually mean a duplicate or FK violation that the client should surface as a 400.",
+    "**Missing data:** restore from the most recent `mysqldump`. Going forward, NEVER use `docker compose down -v`; use `down` or `up -d --build`.",
+    "**Wrong DB:** set `DB_PROFILE` to the intended target and restart; verify with the printenv check before declaring the issue resolved."
+  ]},
+  {"t":"callout","kind":"risk","title":"down -v is the data-loss footgun","text":"`docker compose down -v` deletes the `colab_mysqldata` volume and with it every message, user, and file blob stored in MySQL. Always take a `mysqldump` before any deploy, and treat `-v` as a destructive command that requires explicit sign-off. Migrations are additive and idempotent, so a normal redeploy is safe; the volume deletion is the only routine path to total loss."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.11 Redis Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Targeted realtime events (incoming-call ring, notifications) stop across instances after a Redis restart.",
+    "Group huddles show ghost participants or lose state.",
+    "Logout does not revoke a token on other instances.",
+    "Authed requests hang briefly when Redis is unreachable."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"Redis backs three things: the Socket.IO adapter (multi-instance fan-out), the huddle/hand-raise store (`huddleStore`, 12h TTL backstop), and the JWT token blocklist. All three degrade gracefully when Redis is down — but degradation is single-instance only. Redis clients use `reconnectStrategy:false` plus a short connect race so a down Redis can't wedge handshakes or authed requests."},
+  {"t":"ul","items":[
+    {"text":"Cross-instance events stop","items":["The adapter swap must complete before sockets join rooms (see 15.4). If Redis is up but the adapter raced, targeted `io.to(userRoom)` events silently drop. The `adapterReady` guard prevents this; a 3s timeout falls back to in-memory (which only works single-instance)."]},
+    {"text":"Ghost huddle participants","items":["Durable huddle state is in Redis; the disconnecting handler ends huddle legs on tab-close. If Redis is down, in-process Map fallback can't share state across instances, so multi-instance huddles fragment."]},
+    {"text":"Logout not revoked elsewhere","items":["The blocklist is Redis-keyed (`jwt:block:<sig>`); with the in-memory fallback, a logout only revokes on the instance that handled it. Note the socket handshake never checks the blocklist anyway (only HTTP)."]},
+    {"text":"Brief hang","items":["Pre-hardening, a down Redis could block every authed request. The `reconnectStrategy:false` + connect-race fix means it now falls back to memory instead of hanging; a stale build may still hang."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Confirm Redis is up and responding.",
+    "Check `REDIS_URL` is set on the backend (absent = intentional single-instance memory mode).",
+    "If cross-instance events are broken with Redis up, suspect the adapter race / stale build.",
+    "Inspect blocklist keys to confirm revocation is landing."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "docker exec colab-redis redis-cli ping",
+    "docker exec colab-backend printenv REDIS_URL",
+    "docker exec colab-redis redis-cli keys 'jwt:block:*' | head",
+    "docker exec colab-redis redis-cli keys 'huddle:*' | head",
+    "docker logs --tail=120 colab-backend | grep -iE 'redis|adapter'"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["`redis-cli ping`","`PONG`","Down → memory fallback (single-instance only)"],
+    ["`REDIS_URL`","Set for multi-instance","Unset = intentional single-instance"],
+    ["adapter log","Adapter ready before connections","Race/timeout warnings = stale build"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**Redis down:** restart `colab-redis`. For a multi-instance deployment, restart the backend AFTER Redis is healthy so the adapter binds correctly.",
+    "**Cross-instance drop with Redis up:** deploy the backend with the `adapterReady` guard.",
+    "**Ephemeral state note:** call timers, send buckets, and the recent-incoming map are intentionally per-process (NOT in Redis); only huddle/hand state is durable. Do not expect call no-answer timers to survive a backend restart."
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.12 MinIO (Object Storage) Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Uploads silently land in the database instead of S3 (see 15.3).",
+    "Downloads fail with 5xx (stream error).",
+    "Boot log shows '[boot] S3 bucket check skipped'.",
+    "MinIO admin console at `/minio/` is unreachable."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"MinIO is the primary blob store (bucket `colab-files`), reached internally at `http://minio:9000`. `ensureBucket()` runs at boot and creates the bucket if missing; failure is non-fatal (logs and continues). In live/production compose, MinIO has NO host port — it is internal-only and reached via the same-origin proxy; the `/minio/` route is the ADMIN console, not the blob-serving path."},
+  {"t":"ul","items":[
+    {"text":"Silent DB fallback","items":["MinIO down or unreachable from the backend at upload time → bytes go to the MySQL `data` LONGBLOB with no alert."]},
+    {"text":"Download 5xx","items":["MinIO down at download time, or the object is missing (e.g. it was the silent-fallback path and lives in the DB, which the download route handles separately)."]},
+    {"text":"Bucket check skipped","items":["MinIO wasn't ready when the backend booted; the non-fatal skip means later uploads may fall back until MinIO is healthy."]},
+    {"text":"Weak/default creds","items":["`MINIO_ROOT_USER`/`PASSWORD` default to weak values (`colabminio/colabminio123` or `colab/colab`) and are not enforced — a production-hardening gap, not a runtime fault."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Confirm MinIO is up and healthy.",
+    "Confirm the backend can reach it internally and that the bucket exists.",
+    "Audit recent uploads for the silent DB fallback (15.3).",
+    "Confirm the S3 creds in the backend env match MinIO's root creds."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "docker ps --filter name=colab-minio",
+    "docker exec colab-backend sh -c 'wget -qO- http://minio:9000/minio/health/live; echo'",
+    "docker exec colab-backend printenv S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY_ID",
+    "docker logs --tail=80 colab-backend | grep -iE 's3|bucket|minio'"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["MinIO health","`200`","Unreachable = silent DB fallback for uploads"],
+    ["`S3_ENDPOINT`","`http://minio:9000` (internal)","Wrong endpoint = uploads/downloads fail"],
+    ["boot log","No 'bucket check skipped'","'skipped' = MinIO not ready at boot"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**MinIO down:** restart `colab-minio`; the named volume (`colab_minio`/`collab_minio`) persists blobs across restarts.",
+    "**Bucket missing:** restart the backend after MinIO is healthy so `ensureBucket` runs, or create `colab-files` manually via the console.",
+    "**Weak creds:** set strong `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` and mirror them into `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` for production.",
+    "**Audit the fallback:** re-home any `files` rows that landed in the DB blob during the outage."
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.13 Nginx (Reverse Proxy) Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "'no healthy upstream' / 502 / 504 from the edge.",
+    "nginx container refuses to start.",
+    "The app loads but `/api`, `/socket.io`, or `/livekit` 404 or fail.",
+    "WebSockets (realtime, LiveKit signalling) don't connect through the edge.",
+    "Large uploads 413 at the edge."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"nginx listens on `7530` and proxies to `frontend:3000`, `backend:4000`, `livekit:7534`, and `minio:9000`. The corporate LB on 443 forwards to `<server-ip>:NGINX_PORT` (live `7524`), and `NGINX_PORT:7530` is the only published web port in the live compose. **'no healthy upstream' almost always means an LB or nginx port mismatch** — the LB is pointing at the wrong host port, or an upstream container is down so nginx (which resolves all upstreams at startup) refuses to serve it."},
+  {"t":"ul","items":[
+    {"text":"no healthy upstream / 502","items":["LB → host port mismatch: the LB forwards to a port nginx isn't published on (or to the wrong server IP).","An upstream container (frontend/backend/livekit/minio) is down. nginx resolves ALL upstreams at startup and refuses to boot if any is missing — this is what took nginx down when MinIO crash-looped, which is why nginx `depends_on` includes minio."]},
+    {"text":"`/livekit` 404","items":["The `rewrite ^/livekit/?(.*)$ /$1 break` prefix strip is missing/edited, so LiveKit sees `/livekit/rtc/...` and 404s."]},
+    {"text":"WebSocket not connecting","items":["The `/socket.io/` and `/livekit` locations must forward `Upgrade`/`Connection` headers and use long read/send timeouts (86400s on `/livekit`)."]},
+    {"text":"413","items":["`client_max_body_size` is 100M in the shipped conf; a lower value (or a lower cap on the corporate LB) rejects large uploads."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Confirm all upstream containers are up.",
+    "Confirm the LB target port matches the published `NGINX_PORT` and the right server IP.",
+    "Test the proxied routes directly against the host port.",
+    "Validate the nginx config syntax."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "docker ps --filter name=colab-   # all upstreams up?",
+    "docker exec colab-nginx nginx -t   # config valid?",
+    "",
+    "# Hit the routes through the host port (live NGINX_PORT=7524)",
+    "curl -s -o /dev/null -w 'api %{http_code}\\n' http://127.0.0.1:7524/api/health",
+    "curl -s -o /dev/null -w 'livekit %{http_code}\\n' http://127.0.0.1:7524/livekit/rtc/v1/validate",
+    "curl -s -o /dev/null -w 'root %{http_code}\\n' http://127.0.0.1:7524/",
+    "",
+    "docker logs --tail=60 colab-nginx"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Route","Healthy result","Failure signal"],"rows":[
+    ["`nginx -t`","syntax ok","error = bad config, won't reload"],
+    ["`/api/health`","`200`","`502` = backend upstream down"],
+    ["`/livekit/rtc/v1/validate`","`400`","`404` = prefix not stripped; `502` = SFU down"],
+    ["`/`","`200`","`502`/`no healthy upstream` = frontend down or LB→port mismatch"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**no healthy upstream:** verify the LB forwards to the correct `<server-ip>:NGINX_PORT`; bring up any down upstream container; then restart nginx so it re-resolves upstreams.",
+    "**nginx won't start:** start the missing upstream(s) first (nginx requires all at boot), then nginx.",
+    "**`/livekit` 404:** restore the prefix-strip `rewrite`.",
+    "**WS broken:** restore the Upgrade/Connection headers and long timeouts on the realtime/LiveKit locations.",
+    "**413:** raise `client_max_body_size` (and the corporate LB body cap) to 100M."
+  ]},
+  {"t":"callout","kind":"warning","title":"'no healthy upstream' = look at ports first","text":"This message is the production tell-tale for a load-balancer or nginx port mismatch, NOT an application bug. Before reading any backend code, confirm: (1) the LB targets the right host IP and the published `NGINX_PORT`; (2) every upstream container is running. nginx refuses to boot with a missing upstream, so a single crash-looping dependency (historically MinIO) can take the whole edge down."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.14 DNS Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "The app loads but calls fail from outside the LAN.",
+    "TURN-over-TLS fails because the relay hostname doesn't resolve, or resolves to the wrong IP.",
+    "After a regional media move (Mumbai), media still goes to the old region.",
+    "Certificate hostname mismatch warnings."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"DNS correctness is load-bearing for media. `collab.resulticks.com` points at the app LB; `turncollab.resulticks.com` must be a SEPARATE A record pointing at the TURN box's OWN public IP — not the app LB and not the internal SFU IP. The TLS cert for the TURN host must match that name, or `turns:` fails."},
+  {"t":"ul","items":[
+    {"text":"TURN host wrong","items":["`turncollab.resulticks.com` resolves to the app LB or an internal IP, so the relay is unreachable from off-network clients."]},
+    {"text":"Regional move not taking effect","items":["After relocating the SFU/coturn to a near region, `turncollab.resulticks.com` DNS and the nginx `livekit_signal` upstream / `LIVEKIT_SERVER_URL` must be re-pointed; if DNS still resolves to the old region, media stays far."]},
+    {"text":"Cert mismatch","items":["The cert CN/SAN doesn't match the resolved hostname (often after a DNS re-point without a new cert)."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Resolve each public hostname and confirm the target IP is the intended one.",
+    "Confirm the TURN host resolves to its OWN public IP, not the LB/SFU.",
+    "Match the resolved IP against the TLS cert CN/SAN."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "getent hosts collab.resulticks.com",
+    "getent hosts turncollab.resulticks.com   # must be the TURN box public IP",
+    "dig +short turncollab.resulticks.com",
+    "echo | openssl s_client -connect turncollab.resulticks.com:5349 -servername turncollab.resulticks.com 2>/dev/null | openssl x509 -noout -subject"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Host","Healthy result","Failure signal"],"rows":[
+    ["`collab.resulticks.com`","App LB public IP","Wrong IP = app unreachable"],
+    ["`turncollab.resulticks.com`","TURN box's own public IP","LB/internal IP = TURN unreachable off-network"],
+    ["TLS subject","Matches the TURN hostname","Mismatch = `turns:` fails"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "Create/correct the `turncollab.resulticks.com` A record to the TURN box's public IP.",
+    "After a regional move, re-point TURN DNS and update the nginx upstream + `LIVEKIT_SERVER_URL` together, then restart nginx and the backend.",
+    "Reissue the TLS cert for the correct hostname after any DNS change."
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.15 Firewall Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "Signalling is healthy (validate returns 400) but media never connects — the classic 'works for some, fails for others'.",
+    "Internal/VPN calls work; external calls hang at DTLS.",
+    "After a regional media move, the new SFU is unreachable.",
+    "TURN relay allocations time out from off-network clients."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"Media goes DIRECT to the box on specific ports that must be open at the host firewall / cloud security group. The canonical proof that a firewall was the cause was `requestsReceived:0` on the SFU — packets never arrived. The required openings: SFU media `7532/udp` + `7531/tcp` (from clients, i.e. 0.0.0.0/0 for public calls) and `7533/udp` (built-in TURN); coturn `3478/udp+tcp`, `5349/udp+tcp`, optionally `443`, and the relay range `49152-65535/udp`. Signalling `7534` stays internal (proxied), and in a regional split is locked to the app server's IP only."},
+  {"t":"ul","items":[
+    {"text":"Media hangs externally","items":["SFU media ports (`7532/udp`, `7531/tcp`) closed to the public, so off-network ICE has no reachable path. `requestsReceived:0` confirms it."]},
+    {"text":"TURN relay times out","items":["coturn ports and/or the relay UDP range are not open on the TURN box's public IP."]},
+    {"text":"Regional SFU unreachable","items":["GCP firewall not opened for the new SFU: `udp:7532` + `tcp:7531` from 0.0.0.0/0, TURN ports, relay range, and `tcp:7534` from the app server IP only."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Confirm signalling is healthy first (400 validate) to isolate media-plane vs signalling.",
+    "From an EXTERNAL host, probe the SFU media ports.",
+    "Check the SFU's received-packet counter (0 received = firewall).",
+    "Verify the cloud security group / GCP firewall rules for each required port."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# From an EXTERNAL machine: are the SFU media ports reachable?",
+    "nc -vz -u <SFU_PUBLIC_IP> 7532",
+    "nc -vz <SFU_PUBLIC_IP> 7531",
+    "",
+    "# TURN ports + relay range on the TURN box",
+    "nc -vz -u <TURN_PUBLIC_IP> 3478",
+    "nc -vz <TURN_PUBLIC_IP> 5349",
+    "",
+    "# GCP firewall rules (if on GCP)",
+    "gcloud compute firewall-rules list --format='table(name,allowed,sourceRanges)'"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Port","Purpose","Required source"],"rows":[
+    ["`7532/udp`, `7531/tcp`","SFU ICE media","0.0.0.0/0 for public calls"],
+    ["`7533/udp`","SFU built-in TURN","0.0.0.0/0"],
+    ["`3478`, `5349`, `443`","coturn TURN/STUN/TLS","0.0.0.0/0"],
+    ["`49152-65535/udp`","coturn relay range","0.0.0.0/0 (media flows here)"],
+    ["`7534/tcp`","SFU signalling","internal / app-server IP only"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "Open the SFU media ports and the coturn ports + relay range on the relevant public IP(s).",
+    "Keep signalling `7534` internal (proxied via nginx/Caddy); in a regional split lock it to the app server IP.",
+    "Re-run the external `nc` probes after opening to confirm reachability before declaring calls fixed."
+  ]},
+  {"t":"callout","kind":"note","title":"requestsReceived:0 is the firewall fingerprint","text":"If the SFU reports zero received requests during a failing external call while signalling is healthy, the firewall is dropping media packets before they reach LiveKit. Opening `udp:7532` and `tcp:7531` on the SFU's public IP (and the coturn relay range) is the fix — this exact change resolved live off-network calls with no application code change."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.16 TLS Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "'media server error' / calls fail because the app is plain HTTP (insecure context).",
+    "Mixed-content errors: HTTPS page trying to open a `ws://` socket.",
+    "Browser certificate warnings (self-signed or hostname mismatch).",
+    "`turns:` (5349/443) fails while plain `turn:3478` works."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"TLS is mandatory because browsers block getUserMedia and secure WebSockets outside a secure context. In the nginx topology, TLS is ALWAYS terminated upstream (corporate LB on 443) — nginx never holds a cert and honors `X-Forwarded-Proto` (defaulting to https). In the Caddy topology, Caddy terminates TLS itself (`tls internal` self-signed by default, or Let's Encrypt with a real domain). coturn has its own cert for `turns:`."},
+  {"t":"ul","items":[
+    {"text":"Insecure context","items":["No TLS front — the app is plain HTTP at a bare IP. Calls fail (15.8). This is the central reason a TLS front is mandatory."]},
+    {"text":"Mixed content","items":["The page is HTTPS but a `ws://` LiveKit/socket URL is used. The backend derives `wss://<host>/livekit` from `X-Forwarded-Proto`; if nginx forwards the wrong `http`, or an explicit `LIVEKIT_WS_URL=ws://...` is set, the browser blocks it."]},
+    {"text":"Cert warning","items":["Caddy `tls internal` shows a one-time proceed warning until the root CA is installed or a real domain is used; a hostname-mismatched cert always warns."]},
+    {"text":"`turns:` fails","items":["coturn's cert (`/etc/coturn/certs/fullchain.pem` + `privkey.key`) is missing/invalid for the TURN hostname (15.6)."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Confirm the browser sees HTTPS and `window.isSecureContext === true`.",
+    "Confirm nginx receives/sets the correct `X-Forwarded-Proto` so the backend builds `wss://`.",
+    "Inspect the app cert and the TURN cert for validity and hostname match."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# App cert (through the LB)",
+    "echo | openssl s_client -connect collab.resulticks.com:443 -servername collab.resulticks.com 2>/dev/null | openssl x509 -noout -subject -dates",
+    "",
+    "# Is the backend deriving wss? (the LiveKit URL it mints should be wss:// in prod)",
+    "curl -s -H 'Authorization: Bearer <JWT>' -X POST https://collab.resulticks.com/api/calls/diag-token -d '{}' -H 'Content-Type: application/json' | grep -o 'wss\\?://[^\"]*'",
+    "",
+    "# TURN cert",
+    "echo | openssl s_client -connect turncollab.resulticks.com:5349 -servername turncollab.resulticks.com 2>/dev/null | openssl x509 -noout -subject -dates"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["App cert","Valid, matches host, not expired","Mismatch/expired = warnings, blocked WSS"],
+    ["Minted LiveKit URL","`wss://.../livekit`","`ws://...` on an HTTPS page = mixed content blocked"],
+    ["TURN cert","Valid for the TURN host","Invalid = `turns:` fails, only 3478 left"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**No TLS:** put a TLS front in place (corporate LB, or Caddy `tls internal` / Let's Encrypt). Mandatory for calls.",
+    "**Mixed content:** ensure nginx forwards the correct `X-Forwarded-Proto` (default https) and leave `LIVEKIT_WS_URL` blank so the backend derives `wss://` from the origin.",
+    "**Self-signed warning:** install Caddy's root CA (`docker exec colab-caddy caddy trust`) or switch to a real domain + Let's Encrypt.",
+    "**TURN cert:** drop a valid `fullchain.pem`/`privkey.key` for the TURN hostname into `infrastructure/coturn/certs/` and restart coturn."
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.17 GCP / Cloud-Platform Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "External calls hang despite open application ports — the box's 'public IP' is egress-only.",
+    "coturn fails to start with 'cannot parse external-ip'.",
+    "A 1:1 NAT box advertises only its private IP, so off-network media fails.",
+    "Regional SFU unreachable after a Mumbai-style move."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"CoLab's live SFU box has a private NIC (e.g. 10.200.3.17) plus a 1:1-NAT public IP. Cloud specifics bite here: an egress-only Cloud NAT cannot receive inbound media (so TURN is physically impossible), and a 1:1 NAT box needs `use_external_ip:true` so LiveKit STUN-discovers and advertises the public IP alongside the internal one. coturn cannot expand env vars in its conf, so `--external-ip`/`--relay-ip` are passed on the compose command line (`${COTURN_PUBLIC_IP}`), and a left-in placeholder makes coturn fail loudly."},
+  {"t":"ul","items":[
+    {"text":"Egress-only NAT","items":["The 'public IP' is a Cloud NAT that only does outbound; inbound media/TURN can't reach the box. This requires a TRUE inbound-capable 1:1 NAT or a real external IP — a network-team action, not a config change."]},
+    {"text":"coturn won't start","items":["`COTURN_PUBLIC_IP` left as the `REPLACE_WITH_PUBLIC_IPv4` placeholder — coturn fails by design rather than silently relaying nothing."]},
+    {"text":"Only private candidate advertised","items":["`use_external_ip:false` with a pinned private `node_ip` advertised only 10.200.3.17; off-network clients had no reachable SFU candidate. Fix: `use_external_ip:true`, `node_ip` unset."]},
+    {"text":"Regional SFU unreachable","items":["GCP firewall not opened for the new region's SFU/coturn ports (15.15)."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Confirm the box has a genuinely internet-routable, inbound-capable IPv4 (not egress-only Cloud NAT).",
+    "Confirm `COTURN_PUBLIC_IP` is a real IP, not the placeholder.",
+    "Confirm the SFU advertises BOTH the internal and public candidates.",
+    "Confirm GCP firewall rules for all media/TURN ports (15.15)."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "# What public IP does the box actually see for itself?",
+    "curl -s https://api.ipify.org; echo",
+    "",
+    "# coturn parsed a real external IP (not the placeholder)?",
+    "docker logs --tail=50 colab-coturn | grep -iE 'external-ip|cannot parse'",
+    "",
+    "# SFU advertising BOTH candidates?",
+    "docker logs colab-livekit | grep -i candidate",
+    "",
+    "# GCP firewall + NAT type",
+    "gcloud compute firewall-rules list --format='table(name,allowed,sourceRanges)'",
+    "gcloud compute routers nats list --router=<router> --region=<region>"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"ul","items":[
+    "The box reports a real public IPv4 that accepts inbound media.",
+    "coturn logs a parsed external IP and listens; no 'cannot parse' error.",
+    "LiveKit advertises both the internal host candidate and the STUN-discovered public IP.",
+    "Firewall rules open the SFU media ports, TURN ports, and relay range from 0.0.0.0/0 (signalling locked to the app server)."
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**Egress-only NAT:** escalate to the network team for a true 1:1 inbound NAT or a real external IP; external TURN is impossible without it.",
+    "**Placeholder IP:** set `COTURN_PUBLIC_IP` to the real public IPv4 in `.env.live` and restart coturn.",
+    "**Only-private candidate:** set `use_external_ip:true` with `node_ip` unset and restart LiveKit.",
+    "**Regional move:** open the GCP firewall for the new SFU/coturn and re-point DNS + nginx upstream + `LIVEKIT_SERVER_URL` (15.14/15.15)."
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.18 Docker / Compose Issues"},
+
+  {"t":"h","level":3,"text":"Symptoms"},
+  {"t":"ul","items":[
+    "'failed to bind host port 0.0.0.0:3306: address already in use' (or similar) on `up`.",
+    "A container crash-loops; dependent containers (nginx) won't start.",
+    "`docker compose config` errors on missing env or placeholders.",
+    "Data vanished after a `down -v`.",
+    "The wrong compose file/profile was used, so a service is missing or extra."
+  ]},
+
+  {"t":"h","level":3,"text":"Possible Causes"},
+  {"t":"p","text":"CoLab ships several compose files for different topologies: `docker-compose.yml` (base, nginx behind `--profile production`), `docker-compose.live.yml` (live, only nginx + LiveKit media published to the host), `docker-compose.production.yml` (Caddy-fronted, no bundled DB), `docker-compose.mumbai.yml` (regional media only), `docker-compose.cloud.yml` (LiveKit Cloud + Cloudflare Tunnel). The live file deliberately publishes ONLY two host surfaces to avoid port collisions on the shared box; everything else is internal-only."},
+  {"t":"ul","items":[
+    {"text":"Port already in use","items":["A host service already owns the port the base compose tries to publish (e.g. the server's own MySQL on 3306). The live compose fixes this by NOT publishing db/backend/frontend/minio/livekit-signalling to the host."]},
+    {"text":"Crash-loop cascade","items":["A failing dependency (historically MinIO) takes nginx down because nginx resolves all upstreams at boot. `depends_on` ordering matters."]},
+    {"text":"`config` errors","items":["Placeholders like `REPLACE_WITH_*`/`CHANGE_ME_*` left in `.env`. `use-profile` warns on these; production boot guards fail fast on bundled defaults."]},
+    {"text":"Data loss","items":["`down -v` removed the named volume (15.10)."]},
+    {"text":"Wrong file/profile","items":["Running the base file on the live box (port clash), or omitting `--profile production`/`--profile coturn` when a service is needed."]}
+  ]},
+
+  {"t":"h","level":3,"text":"Diagnosis Steps"},
+  {"t":"ol","items":[
+    "Validate the compose config resolves with the intended env file.",
+    "Check container status and restart counts.",
+    "Read logs of the crash-looping container first, then its dependents.",
+    "Confirm the right compose file/profile and env file are in use."
+  ]},
+
+  {"t":"h","level":3,"text":"Commands"},
+  {"t":"code","lines":[
+    "docker compose --env-file .env.live -f docker-compose.live.yml config >/dev/null && echo COMPOSE_OK",
+    "docker compose --env-file .env.live -f docker-compose.live.yml ps",
+    "docker ps -a --filter name=colab- --format 'table {{.Names}}\\t{{.Status}}'",
+    "",
+    "# Restart cleanly (NEVER -v in production)",
+    "docker compose --env-file .env.live -f docker-compose.live.yml up -d --build",
+    "",
+    "# Backup first, always",
+    "docker exec colab-db mysqldump -u colab -pcolab --single-transaction --routines --triggers colab > backup_$(date +%Y%m%d_%H%M%S).sql"
+  ]},
+
+  {"t":"h","level":3,"text":"Expected Results"},
+  {"t":"table","headers":["Check","Healthy result","Failure signal"],"rows":[
+    ["`compose config`","`COMPOSE_OK`","Error names a missing env/placeholder"],
+    ["`ps`","All services `Up`/`healthy`","A `Restarting` container is the crash source"],
+    ["Restart count","Low/zero","High count = crash-loop"]
+  ]},
+
+  {"t":"h","level":3,"text":"Fixes"},
+  {"t":"ul","items":[
+    "**Port clash:** use the topology-correct compose file (live publishes only nginx + LiveKit media); never run the base file on the shared box.",
+    "**Crash cascade:** fix the root container (read its logs), then bring the stack up so dependents resolve.",
+    "**Placeholders:** fill real values via the correct `.env.<profile>` (`use-profile` to switch); never deploy with `CHANGE_ME_*`.",
+    "**Data loss:** restore from `mysqldump`; the named volume persists across `down`/`up --build` but not `-v`.",
+    "**Rollback:** use `down` (not `down -v`) then `up -d --build`; for the Mumbai media move, revert the nginx upstream + `LIVEKIT_SERVER_URL`, restart livekit + nginx, and re-point TURN DNS."
+  ]},
+  {"t":"callout","kind":"tip","title":"The deploy hygiene checklist","text":"Before any production deploy: (1) take a `mysqldump`; (2) `docker compose ... config` to validate env; (3) confirm no `REPLACE_WITH_*` placeholders remain; (4) use the topology-correct compose file with the matching `.env.<profile>`; (5) bring the stack up with `--build`, never `down -v`. After: verify `/api/health` (200), the LiveKit validate probe (400), and one end-to-end call from an OFF-network client."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"15.19 Cross-Cutting Triage: Symptom → Likely Domain"},
+  {"t":"p","text":"When a report is vague ('calls are broken', 'the app is down'), use this lookup to jump to the right playbook. The right-most column captures the single highest-probability root cause learned in production."},
+  {"t":"table","headers":["Symptom","Most likely domain","First-guess root cause"],"rows":[
+    ["'no healthy upstream' / 502","15.13 Nginx","LB→host port mismatch or a down upstream container"],
+    ["'media server error' on start","15.8 Media / 15.16 TLS","App served over plain HTTP (insecure context)"],
+    ["Call connects then drops after ~15s","15.5 LiveKit / 15.6 TURN / 15.15 Firewall","SFU media ports closed or no reachable TURN relay"],
+    ["Laggy but stable calls","15.5 LiveKit","SFU in a far region (not P2P)"],
+    ["1:1 call instantly tears down","15.5 LiveKit","DUPLICATE_IDENTITY client double-connect race"],
+    ["Realtime only after refresh","15.4 WebSocket","Proxy blocks WS upgrade, or Redis adapter race"],
+    ["Calls/notifications stop after Redis restart","15.11 Redis / 15.4","Adapter swap dropped room membership"],
+    ["Attachment 'Couldn't load'","15.3 Files","Cross-host origin (not same-origin) or MinIO down"],
+    ["Unexpected mid-session logout","15.1 Auth","Stale build without /auth/me re-validation"],
+    ["Data missing after redeploy","15.10 DB / 15.18 Docker","`docker compose down -v` deleted the volume"]
+  ]},
+  {"t":"p","text":"The unifying lesson across every domain: **signalling health does not imply media health, and a 200 on `/api/health` does not imply the data plane is correct.** Isolate the plane (signalling vs media; control vs data; same-origin vs cross-origin) before reading code, and the right playbook above will almost always close the incident."}
+]

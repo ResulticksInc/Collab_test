@@ -1,0 +1,26 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["9G6WTL8BCF.com.resulticks.collab"],
+        "components": [
+          {
+            "/": "/join/*",
+            "exclude": true,
+            "comment": "Guest links stay in the browser (no account needed)."
+          },
+          {
+            "/": "/",
+            "?": { "meeting": "*" },
+            "comment": "Meeting QR / share link: /?meeting=<uuid>"
+          },
+          {
+            "/": "/",
+            "?": { "conversation": "*" },
+            "comment": "1:1 / group call QR link: /?conversation=<id>"
+          }
+        ]
+      }
+    ]
+  }
+}

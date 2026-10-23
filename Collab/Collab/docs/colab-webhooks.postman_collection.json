@@ -1,0 +1,895 @@
+{
+  "info": {
+    "_postman_id": "3ba6d99f-3e53-4a29-973f-6dbf9f101aaa",
+    "name": "CoLab \u2014 Chat Webhooks",
+    "description": "Call every CoLab webhook API from Postman, for both kinds of account.\n\nSETUP\n1. Import the companion environment file (colab.postman_environment.json) and select it, top right.\n2. Set baseUrl to your deployment, INCLUDING /api \u2014 e.g. https://colab.example.com/api\n\nIF YOU SIGN IN WITH EMAIL AND PASSWORD\nSet colabEmail and colabPassword in the environment, then run '0 \u00b7 Get a token / Sign in'. Everything else works immediately \u2014 the collection sends Bearer {{colabToken}} on every request except the two that must not have it.\n\nIF YOU SIGN IN WITH SSO\n'Sign in' CANNOT work for you: an SSO account has no password, and the identity provider's login needs a real browser. Instead, do this once:\n  a. Sign in to CoLab in your browser as normal.\n  b. Open the developer console on that tab and run:\n       localStorage.getItem('clb_token')\n       localStorage.getItem('clb_refresh')\n  c. Paste those two values into the environment as colabToken and colabRefresh.\nFrom then on you never touch the browser again: run '0 \u00b7 Get a token / Renew the token' whenever anything returns 401, and it refreshes without the identity provider.\n\nTHEN\nRun the folders in order: 1 finds the person and opens a DM, 2 creates the webhook, 3 posts through it. Each request saves what the next one needs, so you can just hit Send down the list.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{colabToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Collection-wide: make a lapsed session obvious instead of confusing.",
+          "if (pm.response.code === 401) {",
+          "  console.warn('401 \u2014 your token is missing or expired. Run \"0 \u00b7 Get a token / Renew the token\".');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "0 \u00b7 Get a token",
+      "description": "Start here. An EMAIL user runs 'Sign in'. An SSO user cannot \u2014 Postman has no way to complete the identity provider's browser flow \u2014 so they paste a token once (see the collection description) and then live on 'Renew the token' forever.",
+      "item": [
+        {
+          "name": "Sign in  (email users only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Email-and-password accounts only. An SSO account has no password at all and always answers 401 here \u2014 that is by design, not a misconfiguration.\n\nSaves data.token to {{colabToken}} and data.refreshToken to {{colabRefresh}}.\n\nDEVICE LIMIT: CoLab allows a limited number of simultaneous sessions per account (5 by default). Sign in enough times without signing out and this returns a list of your sessions instead of a token. The script handles it \u2014 it marks the least-recently-used session for sign-out, and you just press Send again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{colabEmail}}\",\n  \"password\": \"{{colabPassword}}\",\n  \"evictSessionId\": \"{{evictSessionId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Keep the eviction slot defined so it substitutes to an empty (inert) value.",
+                  "if (pm.environment.get('evictSessionId') === undefined) {",
+                  "  pm.environment.set('evictSessionId', '');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "const d = (b && b.data) || {};",
+                  "",
+                  "if (d.token) {",
+                  "  pm.environment.set('colabToken', d.token);",
+                  "  if (d.refreshToken) pm.environment.set('colabRefresh', d.refreshToken);",
+                  "  pm.environment.set('evictSessionId', '');   // used up",
+                  "  console.log('Signed in as', d.user && d.user.email);",
+                  "",
+                  "} else if (d.mfaRequired) {",
+                  "  pm.environment.set('colabChallengeId', d.challengeId);",
+                  "  console.log('MFA required \u2014 now run \"Verify MFA\" with your authenticator code.');",
+                  "",
+                  "} else if (d.limitReached) {",
+                  "  // Too many simultaneous sessions. Pick the least recently used one to replace.",
+                  "  const oldest = (d.sessions || []).slice().sort(function (x, y) {",
+                  "    return new Date(x.lastActiveAt) - new Date(y.lastActiveAt);",
+                  "  })[0];",
+                  "  if (oldest) {",
+                  "    pm.environment.set('evictSessionId', oldest.id);",
+                  "    console.warn('Device limit reached (max ' + d.max + ' sessions). ' +",
+                  "      'Marked the least-recently-used one for sign-out \u2014 press Send again.');",
+                  "  } else {",
+                  "    console.warn('Device limit reached and no session was listed to replace.');",
+                  "  }",
+                  "",
+                  "} else {",
+                  "  console.warn('No token in the response:', JSON.stringify(b));",
+                  "}",
+                  "",
+                  "pm.test('signed in, MFA challenged, or device limit reported', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "  pm.expect(Boolean(d.token || d.mfaRequired || d.limitReached)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify MFA  (only if sign-in returned a challenge)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/mfa/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "mfa",
+                "verify"
+              ]
+            },
+            "description": "ONLY needed when 'Sign in' answered { mfaRequired: true }. It skips itself when no challenge is pending, so it is safe to leave in a full-collection run. Replace code with the six digits from your authenticator, then send.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"challengeId\": \"{{colabChallengeId}}\",\n  \"code\": \"000000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Nothing to verify unless 'Sign in' actually returned a challenge.",
+                  "if (!pm.environment.get('colabChallengeId')) {",
+                  "  console.log('No MFA challenge pending \u2014 skipping this request.');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Tolerant on purpose: this request is a no-op unless MFA is switched on.",
+                  "const b = pm.response.json();",
+                  "const d = (b && b.data) || {};",
+                  "",
+                  "if (d.token) {",
+                  "  pm.environment.set('colabToken', d.token);",
+                  "  if (d.refreshToken) pm.environment.set('colabRefresh', d.refreshToken);",
+                  "  pm.environment.unset('colabChallengeId');",
+                  "  console.log('MFA accepted \u2014 signed in as', d.user && d.user.email);",
+                  "  pm.test('MFA accepted', function () { pm.response.to.have.status(200); });",
+                  "} else {",
+                  "  console.log('Not applicable \u2014 MFA is off, or the code was wrong. Response:', JSON.stringify(b));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Renew the token  (both user types)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "THE ONE THAT MATTERS FOR SSO. Needs no browser and no identity provider, so once you have pasted a refresh token in, Postman keeps itself signed in indefinitely. Refresh tokens are single-use \u2014 this saves the rotated one automatically. Run it whenever a request returns 401.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{colabRefresh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Save the session so every other request in this collection can use it.",
+                  "const b = pm.response.json();",
+                  "const d = (b && b.data) || {};",
+                  "",
+                  "if (d.mfaRequired) {",
+                  "  pm.environment.set('colabChallengeId', d.challengeId);",
+                  "  console.log('MFA required \u2014 now run \"Verify MFA\" with your authenticator code.');",
+                  "} else if (d.token) {",
+                  "  pm.environment.set('colabToken', d.token);",
+                  "  if (d.refreshToken) pm.environment.set('colabRefresh', d.refreshToken);",
+                  "  console.log('Signed in as', d.user && d.user.email);",
+                  "} else {",
+                  "  console.warn('No token in the response:', JSON.stringify(b));",
+                  "}",
+                  "",
+                  "pm.test('signed in or MFA challenged', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "  pm.expect(Boolean(d.token || d.mfaRequired)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Who am I",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Confirms {{colabToken}} is still valid and shows whose it is."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('token is valid', function () { pm.response.to.have.status(200); });",
+                  "const u = pm.response.json().data || {};",
+                  "console.log('Token belongs to', u.email, '(' + u.id + ')');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1 \u00b7 Find the person to message",
+      "description": "Turn an email address into a CoLab user id, then make sure a direct message exists. Safe to re-run: it reuses an existing conversation instead of failing.",
+      "item": [
+        {
+          "name": "Search users by email or name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/search?q={{peerEmail}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "{{peerEmail}}"
+                }
+              ]
+            },
+            "description": "Matches on name or email, within your active organization."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const list = pm.response.json().data || [];",
+                  "if (list.length) {",
+                  "  pm.environment.set('peerUserId', list[0].id);",
+                  "  console.log('Found', list[0].name, '\u2192', list[0].id);",
+                  "} else {",
+                  "  console.warn('No CoLab account matched that search.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Find an existing direct message",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/conversations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "conversations"
+              ]
+            },
+            "description": "Run this BEFORE opening a new one. If you already have a direct message with {{peerUserId}}, this finds it and sets {{conversationId}}, so the next request can skip itself. It also lists your groups \u2014 copy a group id from here if you want the webhook on a group instead."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const convs = pm.response.json().data || [];",
+                  "const peer = pm.environment.get('peerUserId');",
+                  "const dm = convs.find(function (c) {",
+                  "  return c.kind === 'dm' && (c.members || []).indexOf(peer) !== -1;",
+                  "});",
+                  "",
+                  "if (dm) {",
+                  "  pm.environment.set('conversationId', dm.id);",
+                  "  console.log('Existing direct message with', dm.name, '\u2192', dm.id);",
+                  "} else {",
+                  "  console.log('No direct message yet \u2014 run \"Open a direct message with them\" next.');",
+                  "}",
+                  "",
+                  "console.log('Groups you could use instead:', convs",
+                  "  .filter(function (c) { return c.kind !== 'dm' && c.kind !== 'self'; })",
+                  "  .map(function (c) { return c.name + ' = ' + c.id; }).join(' | ') || '(none)');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Open a direct message with them",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invites",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invites"
+              ]
+            },
+            "description": "CoLab requires a connection before a DM exists. This creates the DM immediately and returns its id; the person sees a request to accept. Saves data.conversationId to {{conversationId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"toUserId\": \"{{peerUserId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Already have the direct message? Then there is nothing to open.",
+                  "if (pm.environment.get('conversationId')) {",
+                  "  console.log('Direct message already known \u2014 skipping.');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "const d = (b && b.data) || {};",
+                  "",
+                  "if (d.conversationId) {",
+                  "  pm.environment.set('conversationId', d.conversationId);",
+                  "  console.log('Direct message ready:', d.conversationId);",
+                  "} else if (pm.response.code === 409) {",
+                  "  // A request to this person is already outstanding from an earlier run.",
+                  "  console.log('An invite is already pending with this person \u2014 run ' +",
+                  "    '\"Find an existing direct message\" to pick up its conversation id.');",
+                  "} else {",
+                  "  console.warn('Could not open a direct message:', JSON.stringify(b));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 \u00b7 Manage webhooks",
+      "description": "Everything here needs the bearer token. You only run these when setting an integration up or changing it \u2014 never on the hot path.",
+      "item": [
+        {
+          "name": "Supported events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks",
+                "events"
+              ]
+            },
+            "description": "Also tells you whether webhooks are switched on for this deployment."
+          }
+        },
+        {
+          "name": "List my webhooks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks"
+              ]
+            },
+            "description": "Every webhook you own, in conversations you can still see."
+          }
+        },
+        {
+          "name": "List webhooks on one conversation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks?conversationId={{conversationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks"
+              ],
+              "query": [
+                {
+                  "key": "conversationId",
+                  "value": "{{conversationId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Create INCOMING  (post into a chat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks"
+              ]
+            },
+            "description": "Returns the ingest token ONCE. Saved to {{ingestToken}} so the request in folder 3 works straight away.\n\nSwap conversationId for \"userId\": \"{{peerUserId}}\" to target your direct message with someone instead.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"direction\": \"in\",\n  \"conversationId\": \"{{conversationId}}\",\n  \"name\": \"Postman incoming\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('conversationId')) {",
+                  "  console.warn('conversationId is not set yet \u2014 run folder 1 first, or paste a group id into it.');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data || {};",
+                  "if (d.webhook) pm.environment.set('webhookId', d.webhook.id);",
+                  "if (d.token) {",
+                  "  pm.environment.set('ingestToken', d.token);",
+                  "  console.log('Ingest URL:', pm.environment.get('baseUrl') + '/webhooks/in/' + d.token);",
+                  "  console.log('This token is shown ONCE \u2014 it is stored only as a hash.');",
+                  "}",
+                  "pm.test('created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create OUTGOING  (chat to your URL)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks"
+              ]
+            },
+            "description": "targetUrl must be a public https address \u2014 private, loopback and cloud metadata addresses are refused. Saves the signing secret to {{signingSecret}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"direction\": \"out\",\n  \"conversationId\": \"{{conversationId}}\",\n  \"name\": \"Postman outgoing\",\n  \"targetUrl\": \"https://example.com/colab-hook\",\n  \"events\": [\n    \"message.created\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('conversationId')) {",
+                  "  console.warn('conversationId is not set yet \u2014 run folder 1 first, or paste a group id into it.');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data || {};",
+                  "if (d.webhook) pm.environment.set('webhookId', d.webhook.id);",
+                  "if (d.secret) {",
+                  "  pm.environment.set('signingSecret', d.secret);",
+                  "  console.log('Signing secret saved \u2014 shown ONCE.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send a test delivery",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/{{webhookId}}/test",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks",
+                "{{webhookId}}",
+                "test"
+              ]
+            },
+            "description": "Outgoing only. Queues a synthetic, fully signed delivery so you can prove your endpoint and its signature check work before real traffic depends on them."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('webhookId')) {",
+                  "  console.warn('webhookId is not set yet \u2014 create a webhook first.');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delivery log",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/{{webhookId}}/deliveries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks",
+                "{{webhookId}}",
+                "deliveries"
+              ]
+            },
+            "description": "status, attempts, response code and the recorded error for each attempt."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('webhookId')) {",
+                  "  console.warn('webhookId is not set yet \u2014 create a webhook first.');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rename / disable / re-subscribe",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/{{webhookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks",
+                "{{webhookId}}"
+              ]
+            },
+            "description": "Send only the fields you want to change.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Renamed from Postman\",\n  \"enabled\": true,\n  \"events\": [\n    \"message.created\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('webhookId')) {",
+                  "  console.warn('webhookId is not set yet \u2014 create a webhook first.');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rotate the credential",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/{{webhookId}}/rotate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks",
+                "{{webhookId}}",
+                "rotate"
+              ]
+            },
+            "description": "Issues a new token or secret and kills the old one immediately. The id and the delivery history are kept."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('webhookId')) {",
+                  "  console.warn('webhookId is not set yet \u2014 create a webhook first.');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data || {};",
+                  "if (d.token) pm.environment.set('ingestToken', d.token);",
+                  "if (d.secret) pm.environment.set('signingSecret', d.secret);",
+                  "console.log('Rotated \u2014 the previous credential no longer works.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/{{webhookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks",
+                "{{webhookId}}"
+              ]
+            },
+            "description": "Removes it."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('webhookId')) {",
+                  "  console.warn('webhookId is not set yet \u2014 create a webhook first.');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 \u00b7 Use the webhook",
+      "description": "This is the request your other application actually makes. Note its Auth is set to 'No Auth' \u2014 the token in the URL is the credential, and adding a bearer header here is the single most common mistake.",
+      "item": [
+        {
+          "name": "Post a message into the chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/in/{{ingestToken}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhooks",
+                "in",
+                "{{ingestToken}}"
+              ]
+            },
+            "description": "NO Authorization header. Accepts {text}, {title,text}, Slack attachments, or a plain string. Returns the id of the message it created.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Ticket #412\",\n  \"text\": \"Rajaram asked you to look at this. https://tracker.example.com/t/412\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('ingestToken')) {",
+                  "  console.warn('ingestToken is not set yet \u2014 create an INCOMING webhook first (folder 2).');",
+                  "  if (pm.execution && pm.execution.skipRequest) pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('posted', function () { pm.response.to.have.status(200); });",
+                  "const d = pm.response.json().data || {};",
+                  "console.log('Message', d.messageId, 'posted to', d.conversationId);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

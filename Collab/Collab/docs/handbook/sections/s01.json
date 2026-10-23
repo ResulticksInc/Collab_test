@@ -1,0 +1,195 @@
+[
+  {"t":"h","level":1,"text":"1. Executive Summary"},
+
+  {"t":"p","text":"CoLab is a **self-hosted, enterprise team-collaboration platform** built for the Resulticks organization. In one application it unifies the work that most companies spread across three or four separate tools: real-time team messaging (direct messages, group chats, and channels), 1:1 and group voice/video calls, scheduled video meetings with screen-share and recording, a Kanban task board, a calendar, personal reminders, and a shared file store. It is delivered as a single web application that a team runs on its own infrastructure rather than renting from a third-party SaaS vendor."},
+
+  {"t":"p","text":"This section is the orientation chapter of the CoLab Master Technical Handbook. It answers four questions an executive, an architect, or a new engineer asks first: *what is this product, why does it exist, who is it for,* and *how does it stack up against the tools it is meant to replace.* Every claim here is grounded in the real codebase — the monorepo at the repository root, its 47 database migrations, the Next.js frontend, the Express/Socket.IO backend, and the LiveKit media plane — and is deliberately honest about which capabilities are fully shipped, which are built-but-hidden behind feature flags, and which are scaffolds reserved for future work."},
+
+  {"t":"callout","kind":"note","title":"How to read this section","text":"1.1 defines the product and the problem it solves. 1.2 states the business objectives and intended users. 1.3 maps the competitive landscape and gives a capability-by-capability comparison versus Microsoft Teams, Slack, Google Meet, Zoom, and Discord, including a comparison table, a positioning grid, and a candid per-competitor assessment. 1.4 summarizes CoLab's true maturity so no reader leaves with an inflated picture of what is and is not production-ready."},
+
+  {"t":"h","level":2,"text":"1.1 What CoLab Is, and the Problem It Solves"},
+
+  {"t":"h","level":3,"text":"1.1.1 The product in one paragraph"},
+
+  {"t":"p","text":"**Plain-language version:** CoLab is a private, company-owned alternative to Slack and Microsoft Teams. People on a team use it to chat, call each other, hold video meetings, share files, track tasks, and set reminders — all in one window in their browser. Unlike the big commercial tools, CoLab runs on infrastructure the company controls: its own database, its own file storage, and its own video servers. Nothing leaves the company's network unless the company chooses to make it leave."},
+
+  {"t":"p","text":"**Engineering version:** CoLab is a monorepo composed of independently-bounded modules — `frontend/` (a Next.js 14 App Router single-page application), `backend/` (an Express 4 + Socket.IO API server in TypeScript), `database/` (MySQL 8 schema plus 47 ordered, idempotent migrations applied automatically on boot), `shared/` and `config/` (the cross-cutting event/HTTP contracts and the single boundary where `process.env` is read), `mcp/` and `agents/` (AI/MCP integration seams, off by default), and `infrastructure/` (LiveKit and coturn configuration for self-hosted media). The browser loads exactly one client-rendered SPA mounted at `/`; all in-app navigation is React state-driven, not URL-driven. A reverse proxy (nginx in the live topology, Caddy in the HTTPS-everywhere topology) fans same-origin traffic to the backend API (`/api`), the realtime socket (`/socket.io`), the LiveKit signalling server (`/livekit`), and object storage."},
+
+  {"t":"diagram","kind":"grid","title":"CoLab — the modules it unifies in one app","cols":4,"boxes":[
+    {"label":"Messaging","sub":"DMs, groups, channels"},
+    {"label":"Calls","sub":"1:1 + group, LiveKit"},
+    {"label":"Meetings","sub":"schedule, lobby, record"},
+    {"label":"Files","sub":"S3/MinIO + share links"},
+    {"label":"Tasks","sub":"Kanban board"},
+    {"label":"Calendar","sub":"view over meetings"},
+    {"label":"Reminders","sub":"folders + recurrence"},
+    {"label":"Activity","sub":"notifications feed"}
+  ]},
+
+  {"t":"h","level":3,"text":"1.1.2 Why CoLab exists"},
+
+  {"t":"p","text":"CoLab exists to solve a specific, concrete pain that every mid-to-large organization eventually feels: collaboration tooling is **fragmented, externally-hosted, and expensive at scale.** A typical team licenses Microsoft Teams or Slack for chat and meetings, a separate tool for tasks, and stores files in yet another cloud service. Each of those is a per-seat subscription, each holds the company's conversations and files on a vendor's servers in a vendor's data center, and each is a separate vendor relationship to manage, audit, and trust. For an organization that handles sensitive customer data — which is the entire premise of Resulticks' marketing-engagement business — this fragmentation is simultaneously a cost problem, a data-sovereignty problem, and a security-surface problem."},
+
+  {"t":"p","text":"CoLab's thesis is that a single, **self-hostable** platform can deliver the day-to-day collaboration surface (chat + calls + meetings + tasks + files) while keeping every byte of conversation, every uploaded file, and every recorded meeting inside infrastructure the organization owns and controls. The same-origin delivery model, the bundled MySQL/MinIO/LiveKit/coturn stack, and the optional client-side end-to-end encryption for direct messages are all in service of that thesis. The product is not trying to out-feature Microsoft on day one; it is trying to give an organization a credible, ownable substitute for the 80% of collaboration that teams do every day, without a recurring per-seat bill and without handing the data to a third party."},
+
+  {"t":"p","text":"The problem statement, restated as the three forces CoLab is designed to counter:"},
+
+  {"t":"ul","items":[
+    {"text":"**Fragmentation.** Chat, calls, meetings, tasks, calendar, reminders, and files normally live in separate tools. CoLab folds them into one application with one login, one presence system, one notification feed, and one search surface."},
+    {"text":"**Loss of data sovereignty.** Commercial SaaS stores your messages and files on the vendor's servers. CoLab runs on the company's own MySQL database, its own MinIO object store, and its own LiveKit media servers — the deployment topology (see Section on Deployment) keeps the database, storage, and signalling ports internal-only, exposing just the reverse proxy and the media relay."},
+    {"text":"**Per-seat cost at scale.** Subscription pricing grows linearly with headcount. A self-hosted platform converts that recurring per-seat cost into a fixed infrastructure cost the organization already pays for in some form."}
+  ]},
+
+  {"t":"h","level":3,"text":"1.1.3 What CoLab actually does today"},
+
+  {"t":"p","text":"It is essential — for a five-year source-of-truth document — to separate aspiration from reality at the outset. The following capabilities are **fully implemented, persisted, and stable** end-to-end (frontend UI, backend route, service logic, and database table all present and wired):"},
+
+  {"t":"ul","items":[
+    "**Authentication** — scrypt password hashing with per-user salt and constant-time compare, JWT sessions (7-day default TTL), enterprise credential policy, rate-limited login/signup, token-blocklist logout.",
+    "**Messaging** — direct messages, group chats, and channels share one code path (`conversations.kind` = `dm` / `group` / `channel`); rich-HTML messages with reactions, threads, edits, forwarding, pinning, bookmarks, scheduled send, voice messages, attachments, and full-text search.",
+    "**Calls** — 1:1 and group voice/video over the LiveKit SFU, with screen-share, host controls (mute-all, per-participant mute/remove), promotion of a 1:1 call to a group, and voicemail.",
+    "**Meetings** — scheduling with Outlook-style recurrence, a waiting-room lobby, room lock, participant eject, host/co-host controls, in-meeting chat (persisted), hand-raise, reactions, and join-by-ID/link.",
+    "**Tasks, Calendar, Reminders** — a native Kanban task board with dependencies and comments; a calendar that is a view over scheduled meetings and reminder due-dates; reminders with folders, priority, status, and recurrence.",
+    "**Files** — upload/download through a same-origin proxy to MinIO/S3 with an automatic MySQL-BLOB fallback, share links, per-user/per-conversation share grants, and starred favorites.",
+    "**Presence, Notifications (the in-app Activity feed), Contacts, and Settings** — all shipped and wired to the realtime layer."
+  ]},
+
+  {"t":"p","text":"The following are built but **deliberately gated off** by feature flags (the code, routes, and database support all exist; reactivation is a single environment-variable flip): global **search** (`NEXT_PUBLIC_FEATURE_GLOBAL_SEARCH`), self-service **signup** (`NEXT_PUBLIC_FEATURE_SIGNUP`), and **AI conversation summaries** (`NEXT_PUBLIC_FEATURE_AI_SUMMARY`). The following are **partial or absent**: server-side meeting recording via LiveKit Egress (code complete, but the egress worker container is not provisioned in current deployments — a client-side `MediaRecorder` fallback does work); the AI \"ask\" assistant (the backend endpoint exists but no UI calls it); custom status text/emoji (only manual Away/Busy/DND presence exists); the **MCP** server (a real REST-proxy implementation exists in `mcp/` but is not wired into any running deployment); and **AI agents** (the `agents/` module is an explicit scaffold whose methods throw `not implemented (Sprint 6)`). Section 1.4 and the per-module sections expand on each of these honestly."},
+
+  {"t":"callout","kind":"warning","title":"Maturity is not uniform","text":"Do not read the feature list as a flat claim of parity with Microsoft Teams. CoLab's messaging, calls, meetings, tasks, and files are genuinely production-grade; its AI/agents/MCP surface is early-stage scaffolding; and its media plane is reliable on normal networks but depends on correctly-provisioned TURN/SFU/HTTPS infrastructure to work across hostile networks. The competitive comparison in 1.3 is calibrated against this reality."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"1.2 Business Objectives and Intended Users"},
+
+  {"t":"h","level":3,"text":"1.2.1 Business objectives"},
+
+  {"t":"p","text":"CoLab's objectives follow directly from the problem it solves. They are listed here in priority order, because the engineering trade-offs throughout this handbook were made to serve them."},
+
+  {"t":"table","headers":["Objective","What it means concretely","How the architecture serves it"],"rows":[
+    ["Data sovereignty","Conversations, files, and recordings stay on company-owned infrastructure.","Self-hosted MySQL + MinIO + LiveKit; live topology keeps DB/storage/signalling ports internal-only; optional client-side E2EE for DMs makes the server blind to message content."],
+    ["Tool consolidation","Replace the daily 80% of collaboration with one app.","Single SPA unifying messaging, calls, meetings, tasks, calendar, reminders, files, presence, and notifications behind one login and one realtime layer."],
+    ["Cost predictability","Convert per-seat SaaS subscriptions into fixed infrastructure cost.","Entirely open-source/self-hostable component stack (MySQL, Redis, MinIO, LiveKit, coturn) with no per-seat licensing."],
+    ["Operability & reliability","A small ops team can deploy, run, and recover it.","Docker Compose topologies per environment, idempotent auto-applied migrations, a same-origin proxy that removes CORS/mixed-content failure classes, and a built-in diagnostics/logging layer."],
+    ["Security posture","Enterprise-grade auth, authorization, and transport hardening.","scrypt + JWT + token blocklist, resource-membership authorization, rate limiting, security headers, production secret guards, and a documented (default-off) DM E2EE scheme."]
+  ]},
+
+  {"t":"h","level":3,"text":"1.2.2 Intended users"},
+
+  {"t":"p","text":"The **primary intended user is the Resulticks organization** and its internal teams — the deployment topology, the server names (`collab.resulticks.com`, the test tier `collab.resul.com`), the corporate MySQL targets, and the credential/onboarding flows are all built around an internal corporate workforce rather than the public internet. By extension, the intended user profile is **enterprise teams** that want a Slack/Teams-class collaboration surface they can self-host."},
+
+  {"t":"p","text":"Three concrete user roles shape the product:"},
+
+  {"t":"ul","items":[
+    {"text":"**End users (team members).** They live in the messaging, calls, meetings, tasks, and files surfaces day to day. The product is optimized for them: a single fast SPA, premium theming (six themes, multiple accents, density and accessibility options), and a help center reachable from every screen."},
+    {"text":"**Hosts and conversation owners.** A meeting's creator (and any co-host) controls the lobby, lock, eject, and mute. A group conversation's owner/admin controls group-call mute and participant removal. Authorization is **resource-membership based**, not global-role based — you can only act on rooms and conversations you belong to."},
+    {"text":"**Operators / administrators.** They deploy CoLab across the three-tier topology (local → teams/test → live), manage the environment profiles, run the migration/backup runbooks, and watch the diagnostics layer. The handbook's deployment and operations sections are written for them."}
+  ]},
+
+  {"t":"callout","kind":"note","title":"Not (yet) a multi-tenant public SaaS","text":"CoLab is built as a single-organization deployment. There is a coarse `role` column on the user row (member/admin) and an inert multi-tenant seam (`X-CoLab-Tenant` header in the MCP gateway, an `oneApiClient` DB-gateway contract), but no live multi-tenancy, no global RBAC engine, and no SSO/MFA today. Authorization in production is membership-scoped. Treat CoLab as an internal corporate tool, not a public sign-up SaaS."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"1.3 Competitive Landscape and Comparison"},
+
+  {"t":"p","text":"CoLab competes — conceptually — with the dominant team-collaboration tools: **Microsoft Teams, Slack, Google Meet, Zoom, and Discord.** It is important to frame this honestly. These five are mature, globally-scaled, billion-dollar products with thousands of engineer-years behind them. CoLab is a focused, self-hostable platform that deliberately covers the high-frequency core of collaboration. Its competitive advantage is **not** feature breadth — it is **ownership**: self-hostability, data sovereignty, no per-seat cost, and a server-blind E2EE option for direct messages. Where the incumbents win is global scale, ecosystem integrations, mobile/desktop native apps, compliance certifications, and the long tail of polish."},
+
+  {"t":"h","level":3,"text":"1.3.1 Positioning"},
+
+  {"t":"p","text":"The clearest way to position CoLab is along two axes: **breadth of capability** (does the tool span chat, calls, meetings, tasks, and files — or specialize?) versus **deployment control** (is it locked-in cloud SaaS, or can the organization self-host and own its data?). CoLab's distinctive quadrant is *broad capability with full self-host control* — a position none of the five incumbents occupy, because all five are cloud-first SaaS."},
+
+  {"t":"diagram","kind":"grid","title":"Positioning grid — capability breadth vs deployment control","cols":2,"boxes":[
+    {"label":"Broad + Self-host (CoLab)","sub":"chat+calls+meetings+tasks+files, owned data"},
+    {"label":"Broad + Cloud-only","sub":"Microsoft Teams, Slack, Discord"},
+    {"label":"Focused + Self-host","sub":"(niche OSS: Matrix, Jitsi, Rocket.Chat)"},
+    {"label":"Focused + Cloud-only","sub":"Zoom, Google Meet (meetings-first)"}
+  ]},
+
+  {"t":"p","text":"Read the grid this way: **Teams, Slack, and Discord** are broad collaboration suites but cloud-locked — you cannot run them on your own servers. **Zoom and Google Meet** are meetings-first specialists, also cloud-only. The self-host quadrant is otherwise occupied by focused open-source point solutions (a Matrix/Element for chat, a Jitsi for meetings). CoLab's bet is to be **broad and self-hostable at once** — the empty top-left quadrant — accepting that it will trail the incumbents on the long tail of features in exchange for ownership."},
+
+  {"t":"h","level":3,"text":"1.3.2 Capability comparison matrix"},
+
+  {"t":"p","text":"The matrix below compares CoLab against the five incumbents on the capabilities that matter for a collaboration platform. CoLab's column reflects the **honest, code-grounded** state described in 1.1.3: a checkmark means fully shipped, *Flagged* means built but off by default, *Partial* means incomplete, and *Scaffold* means interface-only. The incumbents are rated on their generally-available production capabilities."},
+
+  {"t":"table","headers":["Capability","CoLab","MS Teams","Slack","Google Meet","Zoom","Discord"],"rows":[
+    ["Team messaging (DMs)","Yes","Yes","Yes","Limited","Limited","Yes"],
+    ["Group chats","Yes","Yes","Yes","No","Limited","Yes"],
+    ["Channels","Yes","Yes","Yes","No","No","Yes"],
+    ["1:1 voice/video calls","Yes","Yes","Yes","Yes","Yes","Yes"],
+    ["Group calls","Yes","Yes","Yes","Yes","Yes","Yes"],
+    ["Scheduled meetings","Yes","Yes","Yes","Yes","Yes","Limited"],
+    ["Screen share","Yes","Yes","Yes","Yes","Yes","Yes"],
+    ["Meeting recording","Partial","Yes","Yes","Yes","Yes","No"],
+    ["Tasks / Kanban","Yes","Yes (Planner)","Add-on","No","No","No"],
+    ["Calendar","Yes","Yes","No","Yes","Yes","No"],
+    ["File sharing","Yes","Yes","Yes","Limited","Limited","Yes"],
+    ["End-to-end encryption","DM only (off by default)","1:1 calls only","No (Enterprise plan)","Optional","Optional","No"],
+    ["Self-hostable","Yes","No","No","No","No","No"],
+    ["AI features","Flagged / Partial","Yes (Copilot)","Yes","Yes (Gemini)","Yes","Limited"],
+    ["AI agents","Scaffold","Yes","Yes","Limited","Limited","No"],
+    ["MCP integration","Partial (standalone)","No","No","No","No","No"],
+    ["Per-seat cost","None (self-host)","Per-seat","Per-seat","Per-seat","Per-seat","Freemium"]
+  ]},
+
+  {"t":"callout","kind":"risk","title":"Read the CoLab column literally","text":"\"Meeting recording: Partial\" means the server-side LiveKit Egress path is coded but the egress worker is not provisioned in current deployments (client-side recording works). \"E2EE: DM only (off by default)\" means a custom Web-Crypto ECIES scheme covers direct messages and is disabled unless NEXT_PUBLIC_E2EE_ENABLED is set — calls and meetings are NOT E2EE. \"AI agents: Scaffold\" means the module throws not-implemented. Do not market these as parity features."},
+
+  {"t":"h","level":3,"text":"1.3.3 Head-to-head: where CoLab is similar and where it differs"},
+
+  {"t":"h","level":4,"text":"versus Microsoft Teams"},
+
+  {"t":"p","text":"**Similar:** Teams is the closest conceptual peer — it is the only incumbent that, like CoLab, tries to be the single pane of glass for chat, calls, meetings, files, and tasks (via Planner). CoLab matches Teams on the core daily surface: persistent channels, DMs, group chats, scheduled meetings with lobby and host controls, screen-share, a task board, and a file store. **Different:** Teams is deeply cloud-locked into Microsoft 365 — you cannot self-host it, and your data lives in Microsoft's cloud. CoLab is self-hostable and keeps data on company infrastructure. Teams wins decisively on scale, native desktop/mobile apps, compliance certifications, the Office/Graph ecosystem, and Copilot AI; CoLab wins on ownership, cost, and the option of server-blind DM encryption. CoLab does not attempt Teams' breadth of third-party app integrations."},
+
+  {"t":"h","level":4,"text":"versus Slack"},
+
+  {"t":"p","text":"**Similar:** Slack is the archetype for channel-based team messaging, and CoLab's messaging model — channels, group chats, DMs, threads, reactions, pins, bookmarks, rich text, and search — closely mirrors Slack's. Both center the product on the conversation. **Different:** Slack is messaging-first and treats calls/meetings as lighter add-ons (Huddles), whereas CoLab builds full LiveKit-based meetings with lobby/lock/eject/recording as a first-class module. Slack has a vast app/integration marketplace and a polished cross-platform client that CoLab does not match. Conversely, Slack is cloud-only with no self-host option, and full end-to-end encryption is not part of its model; CoLab is self-hostable and offers optional DM E2EE. Slack's enterprise features (Enterprise Key Management, compliance exports, SSO) are far more mature."},
+
+  {"t":"h","level":4,"text":"versus Google Meet"},
+
+  {"t":"p","text":"**Similar:** both provide browser-based scheduled video meetings with screen-share, and both lean on a server-side media architecture (CoLab's LiveKit SFU is conceptually analogous to Meet's media servers). CoLab's join-by-link/ID and lobby map onto Meet's join flow. **Different:** Google Meet is a meetings *specialist* — it is not a persistent team-chat or task platform — so the comparison is narrow. CoLab is a full collaboration suite of which meetings are one module. Meet has Google's global media footprint, near-flawless cross-network reliability, and Gemini-powered AI; CoLab's media reliability depends on correctly-provisioned self-hosted TURN/SFU/HTTPS, and its AI is flag-gated. Where CoLab differs in its favor: meetings live alongside chat, tasks, and files in one app, on owned infrastructure."},
+
+  {"t":"h","level":4,"text":"versus Zoom"},
+
+  {"t":"p","text":"**Similar:** Zoom and CoLab both treat the video meeting as a serious, feature-rich surface — host controls, mute-all, participant management, screen-share, recording, and waiting rooms (Zoom's waiting room is CoLab's lobby). CoLab's meeting host/co-host control model is directly comparable to Zoom's host/co-host. **Different:** Zoom is a meetings-and-webinars company; it is best-in-class for large, high-reliability video at global scale, with mature recording, transcription, and webinar tooling. CoLab does not match Zoom's media scale, its recording maturity (CoLab's server-side egress is not provisioned), or its webinar/large-event features. CoLab differs by embedding meetings inside a broader self-hosted collaboration suite and by keeping recordings on company storage rather than Zoom's cloud."},
+
+  {"t":"h","level":4,"text":"versus Discord"},
+
+  {"t":"p","text":"**Similar:** Discord pioneered the always-on, low-friction voice channel and persistent text channels for communities, and CoLab's group huddles and channel model share that DNA — lightweight presence, persistent channels, group voice/video, and reactions. **Different:** Discord is built for communities and gaming, not enterprise workflows — it has no real tasks, calendar, reminders, meeting lobby/lock, or enterprise auth/compliance story, and it is strictly cloud-hosted. CoLab is enterprise-oriented (credential policy, audit log, host controls, self-hosting) and adds the productivity modules Discord lacks. Discord wins on community scale, voice latency tuning, and a polished native client; CoLab wins on enterprise fit and data ownership."},
+
+  {"t":"h","level":3,"text":"1.3.4 The honest competitive summary"},
+
+  {"t":"p","text":"CoLab does not beat the incumbents at their own game, and this handbook will never claim it does. The five competitors have global media footprints, native desktop and mobile clients, deep third-party ecosystems, mature compliance and AI, and years of polish. CoLab's competitive case rests on a different axis entirely:"},
+
+  {"t":"ul","items":[
+    {"text":"**It is self-hostable.** None of the five can be run on the company's own servers. For an organization that needs data to stay in-house, that single fact can outweigh every feature gap."},
+    {"text":"**It consolidates broadly.** It spans chat, calls, meetings, tasks, calendar, reminders, and files in one app — broader than any single specialist (Meet, Zoom) and comparable in scope to Teams, without the cloud lock-in."},
+    {"text":"**It offers server-blind DM encryption.** The optional client-side ECIES E2EE for direct messages means a database or storage breach cannot read DM content — a guarantee most incumbents do not offer for text."},
+    {"text":"**It has no per-seat cost.** Headcount growth does not increase licensing spend."}
+  ]},
+
+  {"t":"p","text":"The reciprocal honesty: CoLab trails on meeting recording (egress unprovisioned), AI (flag-gated summaries; agents are a scaffold; the ask-assistant has no UI), native mobile/desktop apps (it is browser-only), global media reliability (depends on self-managed TURN/SFU in the right regions), and the breadth of enterprise compliance/SSO/MFA features. The right one-line positioning is: **CoLab is the self-hostable, broad-coverage collaboration platform you choose when owning your data and consolidating your tools matters more than matching the incumbents feature-for-feature.**"},
+
+  {"t":"h","level":2,"text":"1.4 Maturity Summary"},
+
+  {"t":"p","text":"To close the executive summary, the table below states CoLab's true maturity at a glance. It is the single most important honesty artifact in this section: a five-year source-of-truth document is worthless if it overstates readiness. Use this as the index into the deeper per-module sections."},
+
+  {"t":"table","headers":["Area","Status","One-line reality"],"rows":[
+    ["Authentication","Shipped","scrypt + JWT (7d) + blocklist + credential policy; rate-limited."],
+    ["Messaging (DM/group/channel)","Shipped","Rich HTML, reactions, threads, edits, forward, pin, bookmark, schedule, voice, search-backed."],
+    ["Calls (1:1 + group)","Shipped","LiveKit SFU + screen-share + host controls; media reliability needs HTTPS/TURN/SFU deploy."],
+    ["Meetings","Shipped","Lobby, lock, eject, host/co-host, in-meeting chat, recurrence, join-by-ID."],
+    ["Tasks / Calendar / Reminders","Shipped","Kanban + deps/comments; calendar = view over meetings; reminders with recurrence."],
+    ["Files / Attachments","Shipped","MinIO/S3 + DB-BLOB fallback, share links; same-origin proxied delivery."],
+    ["Presence / Notifications / Contacts / Settings","Shipped","Realtime-driven; Activity feed = notifications; six themes + accessibility."],
+    ["Search","Flagged off","FULLTEXT-backed, complete, hidden by globalSearch flag."],
+    ["Self-service signup","Flagged off","Full enterprise credential policy, hidden by signup flag."],
+    ["AI summaries","Flagged off","'Catch up' summarize works; hidden by aiSummary flag."],
+    ["AI ask-assistant","Partial","Backend endpoint exists; no UI calls it."],
+    ["Meeting recording","Partial","Client-side works; server-side LiveKit Egress not provisioned."],
+    ["Custom status text/emoji","Absent","Only manual Away/Busy/DND presence."],
+    ["MCP server","Partial / standalone","Real REST-proxy build in mcp/, not wired into any deployment."],
+    ["AI agents","Scaffold","agents/ module throws not-implemented (Sprint 6)."],
+    ["DM E2EE","Built, off by default","Custom Web-Crypto ECIES, server-blind, DM-only; calls/meetings not E2EE."]
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Where to go next","text":"For the architecture that makes all of this work, see Section 3 (System Architecture). For the realtime event contract behind messaging/calls/presence, see the Realtime section. For the media plane (LiveKit + coturn) behind calls and meetings, see the Calls & Meetings Media section. For deployment across the local → teams → live tiers, see the Deployment & Infrastructure section. Each module summarized in 1.1.3 has its own dedicated chapter with the full code map and maturity detail."}
+]

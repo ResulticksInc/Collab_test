@@ -1,0 +1,391 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  CoLab — LIVE deploy (collab.resulticks.com, behind a corporate TLS LB).   ║
+# ║                                                                            ║
+# ║  Deploy:                                                                   ║
+# ║    docker compose --env-file .env -f docker-compose.live.yml up -d --build ║
+# ║                                                                            ║
+# ║  Why this file exists (vs the base docker-compose.yml):                    ║
+# ║  the base file publishes db/backend/frontend/minio/livekit-signalling to   ║
+# ║  the HOST, which collides with services the shared server already runs     ║
+# ║  ("address already in use" on 3306, etc.). Here ONLY the two ports that    ║
+# ║  MUST be reachable from outside the Docker host are published:             ║
+# ║    • nginx  → the corporate LB forwards https://collab.resulticks.com here ║
+# ║    • livekit media (7531/7532/7533) → browsers send RTP/ICE straight here  ║
+# ║  Everything else talks over the internal Docker network (db:3306,          ║
+# ║  backend:4000, frontend:3000, minio:9003, livekit:7534) — no host port,    ║
+# ║  no possible conflict.                                                     ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+services:
+  db:
+    image: mysql:8
+    command: ["--log-bin-trust-function-creators=ON"]
+    container_name: colab-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-colab}
+      MYSQL_DATABASE: colab
+      MYSQL_USER: ${MYSQL_USER:-colab}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-colab}
+    # NO host port — reached internally as db:3306. This is the fix for the
+    # "failed to bind host port 0.0.0.0:3306: address already in use" error:
+    # the server's own MySQL keeps 3306; our container never touches the host port.
+    volumes:
+      - colab_mysqldata:/var/lib/mysql
+      - ./database/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u colab -pcolab --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: colab-redis
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: colab-minio
+    restart: unless-stopped
+    # MinIO on 9003 (S3 API) + 9004 (console) — one consistent port everywhere (env,
+    # yaml, nginx) so there's no 9000-vs-9003 confusion. 9000/9001 stay free for
+    # co-located projects.
+    command: ["server", "/data", "--address", ":9003", "--console-address", ":9004"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-colab}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-colab}
+    # NO host port — nginx proxies /minio/ to minio:9003 internally.
+    volumes:
+      - colab_minio:/data
+
+  livekit:
+    image: livekit/livekit-server:v1.9
+    container_name: colab-livekit
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    # ONLY the media ports are published — browsers send RTP/ICE/TURN straight
+    # to node_ip (10.200.3.17) on these. Signalling (7534) stays internal;
+    # nginx proxies wss://.../livekit to it.
+    ports:
+      - "7531:7531" # ICE/TCP media fallback
+      - "7532:7532/udp" # ICE/UDP media
+      - "7533:7533/udp" # built-in TURN relay
+    volumes:
+      - ${LIVEKIT_CONFIG:-./infrastructure/livekit/livekit.live.yaml}:/etc/livekit.yaml:ro
+
+  # ── TURN/STUN relay (coturn) for OFF-LAN / external (public-internet, home) ──
+  # callers. The SFU advertises node_ip 10.200.3.17 (RFC1918), which external
+  # browsers CANNOT reach — they relay media through coturn over turns:5349 /
+  # turn:3478 (and optionally turns:443), and coturn forwards it to
+  # 10.200.3.17:7532 on this same box. Internal LAN/VPN callers ignore the relay
+  # (ICE prefers the direct 10.200.3.17 host candidate), so they are unaffected.
+  #
+  # HOST NETWORKING (not port publishing): a TURN relay hands out ephemeral
+  # ports across the WHOLE 49152-65535 range. Publishing ~16k UDP ports via
+  # docker-proxy is impractical and the userland proxy mangles the source IP
+  # coturn needs. network_mode: host gives coturn the real host IP and the full
+  # UDP range with zero NAT — the simplest correct setup for a relay. (nginx
+  # binds the host's app port; 3478/5349/443/49152-65535 are free for coturn.)
+  #
+  # external-ip / relay-ip are passed on the COMMAND LINE (compose expands
+  # ${COTURN_PUBLIC_IP}); they are intentionally NOT in turnserver.conf because
+  # coturn does not expand env vars inside its config file.
+  coturn:
+    image: coturn/coturn:4.6
+    container_name: colab-coturn
+    # OFF by default. The LIVE TURN relay runs on a DEDICATED public server
+    # (34.74.165.103), NOT on this box — coturn's :443 clashed with nginx here.
+    # This co-located relay is opt-in only: add `--profile coturn` to the up
+    # command if you ever want to run TURN on this box instead.
+    profiles: ["coturn"]
+    network_mode: host
+    restart: unless-stopped
+    command:
+      - "-c"
+      - "/etc/coturn/turnserver.conf"
+      # PUBLIC reachability: advertise COTURN_PUBLIC_IP (the internet-routable
+      # IPv4) to browsers, but — because this box sits behind 1:1 NAT with only a
+      # private NIC — the "/BIND" suffix tells coturn to actually bind the box's
+      # real NIC IP (COTURN_BIND_IP = 10.200.3.17). relay-ip binds that same NIC.
+      # This is what lets an OFF-network browser (4G / home / hotel) reach the
+      # relay at the public IP while coturn forwards media to the SFU on the LAN.
+      # If the box has the public IP directly on its NIC, set COTURN_BIND_IP to
+      # that same public IP.
+      - "--external-ip=${COTURN_PUBLIC_IP}/${COTURN_BIND_IP:-10.200.3.17}"
+      - "--relay-ip=${COTURN_BIND_IP:-10.200.3.17}"
+    volumes:
+      - ./infrastructure/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      # TLS certs for turns: — must be valid for turncollab.resulticks.com.
+      # Drop fullchain.pem + privkey.key here before `up`.
+      - ./infrastructure/coturn/certs:/etc/coturn/certs:ro
+    depends_on:
+      - livekit
+
+  backend:
+    # `image:` + `build:` together (standard compose pattern):
+    #   • `up -d --build`         → builds locally, tags it as this image name
+    #     (default `colab-backend:local`) → existing manual deploy UNCHANGED.
+    #   • `pull` + `up -d`        → pulls the PRE-BUILT image instead of building
+    #     (the cost-free CD path, see scripts/deploy-pull.sh + the
+    #     release-images workflow). Point at ghcr by setting in .env.live:
+    #       COLAB_IMAGE_BACKEND=ghcr.io/<owner>/<repo>-backend:<tag>
+    # Default keeps the local build name so NOTHING changes if the var is unset.
+    image: ${COLAB_IMAGE_BACKEND:-colab-backend:local}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    stop_grace_period: 20s
+    # NO host port — nginx proxies /api and /socket.io to backend:4000 internally.
+    environment:
+      NODE_ENV: production
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 4000
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      # Engineering Operations Portal (/dev). Empty password = portal DISABLED
+      # (secure default). Set OPS_PORTAL_PASSWORD in the live env (.env.live /
+      # release variables) to enable it. APP_VERSION/GIT_COMMIT stamp the
+      # deployment ledger + Observatory version display.
+      # SECURITY: no default — an empty value keeps the portal disabled.
+      OPS_PORTAL_USER: ${OPS_PORTAL_USER:-admin}
+      OPS_PORTAL_PASSWORD: ${OPS_PORTAL_PASSWORD}
+      OPS_SESSION_TTL: ${OPS_SESSION_TTL:-12h}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      GIT_COMMIT: ${GIT_COMMIT:-}
+      AUTH_TOKEN_TTL: ${AUTH_TOKEN_TTL:-7d}
+      # Public self-service sign-up DISABLED by default in production. Set
+      # AUTH_SIGNUP_ENABLED=true explicitly if open registration is intended.
+      AUTH_SIGNUP_ENABLED: ${AUTH_SIGNUP_ENABLED:-false}
+      # SSO (OpenID Connect). The backend image does NOT bake .env, so these MUST be
+      # passed here (from --env-file .env.live) or the container reports "SSO not
+      # configured" — which is what broke SSO on the Docker backend.
+      SSO_ENABLED: ${SSO_ENABLED:-false}
+      SSO_BASE_URL: ${SSO_BASE_URL:-}
+      SSO_IDP_URL: ${SSO_IDP_URL:-}
+      SSO_AUTHORIZE_URL: ${SSO_AUTHORIZE_URL:-}
+      SSO_TOKEN_URL: ${SSO_TOKEN_URL:-}
+      SSO_JWKS_URL: ${SSO_JWKS_URL:-}
+      SSO_USERINFO_URL: ${SSO_USERINFO_URL:-}
+      SSO_ISSUER: ${SSO_ISSUER:-}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID:-}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+      SSO_REDIRECT_URI: ${SSO_REDIRECT_URI:-}
+      SSO_SCOPE: ${SSO_SCOPE:-openid profile email}
+      SSO_STATE_SECRET: ${SSO_STATE_SECRET:-}
+      SSO_INSECURE_SKIP_VERIFY: ${SSO_INSECURE_SKIP_VERIFY:-false}
+      # Encrypted PII claims (claims_jwe): the RSA private key, inline PEM (raw or
+      # base64) or a path INSIDE the container — ./keys is mounted at /app/keys below.
+      SSO_JWE_PRIVATE_KEY: ${SSO_JWE_PRIVATE_KEY:-}
+      SSO_JWE_PRIVATE_KEY_FILE: ${SSO_JWE_PRIVATE_KEY_FILE:-}
+      # Chat media — GIF/sticker SEARCH key (GIPHY). OPTIONAL deployment-wide default;
+      # a tenant admin can instead set a per-org key in the admin console. Empty = off
+      # (built-in sticker pack + studio still work). Backend image doesn't bake .env.
+      GIPHY_API_KEY: ${GIPHY_API_KEY:-}
+      # DB target: DB_PROFILE picks DATABASE_URL_<PROFILE>; else DATABASE_URL.
+      DB_PROFILE: ${DB_PROFILE:-local}
+      DATABASE_URL: ${DATABASE_URL:-mysql://colab:colab@db:3306/colab}
+      DEMO_DATABASE_URL: ${DEMO_DATABASE_URL:-mysql://colab:colab@db:3306/colab_demo}
+      DATABASE_URL_LOCAL: ${DATABASE_URL_LOCAL:-mysql://colab:colab@db:3306/colab}
+      DATABASE_URL_LIVE: ${DATABASE_URL_LIVE:-}
+      DATABASE_URL_DEMO: ${DATABASE_URL_DEMO:-}
+      DATABASE_URL_TEAM: ${DATABASE_URL_TEAM:-${DATABASE_URL_LIVE:-}}
+      DEMO_MODE: ${DEMO_MODE:-no}
+      # Fresh-start switch: yes = first boot starts the target DB empty (skip the
+      # bundled colab_full.sql import). See .env.live COLAB_FRESH_START.
+      COLAB_FRESH_START: ${COLAB_FRESH_START:-}
+      # Browser LiveKit URL. Explicit wss is honored verbatim; leave blank to
+      # auto-derive wss://<host>/livekit from the request origin behind nginx.
+      LIVEKIT_WS_URL: ${LIVEKIT_WS_URL:-}
+      LIVEKIT_SERVER_URL: ${LIVEKIT_SERVER_URL:-ws://livekit:7534}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_TOKEN_TTL_SEC: ${LIVEKIT_TOKEN_TTL_SEC:-3600}
+      # External TURN relay (coturn) — advertised to browsers so off-LAN/global
+      # callers relay media over turns://<domain>. Blank = internal/LAN-only.
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_PASSWORD: ${TURN_PASSWORD:-}
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9003
+      # Local file-storage tier (docs/FILE_UPLOAD_STORAGE_CHAIN.md): named volume
+      # below; order disk,s3,db — set FILE_STORAGE_ORDER=s3,db to roll back.
+      FILE_STORAGE_DIR: /app/data/files
+      FILE_STORAGE_ORDER: ${FILE_STORAGE_ORDER:-disk,s3,db}
+      FILE_STORAGE_MIN_FREE_BYTES: ${FILE_STORAGE_MIN_FREE_BYTES:-536870912}
+      FILE_TIER_ENABLED: ${FILE_TIER_ENABLED:-true}
+      FILE_TIER_COLD_AFTER_DAYS: ${FILE_TIER_COLD_AFTER_DAYS:-30}
+      FILE_TIER_PRESSURE_PCT: ${FILE_TIER_PRESSURE_PCT:-80}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-colab-files}
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-colab}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-colab}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      E2EE_ENABLED: ${E2EE_ENABLED:-false}
+      # Automatic history recovery (docs/E2EE_AUTO_RECOVERY.md): server-escrowed
+      # per-user account key so any signed-in device restores with no prompt.
+      E2EE_AUTO_RECOVERY: ${E2EE_AUTO_RECOVERY:-true}
+      E2EE_ESCROW_SECRET: ${E2EE_ESCROW_SECRET:-}
+      # Collab Admin Panel (/admin). The image doesn't bake .env, so these MUST be
+      # forwarded here; otherwise production boots with the built-in default
+      # password and the boot guard refuses to start.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_SESSION_TTL: ${ADMIN_SESSION_TTL:-}
+      ONE_API_ENABLED: ${ONE_API_ENABLED:-false}
+      ONE_API_URL: ${ONE_API_URL:-}
+      ONE_API_DB_TYPE: ${ONE_API_DB_TYPE:-mysql}
+      ONE_API_DATABASE: ${ONE_API_DATABASE:-colab}
+      ONE_API_KEY: ${ONE_API_KEY:-}
+      # Push notifications. The backend image does NOT bake .env, so these MUST be
+      # passed here (from --env-file) or the backend boots with push disabled and
+      # notifications only reach clients holding a live socket (open tab / open app).
+      # Web push (VAPID):
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@colab.app}
+      # Mobile push (FCM HTTP v1) — service account file lives in ./keys (mounted below).
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      FCM_SERVICE_ACCOUNT_FILE: ${FCM_SERVICE_ACCOUNT_FILE:-}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
+      FCM_MESSAGE_TTL_SEC: ${FCM_MESSAGE_TTL_SEC:-86400}
+      FCM_CALL_TTL_SEC: ${FCM_CALL_TTL_SEC:-45}
+      # iOS VoIP push (APNs direct) for CallKit ringing.
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_KEY_P8: ${APNS_KEY_P8:-}
+      APNS_KEY_FILE: ${APNS_KEY_FILE:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-com.resulticks.collab}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-}
+    volumes:
+      # Local file-storage tier (first upload tier). Back this volume up with mysqldata/minio.
+      - files_data:/app/data/files
+      # SSO JWE private key (claims_jwe decryption). Host ./keys → /app/keys, read-only.
+      # Point SSO_JWE_PRIVATE_KEY_FILE=/app/keys/collab_private.pem (or use the inline var).
+      - ./keys:/app/keys:ro
+      - ./database/migrations:/app/database/migrations:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      livekit:
+        condition: service_started
+
+  frontend:
+    # See the backend service for the `image:` + `build:` rationale. Set
+    #   COLAB_IMAGE_FRONTEND=ghcr.io/<owner>/<repo>-frontend:<tag>
+    # in .env.live to pull the pre-built web image instead of building locally.
+    image: ${COLAB_IMAGE_FRONTEND:-colab-frontend:local}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL-}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL-}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Collab}
+        NEXT_PUBLIC_WORKSPACE_NAME: ${NEXT_PUBLIC_WORKSPACE_NAME:-Collab}
+        NEXT_PUBLIC_USER_EMAIL: ${NEXT_PUBLIC_USER_EMAIL-}
+        NEXT_PUBLIC_FEATURE_SIGNUP: ${NEXT_PUBLIC_FEATURE_SIGNUP:-1}
+        NEXT_PUBLIC_E2EE_ENABLED: ${NEXT_PUBLIC_E2EE_ENABLED:-false}
+        NEXT_PUBLIC_E2EE_DECRYPT_LEGACY: ${NEXT_PUBLIC_E2EE_DECRYPT_LEGACY:-false}
+        NEXT_PUBLIC_E2EE_RATCHET: ${NEXT_PUBLIC_E2EE_RATCHET:-false}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
+        BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:4000}
+        # Baked into the /livekit rewrite so the frontend can proxy LiveKit
+        # signalling if the edge routes /livekit to it (not nginx).
+        LIVEKIT_INTERNAL_URL: ${LIVEKIT_INTERNAL_URL:-http://livekit:7534}
+    restart: unless-stopped
+    # NO host port — nginx proxies / to frontend:3000 internally.
+    environment:
+      NODE_ENV: production
+      BACKEND_INTERNAL_URL: http://backend:4000
+      LIVEKIT_INTERNAL_URL: http://livekit:7534
+    depends_on:
+      - backend
+
+  # ── MODE B (opt-in): independent desktop frontend ─────────────────────────
+  # A SECOND Next.js frontend container built with NEXT_PUBLIC_BUILD_TARGET=desktop
+  # so the DESKTOP app can be released on its own image while the browser-facing
+  # `frontend` above stays frozen on its old image (see docs/DEPLOYMENT_MODEL.md
+  # §4 Mode B + docs/ENTERPRISE_DEPLOYMENT.md). It is PROFILE-GATED: it ONLY
+  # starts with `--profile desktop`, so the normal
+  #   docker compose --env-file .env.live -f docker-compose.live.yml up -d --build
+  # is COMPLETELY UNAFFECTED (this service does not start, build, or bind anything).
+  #
+  # Bring it up independently with:
+  #   docker compose --env-file .env.live -f docker-compose.live.yml \
+  #     --profile desktop up -d --build frontend-desktop
+  #
+  # The desktop shell points at it by setting COLLAB_WEB_URL to the desktop
+  # hostname/path nginx routes here (see desktop/config.js — COLLAB_WEB_URL
+  # already overrides cfg.webUrl). No host port: nginx proxies to it internally
+  # (see the commented desktop block in infrastructure/nginx/nginx.conf).
+  frontend-desktop:
+    profiles: ["desktop"]
+    # The CD workflow (release-images.yml) publishes only the web/shared "all"
+    # frontend image to keep CI minutes low — building a SECOND full Next.js
+    # bundle per push doubles the cost. So this Mode-B service builds LOCALLY by
+    # default. To pull a pre-built desktop image instead, build one with
+    # NEXT_PUBLIC_BUILD_TARGET=desktop and set COLAB_IMAGE_FRONTEND_DESKTOP
+    # (see docs/ENTERPRISE_DEPLOYMENT.md §"CI/CD pipeline" → desktop frontend image).
+    image: ${COLAB_IMAGE_FRONTEND_DESKTOP:-colab-frontend-desktop:local}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL-}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL-}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Collab}
+        NEXT_PUBLIC_WORKSPACE_NAME: ${NEXT_PUBLIC_WORKSPACE_NAME:-Collab}
+        NEXT_PUBLIC_USER_EMAIL: ${NEXT_PUBLIC_USER_EMAIL-}
+        NEXT_PUBLIC_FEATURE_SIGNUP: ${NEXT_PUBLIC_FEATURE_SIGNUP:-1}
+        NEXT_PUBLIC_E2EE_ENABLED: ${NEXT_PUBLIC_E2EE_ENABLED:-false}
+        NEXT_PUBLIC_E2EE_DECRYPT_LEGACY: ${NEXT_PUBLIC_E2EE_DECRYPT_LEGACY:-false}
+        NEXT_PUBLIC_E2EE_RATCHET: ${NEXT_PUBLIC_E2EE_RATCHET:-false}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
+        # The two values that make this the DESKTOP build: hard build-target
+        # isolation + an optional desktop-only in-progress flag list.
+        NEXT_PUBLIC_BUILD_TARGET: desktop
+        NEXT_PUBLIC_FLAGS: ${DESKTOP_FLAGS:-}
+        BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:4000}
+        LIVEKIT_INTERNAL_URL: ${LIVEKIT_INTERNAL_URL:-http://livekit:7534}
+    container_name: colab-frontend-desktop
+    restart: unless-stopped
+    # NO host port — nginx proxies the desktop hostname/path to it internally.
+    environment:
+      NODE_ENV: production
+      BACKEND_INTERNAL_URL: http://backend:4000
+      LIVEKIT_INTERNAL_URL: http://livekit:7534
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:alpine@sha256:8b1e78743a03dbb2c95171cc58639fef29abc8816598e27fb910ed2e621e589a
+    container_name: colab-nginx
+    restart: unless-stopped
+    # The ONLY web port published to the host — the corporate LB forwards
+    # https://collab.resulticks.com (443) to <server-ip>:${NGINX_PORT}.
+    ports:
+      - "${NGINX_PORT:-7524}:7530"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    # nginx resolves ALL upstreams (incl. minio) at startup and refuses to boot
+    # if any is missing — so it must start AFTER every proxied service, minio
+    # included. (Missing this is what took nginx down when minio crash-looped.)
+    depends_on:
+      - frontend
+      - backend
+      - livekit
+      - minio
+
+volumes:
+  files_data:
+  colab_mysqldata:
+  colab_minio:

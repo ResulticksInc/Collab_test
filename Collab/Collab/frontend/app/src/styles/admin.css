@@ -1,0 +1,826 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Collab Admin Portal Stylesheet — Sleek, Responsive, Production-Grade
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --adm-bg: #090d16;
+  --adm-surface: #0f1626;
+  --adm-surface-2: #162035;
+  --adm-surface-3: #1f2c47;
+  --adm-border: rgba(255, 255, 255, 0.08);
+  --adm-border-focus: rgba(99, 102, 241, 0.5);
+  --adm-text: #f1f5f9;
+  --adm-text-muted: #94a3b8;
+  --adm-text-subtle: #64748b;
+  --adm-primary: #6366f1;
+  --adm-primary-hover: #4f46e5;
+  --adm-primary-bg: rgba(99, 102, 241, 0.12);
+  --adm-success: #10b981;
+  --adm-success-bg: rgba(16, 185, 129, 0.12);
+  --adm-warning: #f59e0b;
+  --adm-warning-bg: rgba(245, 158, 11, 0.12);
+  --adm-danger: #ef4444;
+  --adm-danger-bg: rgba(239, 68, 68, 0.12);
+  --adm-info: #0ea5e9;
+  --adm-info-bg: rgba(14, 165, 233, 0.12);
+  --adm-radius-sm: 6px;
+  --adm-radius: 10px;
+  --adm-radius-lg: 16px;
+  --adm-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+}
+
+.adm-shell {
+  display: flex;
+  min-height: 100vh;
+  background-color: var(--adm-bg);
+  color: var(--adm-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+  overflow: hidden;
+}
+
+/* ── Login screen ─────────────────────────────────────────────────────────── */
+.adm-login-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  width: 100vw;
+  background: radial-gradient(circle at top right, rgba(99, 102, 241, 0.12), transparent 40%),
+              radial-gradient(circle at bottom left, rgba(14, 165, 233, 0.08), transparent 40%),
+              var(--adm-bg);
+  padding: 24px;
+}
+
+.adm-login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--adm-surface);
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius-lg);
+  padding: 36px 32px;
+  box-shadow: var(--adm-shadow);
+}
+
+.adm-login-header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.adm-login-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #6366f1, #a855f7);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  margin-bottom: 16px;
+  box-shadow: 0 8px 16px -4px rgba(99, 102, 241, 0.4);
+}
+
+.adm-login-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 6px 0;
+  letter-spacing: -0.02em;
+}
+
+.adm-login-subtitle {
+  font-size: 13px;
+  color: var(--adm-text-muted);
+  margin: 0;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+.adm-sidebar {
+  width: 260px;
+  background: var(--adm-surface);
+  border-right: 1px solid var(--adm-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 40;
+}
+
+.adm-brand {
+  height: 64px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--adm-border);
+}
+
+.adm-brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: block;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.adm-brand-name {
+  font-weight: 700;
+  font-size: 16px;
+  color: #fff;
+  letter-spacing: -0.01em;
+}
+
+.adm-brand-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  background: var(--adm-primary-bg);
+  color: var(--adm-primary);
+  border-radius: 4px;
+  margin-left: auto;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.adm-nav {
+  padding: 16px 12px;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.adm-nav-section {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--adm-text-subtle);
+  padding: 12px 10px 6px 10px;
+}
+
+.adm-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: var(--adm-radius-sm);
+  color: var(--adm-text-muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: all 0.15s ease;
+}
+
+.adm-nav-item:hover {
+  background: var(--adm-surface-2);
+  color: var(--adm-text);
+}
+
+.adm-nav-item.active {
+  background: var(--adm-primary);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+}
+
+.adm-nav-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.adm-nav-item.active .adm-nav-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+}
+
+.adm-sidebar-footer {
+  padding: 16px;
+  border-top: 1px solid var(--adm-border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.adm-admin-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--adm-surface-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--adm-primary);
+  font-weight: 700;
+  font-size: 13px;
+  border: 1px solid var(--adm-border);
+}
+
+.adm-admin-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.adm-admin-role {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adm-admin-email {
+  font-size: 11px;
+  color: var(--adm-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Main content & Header ────────────────────────────────────────────────── */
+.adm-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.adm-header {
+  height: 64px;
+  background: var(--adm-surface);
+  border-bottom: 1px solid var(--adm-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  flex-shrink: 0;
+  gap: 16px;
+}
+
+.adm-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.adm-breadcrumbs span {
+  color: var(--adm-text-subtle);
+  font-weight: 400;
+}
+
+.adm-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.adm-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--adm-bg);
+}
+
+/* ── KPI Grid & Metric Cards ──────────────────────────────────────────────── */
+.adm-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.adm-kpi-card {
+  background: var(--adm-surface);
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.adm-kpi-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.adm-kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.adm-kpi-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--adm-text-muted);
+}
+
+.adm-kpi-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.adm-kpi-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.02em;
+  margin-bottom: 4px;
+}
+
+.adm-kpi-sub {
+  font-size: 12px;
+  color: var(--adm-text-subtle);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Data Tables & Card Panels ────────────────────────────────────────────── */
+.adm-panel {
+  background: var(--adm-surface);
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius);
+  overflow: hidden;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.adm-panel-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--adm-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.adm-panel-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.adm-panel-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.adm-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.adm-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+.adm-table th {
+  background: var(--adm-surface-2);
+  color: var(--adm-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--adm-border);
+  white-space: nowrap;
+}
+
+.adm-table td {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--adm-border);
+  color: var(--adm-text);
+  vertical-align: middle;
+}
+
+.adm-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.adm-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Badges & Chips ───────────────────────────────────────────────────────── */
+.adm-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.adm-badge-success {
+  background: var(--adm-success-bg);
+  color: var(--adm-success);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.adm-badge-warning {
+  background: var(--adm-warning-bg);
+  color: var(--adm-warning);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.adm-badge-danger {
+  background: var(--adm-danger-bg);
+  color: var(--adm-danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.adm-badge-info {
+  background: var(--adm-info-bg);
+  color: var(--adm-info);
+  border: 1px solid rgba(14, 165, 233, 0.2);
+}
+
+.adm-badge-neutral {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--adm-text-muted);
+}
+
+.adm-presence-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.adm-presence-dot.online {
+  background: var(--adm-success);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.adm-presence-dot.away {
+  background: var(--adm-warning);
+}
+
+.adm-presence-dot.dnd {
+  background: var(--adm-danger);
+}
+
+.adm-presence-dot.offline {
+  background: var(--adm-text-subtle);
+}
+
+/* ── Form Inputs & Controls ───────────────────────────────────────────────── */
+.adm-input {
+  background: var(--adm-surface-2);
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius-sm);
+  color: #fff;
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.adm-input:focus {
+  border-color: var(--adm-primary);
+  box-shadow: 0 0 0 2px var(--adm-border-focus);
+}
+
+.adm-select {
+  background: var(--adm-surface-2);
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius-sm);
+  color: #fff;
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+
+.adm-select:focus {
+  border-color: var(--adm-primary);
+}
+
+.adm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--adm-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  outline: none;
+  text-decoration: none;
+}
+
+.adm-btn-primary {
+  background: var(--adm-primary);
+  color: #fff;
+}
+
+.adm-btn-primary:hover {
+  background: var(--adm-primary-hover);
+}
+
+.adm-btn-secondary {
+  background: var(--adm-surface-2);
+  color: var(--adm-text);
+  border-color: var(--adm-border);
+}
+
+.adm-btn-secondary:hover {
+  background: var(--adm-surface-3);
+}
+
+.adm-btn-danger {
+  background: var(--adm-danger-bg);
+  color: var(--adm-danger);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.adm-btn-danger:hover {
+  background: var(--adm-danger);
+  color: #fff;
+}
+
+.adm-btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+/* ── Pagination ───────────────────────────────────────────────────────────── */
+.adm-pagination {
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--adm-border);
+  background: var(--adm-surface);
+  font-size: 12.5px;
+  color: var(--adm-text-muted);
+}
+
+.adm-pagination-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ── Modal Dialog ─────────────────────────────────────────────────────────── */
+.adm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+
+.adm-modal {
+  background: var(--adm-surface);
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius-lg);
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--adm-shadow);
+  overflow: hidden;
+}
+
+.adm-modal-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--adm-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.adm-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+}
+
+.adm-modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.adm-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--adm-border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  background: var(--adm-surface-2);
+}
+
+/* ── Toast Notifications ──────────────────────────────────────────────────── */
+.adm-toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 200;
+}
+
+.adm-toast {
+  background: var(--adm-surface-2);
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius-sm);
+  padding: 12px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  box-shadow: var(--adm-shadow);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: admFadeIn 0.2s ease;
+}
+
+.adm-toast.success {
+  border-left: 4px solid var(--adm-success);
+}
+
+.adm-toast.error {
+  border-left: 4px solid var(--adm-danger);
+}
+
+@keyframes admFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Empty State ──────────────────────────────────────────────────────────── */
+.adm-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--adm-text-subtle);
+}
+
+.adm-empty-icon {
+  margin-bottom: 12px;
+  color: var(--adm-text-subtle);
+}
+
+.adm-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--adm-text-muted);
+  margin-bottom: 4px;
+}
+
+.adm-empty-desc {
+  font-size: 13px;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+/* ── Analytics Bars ───────────────────────────────────────────────────────── */
+.adm-bar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 180px;
+  padding: 20px 0 10px 0;
+}
+
+.adm-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.adm-bar {
+  width: 100%;
+  max-width: 32px;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, #6366f1, #4f46e5);
+  min-height: 4px;
+  transition: height 0.3s ease;
+}
+
+.adm-bar-label {
+  font-size: 10.5px;
+  color: var(--adm-text-subtle);
+  white-space: nowrap;
+}
+
+.adm-bar-val {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--adm-text);
+}
+
+/* ── Live meeting controls ─────────────────────────────────────────────── */
+.adm-live-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--adm-success);
+  box-shadow: 0 0 0 3px var(--adm-success-bg);
+}
+.adm-live-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.adm-live-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 20px 12px;
+  padding: 8px 12px;
+  border-radius: var(--adm-radius-sm);
+  background: var(--adm-info-bg);
+  color: var(--adm-info);
+  font-size: 12.5px;
+}
+.adm-live-banner-warn {
+  background: var(--adm-warning-bg);
+  color: var(--adm-warning);
+}
+.adm-live-on { color: var(--adm-success); }
+.adm-live-off { color: var(--adm-text-subtle); opacity: 0.55; }
+.adm-live-share { color: var(--adm-warning); }
+.adm-live td svg { vertical-align: middle; }
+.adm-live-actions { display: flex; gap: 8px; }
+.adm-live-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--adm-radius-sm);
+  border: 1px solid var(--adm-border);
+  background: var(--adm-surface-2);
+  color: var(--adm-text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.adm-live-icon:hover:not(:disabled) {
+  background: var(--adm-primary-bg);
+  border-color: var(--adm-border-focus);
+}
+.adm-live-icon-danger { color: var(--adm-danger); }
+.adm-live-icon-danger:hover:not(:disabled) {
+  background: var(--adm-danger-bg);
+  border-color: var(--adm-danger);
+}
+.adm-live-icon:disabled { opacity: 0.35; cursor: not-allowed; }
+.adm-live-icon-active {
+  color: var(--adm-warning);
+  border-color: var(--adm-warning);
+  background: var(--adm-warning-bg);
+}

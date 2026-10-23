@@ -1,0 +1,9 @@
+# Hosted desktop installers — 77 MB each, uploaded to the server out-of-band
+# (rsync/scp/release pipeline), not committed to git. The latest.json manifest
+# IS tracked so the deploy points the desktop app at the current version.
+# *.exe
+# *.exe.blockmap
+# *.dmg
+# *.zip
+# *.AppImage
+# *.deb

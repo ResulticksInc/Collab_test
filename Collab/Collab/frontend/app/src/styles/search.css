@@ -1,0 +1,178 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   SEARCH — the Search page's bar is the dashboard search pill (dashboard.css
+   #vdash .dash2-search) continued: the dashboard Flip-morphs its pill into this
+   one (lib/searchFlip.ts), so the two must share width, height, fill, border,
+   icon and arrow button — otherwise the morph visibly squashes and restyles
+   mid-flight. Overrides the legacy .srch-* rules in v1.css via #vsearch.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Same 968px column (+24px gutters, border-box) as the dashboard stack. */
+#vsearch .srch {
+  max-width: calc(968px + 48px);
+  box-sizing: border-box;
+}
+
+#vsearch .srch-box {
+  height: 50px;
+  border-radius: 12px;
+  background: var(--search-bg);
+  border: 1px solid var(--search-line);
+  padding: 0 12px 0 18px;
+  gap: 10px;
+  box-shadow: none;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+#vsearch .srch-box:focus-within {
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500) 22%, transparent);
+}
+
+#vsearch .srch-ico {
+  width: 20px;
+  height: 20px;
+  stroke: var(--search-fg);
+  stroke-width: 1.8;
+}
+
+#vsearch .srch-box input {
+  font-size: 14px;
+  color: var(--fg-primary);
+}
+
+#vsearch .srch-box input::placeholder {
+  color: var(--search-fg);
+}
+
+#vsearch .srch-clear {
+  display: inline-flex;
+  align-items: center;
+  color: var(--search-fg);
+}
+
+/* Round gradient arrow — the dashboard's .d2s-btn. */
+#vsearch .srch-go {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 35px;
+  height: 35px;
+  padding: 0;
+  border: none;
+  border-radius: 45px;
+  background: var(--brand-cta-gradient);
+  color: #fff;
+  cursor: pointer;
+}
+
+#vsearch .srch-go svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.2;
+}
+
+/* Empty-state categories: a fixed 2×2 grid. The legacy auto-fill rule packs
+   all four into one row once the column is 975px wide. */
+#vsearch .srch-suggest-cats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 640px) {
+  #vsearch .srch {
+    padding: 24px 16px;
+  }
+
+  #vsearch .srch-suggest-cats {
+    grid-template-columns: 1fr;
+  }
+
+  #vsearch .srch-box {
+    height: 48px;
+  }
+}
+
+/* Search page bar: same 1.8px hairline as the dashboard pill it morphs from. */
+#vsearch .srch-box {
+  border-width: 1.8px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SHARED SEARCH FIELD — every page-level search bar uses the dashboard pill
+   (dashboard.css #vdash .dash2-search): --search-bg fill, 1.8px --search-line
+   border, 12px radius, 20px --search-fg icon + placeholder, brand focus ring.
+   Heights scale to the surface (top bar 48 · sidebar 44 · chat header 40).
+   Small in-popover pickers (emoji, people pickers) keep their compact fields.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Module top bar (.gx-topbar) ─────────────────────────────────────── */
+.gx-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 6px 0 16px;
+  box-sizing: border-box;
+  border-radius: 12px;
+  background: var(--search-bg);
+  border: 1.8px solid var(--search-line);
+  transition: border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.gx-search:focus-within {
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500) 22%, transparent);
+}
+
+.gx-search .gx-search-ico {
+  position: static;
+  transform: none;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  stroke: var(--search-fg);
+  stroke-width: 1.8;
+}
+
+.gx-search .gx-search-input,
+.gx-search .gx-search-input:focus {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 14px;
+  color: var(--fg-primary);
+}
+
+.gx-search .gx-search-input::placeholder {
+  color: var(--search-fg);
+}
+
+.gx-search-go {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 35px;
+  height: 35px;
+  padding: 0;
+  border: none;
+  border-radius: 45px;
+  background: var(--brand-cta-gradient);
+  color: #fff;
+  cursor: pointer;
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+
+.gx-search-go:hover {
+  filter: brightness(1.12);
+}
+
+.gx-search-go svg {
+  stroke-width: 2.2;
+}

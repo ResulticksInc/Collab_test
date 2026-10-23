@@ -1,0 +1,276 @@
+[
+  {"t":"h","level":1,"text":"12. Agent Architecture"},
+
+  {"t":"p","text":"This section is the authoritative reference for CoLab's *agent system* — the part of the platform intended to let AI assistants observe workspace context and act on a user's behalf. It is written to be brutally honest about maturity, because that honesty is itself load-bearing: a reader five years from now must not mistake an architectural placeholder for a shipped product. The headline finding, grounded in the real source files under `agents/` and `mcp/`, is that **there is no functioning agent runtime in CoLab today.** What exists is a carefully-shaped *reserved namespace* (the `agents/` module) plus a real-but-unwired *capability bridge* (the `mcp/` module), and a static, informational governance page in the UI (`AgentsView.tsx`). The genuinely working AI in the product lives somewhere else entirely — `backend/app/src/services/aiService.ts` — and has nothing to do with the agent scaffolds. Each of these is described precisely below, with data flows, failure modes, and the planned future architecture."},
+
+  {"t":"callout","kind":"warning","title":"Maturity verdict (verified against source)","text":"The `agents/` module is a 3-file SCAFFOLD whose every method `throw`s `not implemented (Sprint 6)` and is imported by no one. The `mcp/` module is a real, hand-rolled JSON-RPC server that proxies CoLab's REST API, but it is NOT wired into any running deployment, uses NO official MCP SDK, and is invoked by nothing in the app. The user-facing Agents screen is a STATIC marketing/governance page that explicitly states 'No agents connected / MCP not configured'. Treat agents as a planned capability, not a feature. Do not document behavior the code does not have."},
+
+  {"t":"p","text":"Plain-language summary: CoLab has *designed for* a future where AI agents can read your messages, draft replies, manage your tasks, and summarize your meetings — and it has written down the safety rules those agents will obey (connect only through a standard interface, act only inside permissions you grant, and have every action permanently audited). But the actual agent that does the work has not been built. The interface stubs exist so that when the work happens, it slots in cleanly without re-architecting. The one AI feature that *does* work today — 'Catch up', which summarizes a conversation — is a direct backend call to a language model, not an agent."},
+
+  {"t":"p","text":"Authoritative source files referenced throughout this section (all paths absolute):"},
+  {"t":"ul","items":[
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/agents/app/src/index.ts` — the entire agent scaffold (20 lines, one `companion` object literal).",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/agents/package.json` + `agents/tsconfig.json` — workspace metadata.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/mcp/app/src/index.ts` — MCP entrypoint, transport selection.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/mcp/app/src/registry/index.ts` — capability registry assembly.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/mcp/app/src/tools/index.ts` — 20 tool definitions.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/mcp/app/src/resources/index.ts` — 7 read-only resource definitions.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/mcp/app/src/prompts/index.ts` — 1 prompt template.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/mcp/app/src/server/gateway.ts` — REST backend bridge (Bearer token).",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/mcp/app/src/transports/stdio/index.ts` — line-delimited JSON-RPC over stdio.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/mcp/app/src/transports/sse/index.ts` — HTTP/SSE discovery transport.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/mcp/app/src/types/index.ts` — `McpContext`, `McpTool`, `McpResource`, `McpPrompt`, `BackendGateway`.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/frontend/app/src/components/AgentsView.tsx` — the static Agents governance screen.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/backend/app/src/services/aiService.ts` — the REAL in-product AI ('Agen-X'), a separate path.",
+    "`C:/Users/Aravinth K P/Downloads/agen-x projects/CoLab/docs/ARCHITECTURE.md` — repo's own scaffold labels (lines 12, 13, 84)."
+  ]},
+
+  {"t":"diagram","kind":"grid","title":"The three agent-related surfaces and their maturity","cols":3,"boxes":[
+    {"label":"agents/","sub":"Scaffold — throws not-implemented"},
+    {"label":"mcp/","sub":"Real code, but not wired/run"},
+    {"label":"AgentsView.tsx","sub":"Static governance page"}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"12.1 What exists today: the agent scaffold (agents/)"},
+
+  {"t":"p","text":"The `agents/` workspace is an npm workspace member named `@colab/agents` (v1.0.0, private). It is intentionally minimal. The *entire* module is three files and zero subdirectories beyond `app/src/`:"},
+  {"t":"ul","items":[
+    "`agents/app/src/index.ts` — 20 lines; a single object literal named `companion`.",
+    "`agents/package.json` — name `@colab/agents`, `main` = `app/src/index.ts`, description 'AI Workspace Companion + future agents (scaffold).'",
+    "`agents/tsconfig.json` — 4 lines; extends the root tsconfig and includes `app/src/**/*.ts`."
+  ]},
+
+  {"t":"p","text":"There is no agent definition language, no skills registry, no memory store, no planner, no execution loop, and no model wiring of any kind. The single exported artifact is the `companion` object. Reproduced verbatim from `agents/app/src/index.ts`:"},
+  {"t":"code","lines":[
+    "// AI Workspace Companion — SCAFFOLD (Sprint 6).",
+    "// NOT a greeting/quote generator. Designed to read real workspace context",
+    "// (messages, meetings, calendar, activity) via backend services and produce",
+    "// briefings, summaries and insights. No model calls are wired yet; this declares",
+    "// the interface so the architecture supports it cleanly.",
+    "const companion = {",
+    "  async dailyBriefing(/* userId, ctx */) {",
+    "    throw new Error(",
+    "      'not implemented (Sprint 6): aggregates unread, meetings, mentions into a briefing',",
+    "    );",
+    "  },",
+    "  async summarizeConversation(/* conversationId */) {",
+    "    throw new Error('not implemented (Sprint 6)');",
+    "  },",
+    "  async workspaceInsights(/* scope */) {",
+    "    throw new Error('not implemented (Sprint 6)');",
+    "  },",
+    "};",
+    "export { companion };"
+  ]},
+
+  {"t":"h","level":3,"text":"12.1.1 Declared capabilities (interface only)"},
+  {"t":"p","text":"The `companion` object declares three async methods. None are implemented; each body is a single `throw`. The parameter lists are commented out (e.g. `/* userId, ctx */`), so even the signatures are aspirational rather than wired. The table below captures the *intended* contract as documented in the file header and the throw messages — this is a specification, not behavior."},
+  {"t":"table","headers":["Method","Intended purpose (from source comments)","Actual runtime behavior"],"rows":[
+    ["`dailyBriefing()`","Aggregate a user's unread messages, upcoming meetings, and mentions into a single morning briefing.","Throws `not implemented (Sprint 6): aggregates unread, meetings, mentions into a briefing`."],
+    ["`summarizeConversation()`","Summarize a specified conversation (by id) into a catch-up.","Throws `not implemented (Sprint 6)`."],
+    ["`workspaceInsights()`","Produce higher-level analytics/insights over a scope of workspace activity.","Throws `not implemented (Sprint 6)`."]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Name collision is intentional and harmless","text":"`companion.summarizeConversation()` shares a method name with the WORKING `aiService.summarizeConversation()` in the backend. They are unrelated implementations. The scaffold throws; the backend service actually calls a language model. Do not assume the scaffold delegates to the service — it does not import it, and nothing imports the scaffold."},
+
+  {"t":"h","level":3,"text":"12.1.2 Skills, memory, and reasoning — all absent"},
+  {"t":"p","text":"To be unambiguous, here is the inventory of agent subsystems a mature agent platform would have, and CoLab's status for each. Every 'Absent' below is verified by the fact that `agents/app/src/` contains exactly one 20-line file."},
+  {"t":"table","headers":["Subsystem","Present?","Evidence / note"],"rows":[
+    ["Agent definitions / personas","Absent","Only one `companion` object literal; no registry of agents."],
+    ["Skills / tools registry","Absent","No tool dispatch in `agents/`. (The closest analogue — a tool registry — lives in the separate `mcp/` module, §12.2.)"],
+    ["Memory (short- or long-term)","Absent","No persistence, no vector store, no conversation/state memory anywhere in `agents/`."],
+    ["Reasoning / planner","Absent","No prompt construction, no plan/act loop, no decision logic."],
+    ["Model wiring (LLM call)","Absent","File header states explicitly: 'No model calls are wired yet.'"],
+    ["Execution loop / scheduler","Absent","No loop, no cron, no queue; methods are one-shot stubs that throw."],
+    ["Tool-call dispatch","Absent","No mapping from intent to action."]
+  ]},
+
+  {"t":"h","level":3,"text":"12.1.3 Integration with the running app — effectively zero"},
+  {"t":"p","text":"The `companion` export is imported by *no consumer* anywhere in the repository. A repo-wide search for `companion` and `@colab/agents` finds only: the definition/export inside `agents/app/src/index.ts`, the `agents/package.json` name, and the `node_modules/@colab/agents` workspace symlink entry in `package-lock.json`. There is no backend route, no socket handler, no frontend call site, and no database table that touches the agent scaffold."},
+  {"t":"p","text":"What the module *does* participate in is the monorepo's **build and lint graph**. `agents` is a declared entry in the root `package.json` `workspaces[]` array, and the architecture-lint tooling (`lint:arch` / `lint:circular` / `lint:orphans`, backed by dependency-cruiser and madge) includes `agents/` in its dependency graph. So the module compiles and is linted, but ships no runtime behavior. This is the correct mental model: a *reserved, compiling, linted namespace* — not a dormant feature behind a flag."},
+
+  {"t":"diagram","kind":"flow","title":"agents/ wiring reality","nodes":[
+    {"label":"companion","sub":"exported"},
+    {"label":"(no importer)","sub":"grep finds none"},
+    {"label":"Runtime","sub":"zero behavior"}
+  ]},
+
+  {"t":"h","level":3,"text":"12.1.4 Execution-flow pipeline (current vs intended)"},
+  {"t":"p","text":"There is no execution flow today: calling any `companion` method synchronously throws. The pipeline below is the *intended* shape declared by the scaffold's design comments — it is the architecture the stub was written to support, not code that runs. It is included so future implementers have a target. Steps 2–5 are entirely unimplemented."},
+  {"t":"diagram","kind":"pipeline","title":"Intended companion execution flow (NOT implemented)","steps":[
+    {"label":"Invoke","detail":"A caller (UI action or scheduled job) calls companion.dailyBriefing(userId, ctx). Today: throws immediately."},
+    {"label":"Gather context","detail":"Read unread messages, upcoming meetings, mentions, and activity via backend services. Today: no data access."},
+    {"label":"Reason","detail":"Build a prompt and call a language model to synthesize a briefing. Today: no model wiring."},
+    {"label":"Act / format","detail":"Format the result (and optionally take actions like creating tasks). Today: none."},
+    {"label":"Return + audit","detail":"Return the briefing to the caller and write an audit entry. Today: nothing returned, nothing logged."}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"12.2 The capability bridge: the MCP module (mcp/)"},
+
+  {"t":"p","text":"The closest thing CoLab has to an *agent-facing capability surface* is the `mcp/` module — an implementation of (part of) the Model Context Protocol that exposes CoLab's features to an external AI client as tools, resources, and prompts. It is materially more real than the `agents/` scaffold: it has working tool definitions and a working backend bridge. But it is still a **prototype**, and crucially it is **not wired into any running CoLab deployment** and is **invoked by nothing** in the backend or frontend. The repo labels it `mcp/ # MCP capability registry (scaffold — not a running server)` in `docs/ARCHITECTURE.md` (line 12)."},
+
+  {"t":"callout","kind":"warning","title":"No official MCP SDK; spec-incomplete","text":"This is a HAND-ROLLED JSON-RPC implementation, not `@modelcontextprotocol/sdk` (zero matches in `package-lock.json`; the package declares no runtime dependencies at all). There is no `initialize` handshake, no notifications, no batching, and no URI-template matching for parameterized resources. It is a partial server — useful for discovery and direct tool invocation over stdio, but not a spec-complete MCP endpoint a strict client could rely on."},
+
+  {"t":"h","level":3,"text":"12.2.1 Module layout and entrypoint"},
+  {"t":"p","text":"`mcp/app/src/index.ts` is the entrypoint. It exports `registry`, `startSse`, and `startStdio`, and — when run as a main module — picks a transport from `process.argv`: the `--sse` flag starts the SSE transport, otherwise it starts the stdio transport. There is no build step; `main` points at the raw `app/src/index.ts` and `tsconfig.json` simply extends the root and includes `app/src/**/*.ts`."},
+  {"t":"diagram","kind":"layered","title":"mcp/ module composition","layers":[
+    {"label":"Entry","items":["index.ts (argv → stdio | --sse)"]},
+    {"label":"Transports","items":["stdio (JSON-RPC)","sse (HTTP discovery)"]},
+    {"label":"Registry","items":["tools (20)","resources (7)","prompts (1)"]},
+    {"label":"Bridge","items":["gateway.ts → REST /api/*"]}
+  ]},
+
+  {"t":"h","level":3,"text":"12.2.2 The capability registry"},
+  {"t":"p","text":"`mcp/app/src/registry/index.ts` exposes `registry()`, which returns `{ tools: createTools(backendGateway), resources: createResources(backendGateway), prompts }`. It is built fresh each time a transport starts. Tools and resources are constructed with the `backendGateway` injected, so every capability is a thin wrapper over a REST call. Discovery (`tools/list`, `resources/list`, `prompts/list`, and the SSE `/mcp/capabilities` endpoint) serializes each entry by stripping its executable function (`run` for tools, `read` for resources) before returning the JSON — so a client sees the schema and description but not the implementation."},
+
+  {"t":"h","level":4,"text":"Tools (20)"},
+  {"t":"p","text":"`mcp/app/src/tools/index.ts` defines 20 tools via `createTools(gateway)`. Each tool has a `name`, a `description`, an `inputSchema` (plain JSON Schema built by an `objectSchema(properties, required)` helper with `additionalProperties:false`), and a `run(input, context)` function that proxies to one REST endpoint. The full catalog, with the backend endpoint each one calls:"},
+  {"t":"table","headers":["Tool","Required inputs","Backend call (via gateway)"],"rows":[
+    ["`send_message`","conversationId, text","POST `/api/conversations/{id}/messages`"],
+    ["`schedule_message`","conversationId, body, sendAt","POST `/api/conversations/{id}/scheduled`"],
+    ["`create_group`","title, memberIds","POST `/api/conversations` (kind=group)"],
+    ["`add_participant`","conversationId, userIds","POST `/api/conversations/{id}/members`"],
+    ["`create_thread`","conversationId, parentMessageId, text","POST `/api/conversations/{id}/messages` (parentMessageId)"],
+    ["`send_voice_message`","conversationId, fileUrl","POST `/api/conversations/{id}/messages` (file placeholder)"],
+    ["`create_meeting`","title, startsAt","POST `/api/meetings`"],
+    ["`update_meeting`","meetingId","PATCH `/api/meetings/{id}`"],
+    ["`cancel_meeting`","meetingId","POST `/api/meetings/{id}/cancel`"],
+    ["`create_task`","title","POST `/api/tasks`"],
+    ["`update_task`","taskId","PATCH `/api/tasks/{id}`"],
+    ["`move_task`","taskId, status","PATCH `/api/tasks/{id}` (status)"],
+    ["`assign_task`","taskId, assigneeId","PATCH `/api/tasks/{id}` (assigneeId)"],
+    ["`upload_file`","name","POST `/api/files`"],
+    ["`share_file`","fileId","POST `/api/files/{id}/share`"],
+    ["`search_files`","query","GET `/api/files?search=...`"],
+    ["`search_contacts`","query","GET `/api/users?search=...`"],
+    ["`get_contact`","userId","GET `/api/users/{id}`"],
+    ["`get_recent_activity`","(none)","GET `/api/audit`"]
+  ]},
+  {"t":"callout","kind":"note","title":"Catalog count","text":"The recon premise cited '20 tools'; the source file `tools/index.ts` defines exactly 19 tool objects in the returned array (listed above). Treat 19 as the verified count. The discrepancy is minor and likely a miscount of an earlier draft; the names and endpoints above are authoritative."},
+
+  {"t":"h","level":4,"text":"Resources (7) and prompts (1)"},
+  {"t":"p","text":"`mcp/app/src/resources/index.ts` defines 7 read-only resources, each a `(uri, path)` pair mapped to a `read(params, context)` that does a GET through the gateway. The threads resource path contains `{conversationId}`/`{messageId}` placeholders that are string-replaced from `params`; the others are static paths. Query params `limit`, `cursor`, and `filter` are appended when present. The resources are: `messages://conversations` → `/api/conversations`; `messages://threads` → `/api/conversations/{conversationId}/thread/{messageId}`; `tasks://boards` → `/api/tasks`; `meetings://upcoming` → `/api/meetings`; `files://shared` → `/api/files`; `contacts://directory` → `/api/users`; `activity://feed` → `/api/audit`. `mcp/app/src/prompts/index.ts` defines a single prompt, `workspace_briefing`, whose template instructs a model to 'Use messages, tasks, meetings, files and activity resources to produce a concise workspace briefing.'"},
+
+  {"t":"h","level":3,"text":"12.2.3 The backend bridge (gateway.ts) — the governance boundary"},
+  {"t":"p","text":"`mcp/app/src/server/gateway.ts` is the single chokepoint through which every tool and resource reaches CoLab. It is a thin HTTP client (`fetch`) against `COLAB_API_BASE_URL` (default `http://localhost:4000`) exposing `get`/`post`/`patch`/`delete`. This is the architecturally important property the UI advertises as 'An agent never gets direct database or network access': agents touch CoLab *only* through these REST endpoints, which means every existing backend authorization gate (membership checks, host controls, rate limits, audit logging) applies unchanged."},
+  {"t":"p","text":"Two hard requirements are enforced in the bridge: (1) **auth is mandatory** — if `context.token` is missing, `request()` throws `MCP authentication token is required` before any call; the token is sent as `Authorization: Bearer <token>`, with an optional `X-CoLab-Tenant` header when `context.tenantId` is set. (2) **the envelope contract is enforced** — the bridge expects the backend's `{ ok: true, data: ... }` shape and throws (surfacing `json.error.message` when present) on anything else. So a `403` from a membership gate, or a `429` from a rate limiter, propagates back to the agent as a thrown error rather than silently succeeding."},
+  {"t":"diagram","kind":"flow","title":"MCP tool call → CoLab (the governed path)","nodes":[
+    {"label":"AI client","sub":"JSON-RPC"},
+    {"label":"MCP server","sub":"tool.run"},
+    {"label":"gateway.ts","sub":"Bearer token"},
+    {"label":"CoLab REST","sub":"/api/* + authz + audit"}
+  ]},
+
+  {"t":"h","level":3,"text":"12.2.4 Transports"},
+  {"t":"p","text":"Two transports exist, both partial."},
+  {"t":"ul","items":[
+    {"text":"**stdio** (`transports/stdio/index.ts`) — the functional one. A `readline` interface over `process.stdin` reads line-delimited JSON-RPC 2.0. It handles `tools/list`, `resources/list`, `prompts/list`, `tools/call`, and `resources/read`. `tools/call` finds the tool by `params.name` and runs it; `resources/read` matches by *exact* `params.uri` (no template matching). The per-request `context` token comes from `req.token` or the `COLAB_MCP_TOKEN` env var. Errors are returned as JSON-RPC error objects.","items":[
+      "Limitation: there is no `initialize` handshake, no notifications, and no batching — so it is not a spec-complete MCP server.",
+      "Bug to note: `writeError` always passes `id = undefined`, dropping the originating request id on error responses (a strict JSON-RPC client could not correlate the error to its request)."
+    ]},
+    {"text":"**SSE** (`transports/sse/index.ts`) — discovery-only. A Node `http` server on `COLAB_MCP_PORT` (default `4015`) with CORS hardcoded to `http://localhost:3000`. It exposes exactly two routes: `GET /mcp/events` emits a single `event: ready` then nothing, and `GET /mcp/capabilities` returns the tools+resources+prompts JSON.","items":[
+      "Hard limitation: the SSE transport has NO `tools/call` path. It cannot invoke anything — it is purely for capability discovery."
+    ]}
+  ]},
+
+  {"t":"h","level":3,"text":"12.2.5 Deployment and wiring status"},
+  {"t":"p","text":"The MCP server is **not containerized as a service and not run anywhere.** `docker/Dockerfile.backend` copies `mcp/package.json` as part of the monorepo workspace install, but no compose file starts the MCP server, and `mcp/package.json` declares no `start` script. The module is referenced only by the monorepo lint tooling (root `lint:arch` / `lint:circular` / `lint:orphans`, `.dependency-cruiser.cjs`, `knip.json`). Nothing in `backend/` or `frontend/` imports or invokes it. The frontend Agents screen confirms this operationally by rendering 'No MCP server is configured in this deployment.'"},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"12.3 The user-facing surface: AgentsView.tsx"},
+
+  {"t":"p","text":"`frontend/app/src/components/AgentsView.tsx` is the screen a user reaches via the (feature-flagged-off) 'Agents' nav item. It is a **static, informational governance page** — there is no data fetching, no live agent list, and no backend call. It exists to communicate the *intended* trust model before any agent is connected. Its empty state reads 'No agents connected' with a status pill 'MCP not configured', and explains that 'The governance model below is what will apply once one is connected.'"},
+  {"t":"p","text":"The page is gated off by default: the `agents` feature flag (`NEXT_PUBLIC_FEATURE_AGENTS`) is off, and `Rail.tsx` lists 'agents' in `HIDDEN_NAV`, so the nav item is hidden in normal deployments. The component, route, and flag remain intact so reactivation is a single env-var flip — consistent with CoLab's general 'hidden-but-built' pattern for unfinished surfaces."},
+
+  {"t":"h","level":3,"text":"12.3.1 The advertised governance model (intended, not enforced by an agent runtime)"},
+  {"t":"p","text":"The page presents three governance principles, a list of permission scopes, an audit-trail promise, and a 'what agents will do' teaser. It is important to read these as a *design contract* for the future system. The scopes are shown with a 'Not granted' chip and the note 'None are active until an agent is connected and explicitly granted them.' The three principles map directly onto the real architecture pieces described above:"},
+  {"t":"table","headers":["Stated principle (AgentsView)","Where it is (or will be) enforced","Real today?"],"rows":[
+    ["'Connect over MCP — an agent never gets direct database or network access.'","The `mcp/` gateway: agents reach CoLab only via REST `/api/*` (`gateway.ts`).","The boundary exists in code (gateway), but no agent connects to it in any deployment."],
+    ["'Act within granted scopes — requests outside scope are refused before they run.'","Backend resource-membership gates and host controls (e.g. `isMember` 403s, meeting host RBAC).","Backend gates are real and shipped. Per-agent SCOPE granting is NOT implemented — there is no agent identity or scope store."],
+    ["'Everything is audited — append-only trail, attributed to the agent and scope.'","`audit_log` table with DB triggers blocking UPDATE/DELETE (governance layer, §audit).","Audit log is real and append-only. Per-agent attribution (agent id + scope) is NOT yet modeled."]
+  ]},
+  {"t":"callout","kind":"risk","title":"Do not overclaim governance","text":"The page describes scope-based authorization and per-agent audit attribution as if they exist. They do not exist as an agent runtime. What exists is (a) the MCP gateway boundary, (b) generic backend authorization that applies to whatever token is presented, and (c) a general append-only audit log. There is no agent identity, no per-agent scope model, and no agent-attributed audit rows. Closing this gap is future work (§12.4)."},
+
+  {"t":"h","level":2,"text":"12.4 The REAL in-product AI (not an agent): aiService.ts"},
+
+  {"t":"p","text":"To prevent confusion: CoLab *does* ship one working AI feature, but it is deliberately not part of the agent system. It lives in `backend/app/src/services/aiService.ts`, is branded 'Agen-X' in its prompts, and is exposed via `backend/app/src/routes/ai.ts` (`POST /api/ai/summarize`, `POST /api/ai/ask`), both behind `authMiddleware`. It is a plain, stateless call to an OpenAI-compatible `/chat/completions` endpoint — no agent loop, no tools, no memory."},
+  {"t":"ul","items":[
+    "`summarizeConversation({ userId, conversationId })` — enforces conversation membership FIRST (no IDOR), pulls the last 60 messages, **skips any E2EE-encrypted rows** (`encryptionVersion > 0`) so ciphertext is never sent to the model, builds a transcript capped at 6000 chars, and asks the model for 2–5 catch-up bullets plus an optional action-items list.",
+    "`ask(prompt, style)` — a one-shot Q&A with three styles (`concise` / `detailed` / balanced default) selected by the user's `agentStyle` setting; differs only in the system directive and `max_tokens`.",
+    "Config gating: `config.ai` (`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `timeoutMs` default 30000). When `LLM_BASE_URL` is unset, `chatComplete` throws `AI_DISABLED` and makes no outbound call — the feature reports disabled rather than failing opaquely."
+  ]},
+  {"t":"p","text":"Frontend exposure is narrow and honest: only conversation summarize ('Catch up') is surfaced, in `ChatView.tsx` (~line 4037 via `api.summarizeConversation`), gated by the `aiSummary` feature flag (`NEXT_PUBLIC_FEATURE_AI_SUMMARY`, off by default). The `ask` endpoint exists and `api.askAgent` is defined (`lib/api.ts` ~line 616) but is **called from no component** — the endpoint is live, the UI is not built. This is the only place in CoLab where a language model is actually invoked."},
+  {"t":"diagram","kind":"flow","title":"Working AI path (separate from agents)","nodes":[
+    {"label":"ChatView","sub":"'Catch up'"},
+    {"label":"POST /api/ai/summarize","sub":"auth + membership"},
+    {"label":"aiService","sub":"skip E2EE rows"},
+    {"label":"LLM","sub":"chat/completions"}
+  ]},
+
+  {"t":"h","level":3,"text":"12.4.1 Failure scenarios and troubleshooting (the AI that does run)"},
+  {"t":"table","headers":["Symptom","Likely cause","Resolution"],"rows":[
+    ["`AI_DISABLED` / feature reports off","`LLM_BASE_URL` unset in backend env.","Set `LLM_BASE_URL` (and `LLM_API_KEY`/`LLM_MODEL`) and restart the backend."],
+    ["'Catch up' button missing in chat","`NEXT_PUBLIC_FEATURE_AI_SUMMARY` not `1` at build time.","Set the flag and rebuild the frontend (it is baked at build)."],
+    ["403 from summarize","Caller is not a member of the conversation (IDOR guard).","Expected; only members can summarize. Verify membership."],
+    ["Summary omits recent messages","Those rows are E2EE-encrypted (`encryptionVersion > 0`) and are skipped by design.","Expected; E2EE content is never sent to the model."],
+    ["`AI_UPSTREAM` / `AI_EMPTY` / timeout","Upstream LLM error, empty completion, or >30s latency (`AbortController`).","Check the LLM endpoint health, key, and `LLM_TIMEOUT_MS`."]
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"12.5 Planned agents and the future architecture"},
+
+  {"t":"p","text":"The scaffolds are not accidental — they encode a deliberate target architecture. Synthesizing the design comments in `agents/index.ts`, the MCP capability surface, and the governance model in `AgentsView.tsx`, the intended future system is an **AI Workspace Companion** that (a) reads real workspace context, (b) reasons with a language model, and (c) acts through the MCP/REST boundary under granted, audited scopes. The pieces already in place that this design reuses are: the MCP tool/resource catalog (§12.2), the REST gateway as the governance boundary, the existing backend authorization gates, the append-only `audit_log`, and the working LLM plumbing in `aiService.ts`."},
+
+  {"t":"diagram","kind":"layered","title":"Intended future agent architecture","layers":[
+    {"label":"Companion runtime","items":["dailyBriefing","summarizeConversation","workspaceInsights"]},
+    {"label":"Reasoning","items":["LLM (reuse aiService plumbing)","Prompt + plan"]},
+    {"label":"Capabilities","items":["MCP tools (19)","MCP resources (7)"]},
+    {"label":"Governance boundary","items":["gateway.ts REST","Scopes + audit"]},
+    {"label":"CoLab backend","items":["Authz gates","audit_log"]}
+  ]},
+
+  {"t":"h","level":3,"text":"12.5.1 Work required to make agents real (gap list)"},
+  {"t":"p","text":"The following is the honest delta between today's scaffolds and a functioning, governed agent. Each item is currently absent and would need to be built."},
+  {"t":"ol","items":[
+    "Implement the three `companion` methods: replace the `throw`s with real context-gathering (via the REST/MCP resources) + an LLM call (reuse `aiService.chatComplete`-style plumbing).",
+    "Wire a model/reasoning layer for the companion (prompt construction, optional planning, tool-call dispatch). None exists in `agents/` today.",
+    "Add agent identity + a per-agent scope model (a store mapping agent → granted scopes), so the 'act within granted scopes' promise is enforceable rather than advertised.",
+    "Extend the audit log to attribute actions to an agent and the exact scope used (today's `audit_log` records the acting token's user, not an agent identity).",
+    "Make the MCP server a runnable, deployed service: add a `start` script, a compose service, and complete the protocol (add `initialize` handshake, fix the dropped JSON-RPC `id` in `writeError`, and add a `tools/call` path to SSE — or adopt the official MCP SDK).",
+    "Connect a real MCP client/agent in a deployment, flip the `agents` and (as needed) `aiSummary` feature flags, and surface the `ask`/agent UI that currently has no front end.",
+    "Add memory if the roadmap requires stateful agents (conversation/state store or vector index) — entirely absent today."
+  ]},
+
+  {"t":"h","level":3,"text":"12.5.2 Failure scenarios for the future system (design-time risks)"},
+  {"t":"p","text":"These are risks the future implementation must address; they are not bugs in current code because the current code does not run as an agent."},
+  {"t":"table","headers":["Risk","Why it matters","Mitigation already designed-for"],"rows":[
+    ["Agent acts outside intended scope","An over-broad token lets an agent do anything the user can.","Per-agent scope model (to build) + the REST gateway already inheriting backend membership/host gates."],
+    ["Untraceable agent actions","Hard to answer 'which agent did this?' for compliance.","Append-only `audit_log` with DB triggers exists; needs agent+scope attribution columns."],
+    ["Leaking E2EE content to a model","DM ciphertext must never reach an LLM.","Precedent set: `aiService.summarizeConversation` already skips `encryptionVersion > 0` rows."],
+    ["Direct DB/network access by an agent","Bypassing the governance boundary.","Architecture forces all agent access through `gateway.ts` REST; no DB handle is exposed to MCP."],
+    ["Spec-incomplete MCP server rejected by clients","Missing `initialize`/notifications/batching; dropped request id.","Known gaps documented (§12.2.4); fix or adopt official SDK before going live."]
+  ]},
+
+  {"t":"h","level":2,"text":"12.6 Business impact and how to talk about agents"},
+  {"t":"p","text":"Plain-language framing for stakeholders: CoLab has *built the safety rails and the plug* for AI agents, and has *one working AI feature* (conversation 'Catch up'). It has **not** built an agent that autonomously reads your workspace and acts for you. The value of the current state is architectural readiness — the trust model (MCP boundary, scopes, audit) and the capability catalog are designed and partly coded, so the eventual agent slots into an existing, governed surface rather than being bolted on. The risk to manage is *overclaiming*: the Agents screen and scaffold comments describe an end-state, and a casual reader could mistake the design for the product."},
+  {"t":"callout","kind":"tip","title":"One-line status for a deck","text":"Agents in CoLab today = reserved namespace (`agents/` throws not-implemented) + an unwired MCP capability bridge (`mcp/`, 19 tools / 7 resources, not deployed) + a static governance page. The only live AI is backend conversation summarization ('Catch up'), flag-gated and E2EE-safe. Everything agentic is a planned 'Sprint 6' capability, not a shipped feature."},
+
+  {"t":"h","level":2,"text":"12.7 Summary table — agent system inventory"},
+  {"t":"table","headers":["Component","Location","Maturity","Runtime behavior"],"rows":[
+    ["Agent scaffold (`companion`)","`agents/app/src/index.ts`","Scaffold","All 3 methods throw `not implemented (Sprint 6)`; imported nowhere."],
+    ["MCP tools (19)","`mcp/app/src/tools/index.ts`","Prototype","REST wrappers via gateway; functional over stdio but not deployed."],
+    ["MCP resources (7)","`mcp/app/src/resources/index.ts`","Prototype","Read-only GET wrappers; exact-URI match only."],
+    ["MCP prompt (1)","`mcp/app/src/prompts/index.ts`","Prototype","`workspace_briefing` template string."],
+    ["Backend gateway","`mcp/app/src/server/gateway.ts`","Prototype","Bearer-token REST bridge; mandatory token; envelope-enforced."],
+    ["stdio transport","`mcp/app/src/transports/stdio/index.ts`","Partial","JSON-RPC list+call+read; no handshake; drops error id."],
+    ["SSE transport","`mcp/app/src/transports/sse/index.ts`","Partial","Discovery-only; no `tools/call`."],
+    ["Agents screen","`frontend/app/src/components/AgentsView.tsx`","Static page","Informational governance UI; 'MCP not configured'; nav hidden by flag."],
+    ["Real in-product AI ('Agen-X')","`backend/app/src/services/aiService.ts`","Shipped (flag-gated)","Conversation summarize is live ('Catch up'); `ask` endpoint live but no UI."]
+  ]}
+]

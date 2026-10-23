@@ -1,0 +1,101 @@
+/* Activity screen refresh — matches the Calls / Calendar look. Scoped to #vact. */
+#vact{
+  --ax-line:var(--ax-bg2);--ax-line2:var(--ax-3);--ax-card:#fff;--ax-soft:var(--ax-bg);--ax-ink:#111827;--ax-mut:#6b7280;--ax-faint:#9ca3af;--ax-acc:var(--ax);
+  background:var(--ax-bg);
+}
+body.dark #vact{--ax-line:rgba(255,255,255,.08);--ax-line2:rgba(255,255,255,.14);--ax-card:rgba(23,27,41,.82);--ax-soft:color-mix(in srgb,var(--ax) 14%,transparent);--ax-ink:#f3f4f6;--ax-mut:#9ca3af;--ax-faint:#6b7280;background:var(--bg,#0f1220)}
+
+/* toolbar: tabs in a pill group, actions as pills */
+#vact .ibx-tabs{max-width:940px;padding:18px 28px 0;row-gap:10px}
+#vact .ibx-tabs .ibx-tab{height:32px;padding:0 14px;border-radius:999px;font-size:12.5px;font-weight:500;color:var(--ax-mut);transition:all .15s}
+#vact .ibx-tabs .ibx-tab:hover{background:var(--ax-soft);color:var(--ax-ink)}
+#vact .ibx-tabs .ibx-tab.active{background:#111827;color:#fff;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+body.dark #vact .ibx-tabs .ibx-tab.active{background:var(--ax)}
+#vact .ibx-tab-c{background:var(--ax-soft);color:var(--ax-acc);border:1px solid var(--ax-line);min-width:20px;padding:0 6px;line-height:16px;font-size:10.5px;font-weight:700}
+#vact .ibx-tab.active .ibx-tab-c{background:rgba(255,255,255,.2);color:#fff;border-color:transparent}
+#vact .ibx-mark{height:34px;padding:0 16px;border-radius:999px;background:var(--ax-card);border:1px solid var(--ax-line);color:var(--ax-ink);font-size:12.5px;font-weight:500;box-shadow:0 2px 10px rgba(17,24,39,.04);transition:all .15s}
+#vact .ibx-mark:hover{border-color:var(--ax-line2);background:var(--ax-card);color:var(--ax-acc)}
+#vact .ibx-tabs-actions .ibx-mark:last-child:not([disabled]){background:linear-gradient(135deg,var(--ax),var(--ax));border-color:transparent;color:#fff;font-weight:600;box-shadow:0 6px 18px color-mix(in srgb,var(--ax) 30%,transparent)}
+#vact .ibx-tabs-actions .ibx-mark:last-child:not([disabled]):hover{filter:brightness(1.06);color:#fff}
+
+/* feed */
+#vact .ibx-body{max-width:940px;padding:16px 28px 32px;scrollbar-width:thin;scrollbar-color:var(--ax-3) transparent}
+#vact .ibx-grp-h{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--ax-mut);margin:6px 2px 10px}
+#vact .ibx-row{position:relative;gap:14px;padding:14px 16px;margin-bottom:10px;border-radius:16px;background:var(--ax-card);border:1px solid var(--ax-line);box-shadow:0 2px 10px rgba(17,24,39,.04);transition:transform .15s,box-shadow .15s,border-color .15s}
+#vact .ibx-row:hover{background:var(--ax-card);border-color:var(--ax-line2);box-shadow:0 8px 24px color-mix(in srgb,var(--ax) 10%,transparent);transform:translateY(-1px)}
+#vact .ibx-row.unread{background:var(--ax-card);border-color:var(--ax-line2)}
+#vact .ibx-row.unread:hover{background:var(--ax-card)}
+#vact .ibx-row.unread::before{content:"";position:absolute;left:5px;top:16px;bottom:16px;width:3px;border-radius:99px;background:var(--ax-acc)}
+#vact .ibx-row.picked{background:var(--ax-soft);border-color:var(--ax-line2)}
+#vact .ibx-row-name{font-size:14px;font-weight:600;color:var(--ax-ink)}
+#vact .ibx-row.unread .ibx-row-name{font-weight:700}
+#vact .ibx-row-prev{font-size:12.5px;color:var(--ax-mut);display:flex;align-items:center;gap:6px}
+#vact .ibx-row.unread .ibx-row-prev{color:var(--ax-ink);opacity:.8}
+#vact .ibx-row-prev.miss{color:#dc2626}
+#vact .ibx-row-time{font-size:11.5px;color:var(--ax-faint);font-weight:500}
+#vact .ibx-row-time.soon{color:#dc2626;font-weight:700}
+#vact .ibx-badge{min-width:22px;height:22px;border-radius:999px;background:var(--ax-acc);box-shadow:0 2px 8px color-mix(in srgb,var(--ax) 35%,transparent)}
+#vact .ibx-cat{margin-left:8px;padding:2px 8px;font-size:9.5px;letter-spacing:.05em}
+#vact .ibx-cat.cat-dm,#vact .ibx-cat.cat-request{background:var(--ax-soft);color:var(--ax-acc)}
+/* icon chips: rounded squares with soft tint */
+#vact .ibx-notif-icon,#vact .ibx-mt-ic{width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,var(--ax-bg),var(--ax-bg2));color:var(--ax-acc);font-size:17px}
+body.dark #vact .ibx-notif-icon,body.dark #vact .ibx-mt-ic{background:color-mix(in srgb,var(--ax) 20%,transparent)}
+#vact .ibx-mt-ic{background:linear-gradient(135deg,#fffbeb,#fef3c7)}
+#vact .ibx-notif-icon.notif-call_missed,#vact .ibx-notif-icon.notif-org_concern,#vact .ibx-notif-icon.notif-concern_update,#vact .ibx-notif-icon.notif-meeting_cancelled{background:linear-gradient(135deg,#fef2f2,#fee2e2);color:#dc2626}
+#vact .ibx-check{border-radius:7px;border-color:var(--ax-line2)}
+#vact .ibx-notif-del{right:12px;top:22px;width:24px;height:24px;border-radius:50%;background:var(--ax-soft);font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center}
+/* actions */
+#vact .ibx-join{height:32px;padding:0 18px;border-radius:999px;font-size:12px;font-weight:600}
+#vact .ibx-ended{border-radius:999px;background:var(--ax-soft)}
+#vact .req-actions button{border-radius:999px}
+#vact .ibx-showmore{border-radius:999px;border-color:var(--ax-line);background:var(--ax-card);color:var(--ax-acc);box-shadow:0 2px 10px rgba(17,24,39,.04)}
+#vact .ibx-empty{padding:70px 24px;font-size:13px;color:var(--ax-mut)}
+
+/* Dismiss ✕: always legible on hover (unread hover used to turn it white), clear of the timestamp */
+#vact .ibx-row .ibx-notif-del,#vact .ibx-row.unread:hover .ibx-notif-del{
+  right:14px;top:50%;transform:translateY(-50%) scale(.85);width:28px;height:28px;border-radius:50%;
+  background:#fff;color:#4b5563 !important;border:1px solid rgba(17,24,39,.12);box-shadow:0 2px 6px rgba(17,24,39,.08);
+  font-size:17px;opacity:0;pointer-events:none;transition:opacity .15s,transform .2s cubic-bezier(.32,.72,0,1),background .15s,color .15s}
+#vact .ibx-row:hover .ibx-notif-del,#vact .ibx-row:focus-within .ibx-notif-del{opacity:1;pointer-events:auto;transform:translateY(-50%) scale(1)}
+#vact .ibx-row .ibx-notif-del:hover{background:#fee2e2;color:#dc2626 !important;border-color:#fecaca}
+body.dark #vact .ibx-row .ibx-notif-del{background:#1f2433;color:#d1d5db !important;border-color:rgba(255,255,255,.14)}
+@media (hover:none){#vact .ibx-row .ibx-notif-del{opacity:1;pointer-events:auto;transform:translateY(-50%)}}
+
+/* ===== Premium Activity ===== */
+#vact .ibx-body{max-width:980px;padding:20px 32px 40px}
+#vact .ibx-row{padding:16px 18px 16px 22px;margin-bottom:12px;border-radius:20px;border:1px solid color-mix(in srgb,var(--ax) 10%,rgba(17,24,39,.06));
+  background:linear-gradient(180deg,#fff,color-mix(in srgb,var(--ax) 2%,#fff));
+  box-shadow:0 1px 2px rgba(17,24,39,.04),0 10px 28px -16px color-mix(in srgb,var(--ax) 22%,transparent);
+  transition:transform .35s cubic-bezier(.32,.72,0,1),box-shadow .35s cubic-bezier(.32,.72,0,1),border-color .25s}
+#vact .ibx-row:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--ax) 28%,transparent);
+  box-shadow:0 1px 2px rgba(17,24,39,.05),0 18px 40px -18px color-mix(in srgb,var(--ax) 38%,transparent)}
+#vact .ibx-row.unread::before{left:7px;top:18px;bottom:18px;width:3px;background:linear-gradient(180deg,var(--ax),var(--ax-2))}
+#vact .ibx-notif-icon,#vact .ibx-mt-ic{width:46px;height:46px;border-radius:15px;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ax) 12%,transparent)}
+#vact .ibx-row-name{font-size:14.5px;letter-spacing:-.005em}
+#vact .ibx-row-time{font-size:12px;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+/* dismiss: its own fixed slot at the row end — never shifts the timestamp */
+#vact .ibx-row .ibx-notif-del,#vact .ibx-row.unread:hover .ibx-notif-del{position:static;flex:none;margin-left:6px;transform:scale(.8);top:auto;right:auto;width:30px;height:30px}
+#vact .ibx-row:hover .ibx-notif-del,#vact .ibx-row:focus-within .ibx-notif-del{transform:scale(1)}
+@media (hover:none){#vact .ibx-row .ibx-notif-del{transform:none}}
+#vact .ibx-join{height:34px;padding:0 20px;box-shadow:0 8px 18px -8px color-mix(in srgb,var(--ax) 55%,transparent);transition:transform .25s cubic-bezier(.32,.72,0,1),filter .2s}
+#vact .ibx-join:hover{transform:translateY(-1px);filter:brightness(1.07)}
+#vact .ibx-tabs .ibx-tab{height:36px;padding:0 18px;font-size:13px}
+#vact .ibx-mark{height:38px;padding:0 20px;font-size:13px}
+@keyframes ibx-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+#vact .ibx-row{animation:ibx-in .5s cubic-bezier(.32,.72,0,1) both}
+#vact .ibx-row:nth-child(2){animation-delay:.04s}#vact .ibx-row:nth-child(3){animation-delay:.08s}#vact .ibx-row:nth-child(4){animation-delay:.12s}#vact .ibx-row:nth-child(5){animation-delay:.16s}#vact .ibx-row:nth-child(n+6){animation-delay:.2s}
+@media (prefers-reduced-motion:reduce){#vact .ibx-row{animation:none}}
+
+/* Dismiss: floating corner chip (iOS-style) — takes no space in the row, timestamp never moves */
+#vact .ibx-row .ibx-notif-del,#vact .ibx-row.unread:hover .ibx-notif-del{
+  position:absolute;top:-9px;right:-9px;left:auto;margin:0;width:24px;height:24px;flex:none;
+  transform:scale(.6);opacity:0;pointer-events:none;border-radius:50%;
+  background:#111827;color:#fff !important;border:2px solid #fff;box-shadow:0 4px 12px rgba(17,24,39,.28);
+  font-size:14px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;
+  transition:opacity .18s ease,transform .3s cubic-bezier(.32,.72,0,1),background .15s}
+#vact .ibx-row:hover .ibx-notif-del,#vact .ibx-row:focus-within .ibx-notif-del{opacity:1;pointer-events:auto;transform:scale(1)}
+#vact .ibx-row .ibx-notif-del:hover{background:#dc2626;color:#fff !important;border-color:#fff;transform:scale(1.1)}
+body.dark #vact .ibx-row .ibx-notif-del{background:#e5e7eb;color:#111827 !important;border-color:#1f2433}
+@media (hover:none){#vact .ibx-row .ibx-notif-del{opacity:1;pointer-events:auto;transform:none}}
+#vact .ibx-row-body{padding-right:0}
+#vact .ibx-notif-del svg{width:13px;height:13px;stroke-width:2.4}

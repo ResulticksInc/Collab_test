@@ -1,0 +1,24 @@
+{
+  "name": "@colab/backend",
+  "version": "1.0.1",
+  "private": true,
+  "main": "app/src/index.ts",
+  "scripts": {
+    "dev": "node app/src/index.js",
+    "start": "node app/src/index.js"
+  },
+  "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
+    "cors": "^2.8.6",
+    "express": "^4.22.2",
+    "jose": "^5.10.0",
+    "jsonwebtoken": "^9.0.3",
+    "livekit-server-sdk": "^2.15.4",
+    "redis": "^6.0.0",
+    "socket.io": "^4.8.3",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}

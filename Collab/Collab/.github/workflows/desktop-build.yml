@@ -1,0 +1,220 @@
+# Build the Collab desktop installers for Windows, macOS and Linux on their
+# native runners (electron-builder cannot cross-build .dmg / sign macOS from a
+# Windows host — so Mac MUST run on macos-latest). Trigger manually
+# (Actions → "Desktop installers" → Run workflow) or by pushing a `desktop-v*`
+# tag. Artifacts (installers) are uploaded per-platform.
+name: Desktop installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel — promotion ladder dev → beta → stable (stable=latest.json, beta=latest-beta.json, dev=latest-dev.json)"
+        type: choice
+        options:
+          - stable
+          - beta
+          - dev
+        default: stable
+  push:
+    tags:
+      - "desktop-v*"
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            cmd: npm run dist:win
+          - os: macos-latest
+            cmd: npm run dist:mac
+          - os: ubuntu-latest
+            cmd: npm run dist:linux
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Linux AppImage/deb tooling
+      - name: Linux build deps
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y rpm fakeroot
+
+      - name: Install desktop deps (incl. @nut-tree-fork/nut-js prebuilt binary)
+        run: npm install --no-audit --no-fund
+
+      - name: Build installer
+        run: ${{ matrix.cmd }}
+        env:
+          # Release channel — baked into the build so the shell fetches the right
+          # manifest along the dev → beta → stable promotion ladder (stable →
+          # /desktop/latest.json, beta → /desktop/latest-beta.json, dev →
+          # /desktop/latest-dev.json; see desktop/config.js). Defaults to "stable"
+          # for tag-triggered builds.
+          COLLAB_CHANNEL: ${{ inputs.channel || 'stable' }}
+          #
+          # ── CODE-SIGNING (currently OFF → installers are UNSIGNED) ─────────────
+          # Until the secrets below are added, Windows SmartScreen shows an
+          # "unknown publisher" warning and macOS Gatekeeper blocks the app on
+          # first open (right-click → Open to bypass). Linux AppImage/deb are
+          # unaffected. To sign, add these REPO SECRETS (Settings → Secrets →
+          # Actions) and DELETE the `CSC_IDENTITY_AUTO_DISCOVERY: "false"` line:
+          #
+          #   Windows (Authenticode):
+          #     CSC_LINK              — base64 of the .pfx code-signing cert
+          #     CSC_KEY_PASSWORD      — the .pfx password
+          #
+          #   macOS (Developer ID sign + notarize):
+          #     CSC_LINK              — base64 of the "Developer ID Application" .p12
+          #     CSC_KEY_PASSWORD      — the .p12 password
+          #     APPLE_ID              — Apple Developer account email
+          #     APPLE_APP_SPECIFIC_PASSWORD — app-specific password (notarization)
+          #     APPLE_TEAM_ID         — 10-char Apple Developer Team ID
+          #   …and set `notarize: true` in desktop/electron-builder.yml (mac:).
+          #
+          # electron-builder picks all of these up automatically from the env —
+          # no further config change is needed once the secrets exist. The user
+          # must supply the certs; none are invented here.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: collab-desktop-${{ matrix.os }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/*.rpm
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ── Publish a GitHub Release with the installers attached ────────────────────
+  # Runs ONLY on a `desktop-v*` tag push (never on workflow_dispatch). It gathers
+  # the per-OS installers built above and attaches them to a GitHub Release named
+  # for the tag, so the latest.json manifest URLs can point at STABLE, permanent
+  # release-asset URLs (…/releases/download/<tag>/<file>) instead of expiring
+  # Actions artifacts.
+  #
+  # COST: $0 — GitHub Releases + release assets are free. The ONLY credential is
+  # the auto-provided GITHUB_TOKEN (contents: write to create the release). No
+  # code-signing is enabled here (installers stay UNSIGNED — see the build job's
+  # code-signing note); the user must supply certs to sign.
+  #
+  # MANUAL post-release step (by design, no invented automation): bump
+  # frontend/app/public/desktop/latest.json (or latest-<channel>.json) to the new
+  # `version` + the new release-asset `url`s, then redeploy `frontend`. See
+  # docs/ENTERPRISE_DEPLOYMENT.md §4 (Publish + promote) and §"CI/CD pipeline".
+  release:
+    name: GitHub Release (desktop-v* tag)
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/desktop-v') }}
+    permissions:
+      contents: write # create the release + upload assets (GITHUB_TOKEN only)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Pull down every per-OS artifact the build matrix uploaded.
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      # Tamper-evidence WITHOUT a code-signing cert ($0): one SHA256SUMS.txt over
+      # every installer, attached to the release. IT / users verify a download
+      # with `sha256sum -c SHA256SUMS.txt` (mac/Linux) or `Get-FileHash`
+      # (Windows). See docs/DESKTOP_INSTALL.md.
+      - name: Generate SHA-256 checksums
+        run: |
+          cd installers
+          find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -printf '%P\n' | sort | xargs -r sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # Auto-generate latest.json (version + per-OS URLs + REAL sizes) from the
+      # built installers so the manifest never has to be hand-maintained. It uses
+      # same-origin /desktop/ URLs — publish this file together with the installers
+      # to the served /desktop/ path (stable → latest.json). Attached to the
+      # release below so it ships alongside the binaries.
+      - name: Generate latest.json manifest
+        run: node desktop/gen-latest.mjs installers stable
+
+      - name: Create GitHub Release + attach installers
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Collab Desktop ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          # UNSIGNED installers — Windows SmartScreen "unknown publisher" + macOS
+          # Gatekeeper block on first open (right-click → Open). Add code-signing
+          # secrets to the build job to sign (see its note). Linux is unaffected.
+          body: |
+            Automated Collab desktop installers for **${{ github.ref_name }}**.
+
+            > ⚠️ Installers are **UNSIGNED**. Windows shows a SmartScreen
+            > "unknown publisher" warning; macOS Gatekeeper blocks first open
+            > (right-click → Open to bypass). Linux AppImage/deb are unaffected.
+            > Install steps: `docs/DESKTOP_INSTALL.md`.
+
+            **Verify your download:** compare against `SHA256SUMS.txt` below
+            (`sha256sum -c SHA256SUMS.txt` on mac/Linux, `Get-FileHash` on Windows).
+
+            **Next (manual):** bump `frontend/app/public/desktop/latest.json`
+            (or `latest-<channel>.json`) to this version + the asset URLs below,
+            then redeploy `frontend`. See `docs/ENTERPRISE_DEPLOYMENT.md` §4.
+          files: |
+            installers/*.exe
+            installers/*.dmg
+            installers/*.zip
+            installers/*.AppImage
+            installers/*.deb
+            installers/*.rpm
+            installers/SHA256SUMS.txt
+            installers/latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Auto-publish to the served /desktop/ path (hands-off distribution) ────
+      # rsyncs every installer + the generated latest.json to the web server so
+      # the Download modal serves them same-origin — no manual upload, all OSes
+      # work the moment the release finishes.
+      #
+      # OPT-IN (skipped until configured): add repo VARIABLE `DESKTOP_DEPLOY=true`
+      # (Settings → Secrets and variables → Actions → Variables) plus these
+      # SECRETS:
+      #   DESKTOP_DEPLOY_HOST  — server host/IP that serves the app
+      #   DESKTOP_DEPLOY_USER  — SSH user
+      #   DESKTOP_DEPLOY_KEY   — that user's SSH PRIVATE key (PEM)
+      #   DESKTOP_DEPLOY_PATH  — absolute path of the served /desktop/ dir
+      - name: Publish installers to the server /desktop/
+        if: ${{ vars.DESKTOP_DEPLOY == 'true' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DESKTOP_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DESKTOP_DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DESKTOP_DEPLOY_KEY }}
+          DEPLOY_PATH: ${{ secrets.DESKTOP_DEPLOY_PATH }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          rsync -avz --chmod=F644 \
+            -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new" \
+            installers/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+          echo "Published installers + latest.json to $DEPLOY_HOST:$DEPLOY_PATH"

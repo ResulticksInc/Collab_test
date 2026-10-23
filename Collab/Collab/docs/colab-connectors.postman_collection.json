@@ -1,0 +1,1226 @@
+{
+  "info": {
+    "_postman_id": "bb32657f-a960-4eb2-b249-579b2470e4fc",
+    "name": "CoLab — Connector Engine",
+    "description": "Every Unified Connector Engine API (docs/CONNECTOR_ENGINE.md): accounts, mappings, jobs, calendar sync, and a signed inbound Slack event you can replay.\n\nSETUP\n1. Import docs/colab.postman_environment.json and select it. Set baseUrl INCLUDING /api (local: http://localhost:4000/api).\n2. Set colabEmail / colabPassword (local dev: probe1@colab.test / Probe@12345), run '0 · Sign in'. Accounts need an org admin (org:manage) or the platform admin role.\n3. Run the folders top to bottom — each request stores the ids the next one needs (connectorAccountId, connectorMappingId, connectorJobId).\n\nThe inbound requests under '4' sign the body with the signing secret you gave the account, exactly as Slack would.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "slackSigningSecret",
+      "value": "demo-signing-secret"
+    },
+    {
+      "key": "whatsappAccessToken",
+      "value": "EAAG…system-user-token"
+    },
+    {
+      "key": "whatsappPhoneNumberId",
+      "value": "105551234567890"
+    },
+    {
+      "key": "whatsappAppSecret",
+      "value": "your-meta-app-secret"
+    },
+    {
+      "key": "whatsappVerifyToken",
+      "value": "choose-a-random-string"
+    }
+  ],
+  "item": [
+    {
+      "name": "0 · Sign in",
+      "item": [
+        {
+          "name": "Sign in (email users)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Saves data.token to {{colabToken}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{colabEmail}}\",\n  \"password\": \"{{colabPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data || {}; if (d.token) pm.environment.set('colabToken', d.token); if (d.refreshToken) pm.environment.set('colabRefresh', d.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Platform catalog",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/platforms",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "platforms"]
+            },
+            "description": "Which platforms exist, which credential fields each needs, and where to point the platform's webhook."
+          },
+          "event": []
+        }
+      ]
+    },
+    {
+      "name": "1 · Accounts (org admin)",
+      "item": [
+        {
+          "name": "List accounts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "accounts"]
+            },
+            "description": ""
+          },
+          "event": []
+        },
+        {
+          "name": "Create Slack account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "accounts"]
+            },
+            "description": "Credentials are write-only: sealed at rest, never returned. Stores data.id in {{connectorAccountId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"platform\": \"slack\",\n  \"name\": \"Demo Slack\",\n  \"credentials\": {\n    \"botToken\": \"xoxb-\\u2026\",\n    \"signingSecret\": \"{{slackSigningSecret}}\"\n  },\n  \"botIds\": [\n    \"U_BOT_USER_ID\"\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.id) pm.environment.set('connectorAccountId', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Teams account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "accounts"]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"platform\": \"teams\",\n  \"name\": \"Demo Teams\",\n  \"credentials\": {\n    \"tenantId\": \"<entra-tenant-id>\",\n    \"clientId\": \"<app-id>\",\n    \"clientSecret\": \"<secret>\",\n    \"clientState\": \"<random-string>\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.id) pm.environment.set('connectorAccountId', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create WhatsApp account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "accounts"]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"platform\": \"whatsapp\",\n  \"name\": \"Demo WhatsApp\",\n  \"credentials\": {\n    \"accessToken\": \"<system-user-token>\",\n    \"phoneNumberId\": \"<phone-number-id>\",\n    \"appSecret\": \"<app-secret>\",\n    \"verifyToken\": \"<verify-token>\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.id) pm.environment.set('connectorAccountId', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Google Calendar account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "accounts"]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"platform\": \"google_calendar\",\n  \"name\": \"Demo Google Calendar\",\n  \"credentials\": {\n    \"serviceAccountJson\": \"<service-account-json>\",\n    \"impersonate\": \"organizer@example.com\"\n  },\n  \"settings\": {\n    \"autoSyncMeetings\": true,\n    \"applyExternalChanges\": false\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.id) pm.environment.set('connectorAccountId', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get account (+ job counts)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts/{{connectorAccountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "accounts", "{{connectorAccountId}}"]
+            },
+            "description": ""
+          },
+          "event": []
+        },
+        {
+          "name": "Test connection (learns bot ids)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts/{{connectorAccountId}}/test",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "connectors",
+                "accounts",
+                "{{connectorAccountId}}",
+                "test"
+              ]
+            },
+            "description": "Live round-trip with the stored credential. ok:false with the platform's reason when it fails."
+          },
+          "event": []
+        },
+        {
+          "name": "Update account / rotate one secret",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts/{{connectorAccountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "accounts", "{{connectorAccountId}}"]
+            },
+            "description": "Blank credential fields keep their stored value.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Demo Slack (renamed)\",\n  \"enabled\": true,\n  \"credentials\": {\n    \"botToken\": \"xoxb-new\"\n  }\n}"
+            }
+          },
+          "event": []
+        },
+        {
+          "name": "Mappings on this account",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts/{{connectorAccountId}}/mappings",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "connectors",
+                "accounts",
+                "{{connectorAccountId}}",
+                "mappings"
+              ]
+            },
+            "description": ""
+          },
+          "event": []
+        },
+        {
+          "name": "Job log",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts/{{connectorAccountId}}/jobs?limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "connectors",
+                "accounts",
+                "{{connectorAccountId}}",
+                "jobs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.length) pm.environment.set('connectorJobId', d[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry a failed job",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/jobs/{{connectorJobId}}/retry",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "jobs", "{{connectorJobId}}", "retry"]
+            },
+            "description": ""
+          },
+          "event": []
+        },
+        {
+          "name": "Calendar: pull delta now",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts/{{connectorAccountId}}/pull",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "connectors",
+                "accounts",
+                "{{connectorAccountId}}",
+                "pull"
+              ]
+            },
+            "description": ""
+          },
+          "event": []
+        },
+        {
+          "name": "Delete account",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts/{{connectorAccountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "accounts", "{{connectorAccountId}}"]
+            },
+            "description": ""
+          },
+          "event": []
+        }
+      ]
+    },
+    {
+      "name": "2 · Mappings (conversation members)",
+      "item": [
+        {
+          "name": "My mappings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/mappings",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "mappings"]
+            },
+            "description": ""
+          },
+          "event": []
+        },
+        {
+          "name": "Mappings on a conversation",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/mappings?conversationId={{conversationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "mappings"],
+              "query": [
+                {
+                  "key": "conversationId",
+                  "value": "{{conversationId}}"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": []
+        },
+        {
+          "name": "Map a GROUP to a platform channel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/mappings",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "mappings"]
+            },
+            "description": "externalChannelId = Slack channel id / Teams channel id / Google Chat space name / WhatsApp number ('*' = catch-all inbox). Stores data.id in {{connectorMappingId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"{{connectorAccountId}}\",\n  \"conversationId\": \"{{conversationId}}\",\n  \"externalChannelId\": \"C0123ABCD\",\n  \"externalChannelName\": \"#general\",\n  \"direction\": \"both\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.id) pm.environment.set('connectorMappingId', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Map my DM with a user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/mappings",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "mappings"]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"{{connectorAccountId}}\",\n  \"userId\": \"{{targetUserId}}\",\n  \"externalChannelId\": \"C0123ABCD\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.id) pm.environment.set('connectorMappingId', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Queue a test post",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/mappings/{{connectorMappingId}}/test",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "connectors",
+                "mappings",
+                "{{connectorMappingId}}",
+                "test"
+              ]
+            },
+            "description": "The worker posts a synthetic message to the platform; check '1 · Job log' for the outcome."
+          },
+          "event": []
+        },
+        {
+          "name": "Pause / change direction",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/mappings/{{connectorMappingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "mappings", "{{connectorMappingId}}"]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"direction\": \"inbound\"\n}"
+            }
+          },
+          "event": []
+        },
+        {
+          "name": "Delete mapping",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/mappings/{{connectorMappingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "mappings", "{{connectorMappingId}}"]
+            },
+            "description": ""
+          },
+          "event": []
+        }
+      ]
+    },
+    {
+      "name": "3 · Meetings",
+      "item": [
+        {
+          "name": "Where did a meeting land on external calendars?",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/meetings/{{meetingId}}/mappings",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "meetings", "{{meetingId}}", "mappings"]
+            },
+            "description": ""
+          },
+          "event": []
+        }
+      ]
+    },
+    {
+      "name": "4 · Inbound (what the platform sends)",
+      "item": [
+        {
+          "name": "Slack url_verification handshake",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/in/slack/{{connectorAccountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "in", "slack", "{{connectorAccountId}}"]
+            },
+            "description": "No Authorization header — the signature is the credential. Expect 200 {challenge}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"url_verification\",\n  \"challenge\": \"challenge-123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Sign the body exactly as Slack does: v0=HMAC_SHA256(secret, 'v0:<ts>:<body>')",
+                  "const ts = Math.floor(Date.now()/1000).toString();",
+                  "const body = pm.request.body.raw;",
+                  "const sig = 'v0=' + CryptoJS.HmacSHA256('v0:' + ts + ':' + body, pm.collectionVariables.get('slackSigningSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({key:'X-Slack-Request-Timestamp', value: ts});",
+                  "pm.request.headers.upsert({key:'X-Slack-Signature', value: sig});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Slack message event → mapped conversation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/in/slack/{{connectorAccountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "in", "slack", "{{connectorAccountId}}"]
+            },
+            "description": "Lands in every conversation mapped to channel C0123ABCD, attributed to the mapping owner with the Slack author in the text. Replaying the same event_id is dropped as a duplicate.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"event_callback\",\n  \"event_id\": \"Ev{{$timestamp}}\",\n  \"event\": {\n    \"type\": \"message\",\n    \"channel\": \"C0123ABCD\",\n    \"user\": \"U_ALICE\",\n    \"ts\": \"{{$timestamp}}.000100\",\n    \"text\": \"Hello from *Slack* <https://example.com|docs>\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Sign the body exactly as Slack does: v0=HMAC_SHA256(secret, 'v0:<ts>:<body>')",
+                  "const ts = Math.floor(Date.now()/1000).toString();",
+                  "const body = pm.request.body.raw;",
+                  "const sig = 'v0=' + CryptoJS.HmacSHA256('v0:' + ts + ':' + body, pm.collectionVariables.get('slackSigningSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({key:'X-Slack-Request-Timestamp', value: ts});",
+                  "pm.request.headers.upsert({key:'X-Slack-Signature', value: sig});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Slack event from OUR bot (dropped by loop guard)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/in/slack/{{connectorAccountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "in", "slack", "{{connectorAccountId}}"]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"event_callback\",\n  \"event_id\": \"EvBot{{$timestamp}}\",\n  \"event\": {\n    \"type\": \"message\",\n    \"channel\": \"C0123ABCD\",\n    \"user\": \"U_BOT_USER_ID\",\n    \"ts\": \"{{$timestamp}}.000200\",\n    \"text\": \"echo\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Sign the body exactly as Slack does: v0=HMAC_SHA256(secret, 'v0:<ts>:<body>')",
+                  "const ts = Math.floor(Date.now()/1000).toString();",
+                  "const body = pm.request.body.raw;",
+                  "const sig = 'v0=' + CryptoJS.HmacSHA256('v0:' + ts + ':' + body, pm.collectionVariables.get('slackSigningSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({key:'X-Slack-Request-Timestamp', value: ts});",
+                  "pm.request.headers.upsert({key:'X-Slack-Signature', value: sig});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "WhatsApp verification handshake (GET)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/in/whatsapp/{{connectorAccountId}}?hub.mode=subscribe&hub.verify_token=<verify-token>&hub.challenge=12345",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "connectors",
+                "in",
+                "whatsapp",
+                "{{connectorAccountId}}"
+              ],
+              "query": [
+                {
+                  "key": "hub.mode",
+                  "value": "subscribe"
+                },
+                {
+                  "key": "hub.verify_token",
+                  "value": "<verify-token>"
+                },
+                {
+                  "key": "hub.challenge",
+                  "value": "12345"
+                }
+              ]
+            },
+            "description": "Meta calls this once when you save the callback URL. Expect the challenge echoed back."
+          },
+          "event": []
+        },
+        {
+          "name": "Teams Graph validation handshake",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/in/teams/{{connectorAccountId}}?validationToken=abc",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "in", "teams", "{{connectorAccountId}}"],
+              "query": [
+                {
+                  "key": "validationToken",
+                  "value": "abc"
+                }
+              ]
+            },
+            "description": "Graph sends ?validationToken when a subscription is created. Expect it echoed as text/plain."
+          },
+          "event": []
+        }
+      ]
+    },
+    {
+      "name": "5 · WhatsApp end to end",
+      "description": "Run top to bottom. Fill the credential placeholders in step 2 (or set the collection variables whatsappAccessToken / whatsappPhoneNumberId / whatsappAppSecret / whatsappVerifyToken) and set {{conversationId}} + {{whatsappNumber}} in the environment.",
+      "item": [
+        {
+          "name": "1 · Sign in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{colabEmail}}\",\n  \"password\": \"{{colabPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data || {}; if (d.token) pm.environment.set('colabToken', d.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2 · Create WhatsApp account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "accounts"]
+            },
+            "description": "Stores data.id in {{connectorAccountId}}. The inboundUrl in the response is what you paste into Meta → WhatsApp → Configuration → Callback URL.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"platform\": \"whatsapp\",\n  \"name\": \"Support WhatsApp\",\n  \"credentials\": {\n    \"accessToken\": \"{{whatsappAccessToken}}\",\n    \"phoneNumberId\": \"{{whatsappPhoneNumberId}}\",\n    \"appSecret\": \"{{whatsappAppSecret}}\",\n    \"verifyToken\": \"{{whatsappVerifyToken}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.id) pm.environment.set('connectorAccountId', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3 · Test the token against Meta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts/{{connectorAccountId}}/test",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "connectors",
+                "accounts",
+                "{{connectorAccountId}}",
+                "test"
+              ]
+            },
+            "description": "Expect data.ok=true with the verified name and display number."
+          },
+          "event": []
+        },
+        {
+          "name": "4 · Map a conversation to the customer's number",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/mappings",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "mappings"]
+            },
+            "description": "externalChannelId = the customer's number in international format with no '+'. Stores data.id in {{connectorMappingId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"{{connectorAccountId}}\",\n  \"conversationId\": \"{{conversationId}}\",\n  \"externalChannelId\": \"{{whatsappNumber}}\",\n  \"externalChannelName\": \"Customer\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.id) pm.environment.set('connectorMappingId', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5 · Send a chat message from CoLab",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{conversationId}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{conversationId}}", "messages"]
+            },
+            "description": "A normal chat send. The engine queues the WhatsApp delivery; the customer receives '*<your name>* _(via CoLab)_' + the text from your business number.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, your order **#4521** ships today.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data; if (d && d.id) pm.environment.set('lastMessageId', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6 · Delivery result (job log)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/accounts/{{connectorAccountId}}/jobs?limit=5",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "connectors",
+                "accounts",
+                "{{connectorAccountId}}",
+                "jobs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "status 'done' with the WhatsApp message id in result, or 'failed' with Meta's error (e.g. 131047 = outside the 24-hour window)."
+          },
+          "event": []
+        },
+        {
+          "name": "7 · Meta webhook verification (what Meta calls once)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/in/whatsapp/{{connectorAccountId}}?hub.mode=subscribe&hub.verify_token={{whatsappVerifyToken}}&hub.challenge=12345",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "connectors",
+                "in",
+                "whatsapp",
+                "{{connectorAccountId}}"
+              ],
+              "query": [
+                {
+                  "key": "hub.mode",
+                  "value": "subscribe"
+                },
+                {
+                  "key": "hub.verify_token",
+                  "value": "{{whatsappVerifyToken}}"
+                },
+                {
+                  "key": "hub.challenge",
+                  "value": "12345"
+                }
+              ]
+            },
+            "description": "Expect 200 with body 12345."
+          },
+          "event": []
+        },
+        {
+          "name": "8 · Simulate an inbound WhatsApp message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/in/whatsapp/{{connectorAccountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["connectors", "in", "whatsapp", "{{connectorAccountId}}"]
+            },
+            "description": "Signed with the app secret exactly as Meta would. Expect {accepted:1}; the message appears in the mapped conversation as '**Ravi** _(via WhatsApp)_'. Re-sending the same wamid is dropped as a duplicate.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"WABA\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"15550001111\",\n              \"phone_number_id\": \"{{whatsappPhoneNumberId}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": {\n                  \"name\": \"Ravi\"\n                },\n                \"wa_id\": \"{{whatsappNumber}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{whatsappNumber}}\",\n                \"id\": \"wamid.DEMO{{$timestamp}}\",\n                \"timestamp\": \"{{$timestamp}}\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"Hello from *WhatsApp*\"\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Sign the body exactly as Meta does: sha256=HMAC_SHA256(app secret, raw body)",
+                  "const sig = 'sha256=' + CryptoJS.HmacSHA256(pm.request.body.raw, pm.collectionVariables.get('whatsappAppSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({key:'X-Hub-Signature-256', value: sig});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9 · Read the conversation",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{colabToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{conversationId}}/messages?limit=5",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{conversationId}}", "messages"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": []
+        }
+      ]
+    }
+  ]
+}

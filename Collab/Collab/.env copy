@@ -1,0 +1,205 @@
+# ================= CoLab environment =================
+# Copy to .env. Only config/ reads these — never application modules.
+
+NODE_ENV=development
+
+# ----- Demo mode: the ONE switch (yes / no) -----
+# yes -> seeded sample workspace (team + conversations + messages + tasks…) for showcase/demos.
+# no  -> LIVE: real backend + persistence. The team directory is seeded so you can test
+#        collaboration, but the workspace starts EMPTY — you create chats/tasks/etc. and they
+#        persist. Logging in with a new email creates a real account.
+DEMO_MODE=no
+
+# ----- Backend -----
+BACKEND_HOST=0.0.0.0
+BACKEND_PORT=4000
+# Loopback + private-LAN origins (10.x/192.168.x/172.16-31.x) are auto-allowed on
+# any port, so a test server like http://10.205.11.8:3002 works without listing it.
+CORS_ORIGINS=http://localhost:3002
+
+# ----- Auth -----
+AUTH_JWT_SECRET=dev-only-change-me
+AUTH_TOKEN_TTL=7d
+# Public self-service sign-up. OFF by default: accounts are provisioned by an admin
+# (org admin console → provision user) or auto-created on first SSO login. The
+# frontend hides the Sign-Up UI when NEXT_PUBLIC_FEATURE_SIGNUP=0; THIS flag is the
+# server-side enforcement (POST /api/auth/signup returns 403 when false). Set both
+# to enable self-registration.
+AUTH_SIGNUP_ENABLED=false
+# Multi-factor auth (TOTP authenticator apps + one-time backup codes). OFF by
+# default: enrollment is dormant and login is unchanged. Set MFA_ENABLED=true to
+# let users enrol a second factor (Settings → Security); enrolled users are then
+# prompted for a code at sign-in. The TOTP seed is sealed with a key derived from
+# AUTH_JWT_SECRET, so no extra secret is needed.
+MFA_ENABLED=false
+
+# ----- Collab Admin Panel (/admin) -----
+# Dedicated administrative credentials for the Collab Admin Panel.
+# Set a strong password in production.
+ADMIN_EMAIL=admin@collab.local
+ADMIN_PASSWORD=admin1234
+ADMIN_SESSION_TTL=12h
+
+# ----- Chat media (GIF/sticker search) -----
+# GIF/sticker SEARCH is powered by GIPHY (Tenor was sunset by Google 2026-06-30).
+# OPTIONAL — leave blank and members still get the built-in sticker pack + the
+# create-your-own studio; a tenant admin can also set a per-org key in the admin
+# console (Org → Settings → GIF search). Set this for a deployment-wide default.
+# Get a free key at https://developers.giphy.com (note: free/beta keys are rate-limited).
+GIPHY_API_KEY=
+
+# ----- Database -----
+# For local dev (bare-metal backend via `npm run dev:local`): localhost reaches the
+# published Docker port of the `db` container.
+DATABASE_URL=mysql://colab:colab@localhost:3306/colab
+# For `docker compose up` (full Docker stack): the backend container must use the
+# Docker-internal service name `db`, not localhost. These _DOCKER vars override only
+# inside the container; leave them blank for the default db:3306.
+# DATABASE_URL_DOCKER=mysql://colab:colab@db:3306/colab
+# DEMO_DATABASE_URL_DOCKER=mysql://colab:colab@db:3306/colab_demo
+
+# ----- Frontend (exposed to the browser; must be NEXT_PUBLIC_*) -----
+# Leave BLANK for same-origin: the Next server reverse-proxies /api and
+# /socket.io to the backend (next.config.js rewrites), so the app works on any
+# host/port/device with no CORS and no per-host rebuild. Only set these if the
+# API is on a separate origin with no proxy in front.
+NEXT_PUBLIC_API_BASE_URL=
+NEXT_PUBLIC_SOCKET_URL=
+# Backend address for the proxy (server-side only; default http://localhost:4000).
+# Set to e.g. http://backend:4000 in Docker, or the backend host elsewhere.
+# BACKEND_INTERNAL_URL=http://localhost:4000
+# Who you log in as. Change this (and restart) to test as a different teammate in live mode,
+# e.g. emily@colab.app, marcus@colab.app, priya@colab.app, david@colab.app, lena@colab.app.
+NEXT_PUBLIC_USER_EMAIL=you@colab.app
+NEXT_PUBLIC_APP_NAME=Collab
+NEXT_PUBLIC_WORKSPACE_NAME=Collab
+# NEXT_PUBLIC_* are baked into the frontend at BUILD time — rebuild after changing.
+NEXT_PUBLIC_FEATURE_SIGNUP=0
+# E2EE ENABLED — same-device seamless + new-device history sync (Mechanism A) +
+# progressive-rollout fallback (B1/B2), audited data-safe (additive, no wipe).
+# The code default is still off, so the flag must equal "true". Both the frontend
+# (NEXT_PUBLIC_E2EE_ENABLED) and backend (E2EE_ENABLED) masters must be on.
+# Reversible — flip to false → encrypted msgs dormant, never lost. See
+# docs/E2EE_LIVE_ROLLOUT.md. For a STAGED prod rollout: backup → pilot → expand.
+NEXT_PUBLIC_E2EE_ENABLED=true
+NEXT_PUBLIC_E2EE_DECRYPT_LEGACY=true
+E2EE_ENABLED=true
+# Double Ratchet (post-compromise security) — only applies to DM text payloads
+# when E2EE is enabled. Files/groups/calls use ECIES/shared-epoch.
+NEXT_PUBLIC_E2EE_RATCHET=false
+# B2 strict mode (sender signature required). Default OFF for the migration
+# window so pre-B2 enrolled devices (no published signing key yet) can still be
+# read. Flip to "true" AFTER all clients have re-initialized at least once and
+# republished their signing key — then any unsigned envelope is rejected as
+# forged. Has no effect when NEXT_PUBLIC_E2EE_ENABLED=false.
+NEXT_PUBLIC_E2EE_REQUIRE_SIGNATURES=false
+# GAP-3: device-bound JWT STRICT mode (backend). When ON, a request whose token
+# has no deviceId (or whose deviceId is revoked/unknown) is rejected with 401.
+# Default OFF (permissive) so existing tokens minted before the deviceId claim
+# are not locked out. Flip to "true" only AFTER one full AUTH_TOKEN_TTL window
+# (typically 7-14d) has elapsed so all active tokens have re-rotated. Once
+# strict, a revoked device cannot retain API/metadata access.
+E2EE_DEVICE_BOUND_JWT_STRICT=false
+# Automatic history recovery (docs/E2EE_AUTO_RECOVERY.md). Empty secret = falls
+# back to AUTH_JWT_SECRET (fine for local dev; set a dedicated value elsewhere).
+E2EE_AUTO_RECOVERY=true
+E2EE_ESCROW_SECRET=
+
+# ----- LiveKit media -----
+# LIVEKIT_WS_URL is sent to browsers inside the room token; set it to the
+# server's reachable IP/hostname when deploying outside localhost.
+# Must also match node_ip in infrastructure/livekit/livekit.server.yaml.
+# Example (behind nginx + TLS): LIVEKIT_WS_URL=wss://YOUR_SERVER_HOST/livekit
+LIVEKIT_WS_URL=ws://localhost:7534
+# Backend/internal URL for server SDK calls — this is NOT the browser-facing URL.
+#
+# When the backend runs in Docker (the default compose setup) this MUST be
+# ws://livekit:7534. "localhost" inside the backend container means the CONTAINER,
+# not the host, so the LiveKit admin API is unreachable — and because every admin
+# call is fail-soft, the symptom is silent: "Mute everyone", per-participant mute,
+# remove-participant and End-for-everyone all report success while doing nothing.
+# Only set this to localhost when the backend runs directly on the host (not in
+# compose). LIVEKIT_WS_URL above is the browser-facing one and stays localhost.
+LIVEKIT_SERVER_URL=ws://livekit:7534
+LIVEKIT_API_KEY=colab-prod
+LIVEKIT_API_SECRET=change-me-to-a-long-random-livekit-secret
+LIVEKIT_TOKEN_TTL_SEC=3600
+# Meeting recording (LiveKit Egress). Requires the separate egress worker:
+#   docker compose --profile recording up -d egress
+# then set EGRESS_ENABLED=yes. Until then, recording returns an honest 503.
+# (livekit.yaml already declares the redis bus + completion webhook for it.)
+EGRESS_ENABLED=no
+
+# ----- Object storage (MinIO / S3-compatible) -----
+# ----- Object storage (MinIO) -----
+# MINIO_ROOT_USER / MINIO_ROOT_PASSWORD are used by the MinIO container and
+# mirrored to S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY for the backend.
+# Change both for production.
+MINIO_ROOT_USER=colabminio
+MINIO_ROOT_PASSWORD=colabminio123
+# MinIO runs on 9003 (API) / 9004 (console) everywhere — one consistent port
+# (host = container), with 9000/9001 left free for a co-located project. Host-run
+# backends use http://localhost:9003; containers use http://minio:9003.
+S3_ENDPOINT=http://localhost:9003
+S3_PUBLIC_ENDPOINT=http://localhost:9003
+S3_BUCKET=colab-files
+S3_ACCESS_KEY_ID=colabminio
+S3_SECRET_ACCESS_KEY=colabminio123
+
+# ----- API debug log (mobile integration) — secrets redacted; dev only -----
+API_DEBUG_LOG=true
+
+# ----- SSO (OpenID Connect — Authorization Code + PKCE) -----
+# One shared IdP for all teams: KEEP the idp/authorize/scope lines. Register THIS
+# app on the IdP to get a client_id (+ optional secret). Token & JWKS endpoints
+# are auto-discovered/derived from the issuer. Full guide: docs/SSO.md.
+SSO_ENABLED=true
+# IdP BASE URL (AgenXchange staging). Authorize/token/jwks/logout are derived from
+# it (<base>/authorize, /token, /jwks, /logout) unless set explicitly below.
+SSO_BASE_URL=https://stgoa.re.cx/
+# Blank → the browser goes STRAIGHT to the authorize URL. This IdP's /login path
+# serves its marketing homepage (not a login form), so the /login?return_to= wrapper
+# is OFF. Set this to the IdP host only if your IdP actually needs that wrapper.
+SSO_IDP_URL=
+SSO_AUTHORIZE_URL=https://stgoa.re.cx/authorize
+SSO_SCOPE=openid profile email
+SSO_CLIENT_ID=collab                                 # «replace» your registered client
+SSO_CLIENT_SECRET=9_Hvkm480P2H35M4vFYHZPWu                          # staging registers `collab` as CONFIDENTIAL: blank → token endpoint 401 invalid_client
+SSO_REDIRECT_URI=http://localhost:3002               # app ROOT; must match IdP EXACTLY (no trailing slash)
+# Back-channel PINNED to the public host. Discovery may advertise an INTERNAL IdP
+# address the backend cannot reach; stgoa.re.cx fronts these over HTTPS. ISSUER is
+# whatever the IdP stamps in the id_token `iss` — staging discovery publishes
+# https://stgoa.re.cx (the old IdP stamped its internal http://10.200.1.58:7505).
+# The base URL's origin is ALSO accepted, and a mismatch is reported verbatim at login.
+SSO_TOKEN_URL=https://stgoa.re.cx/token
+SSO_JWKS_URL=https://stgoa.re.cx/jwks
+SSO_ISSUER=https://stgoa.re.cx
+# ENCRYPTED PII (claims_jwe). The IdP encrypts email/department/employee_id/picture
+# to OUR public key (keys/agenxchange_public.pem — give it to AgenXchange). The
+# private half decrypts here: a file path, or the PEM inline (raw or base64) for
+# secret stores. Generate both with scripts/gen-sso-keys.sh. REQUIRED once the IdP
+# starts sending claims_jwe — without it those logins are rejected (fail closed).
+SSO_JWE_PRIVATE_KEY_FILE=keys/collab_private.pem
+SSO_JWE_PRIVATE_KEY=
+# FERNET profile copies (guide v3 *_enc: email_enc, name_enc, picture_enc, …). The
+# SSO team's shared secret (key = base64url(SHA256(secret))). Server-side only.
+# Needed until CoLab's public key is registered for claims_jwe, or while the IdP
+# sends *_enc only. Blank = *_enc fields ignored.
+SSO_PROFILE_ENC_SECRET=BIsWhMKgV09texfCIFqbSMIUSLWSNQ1eZtY9FpEYq3KqTMv_jXayhmTMSWxED9Bs
+# SSO_INSECURE_SKIP_VERIFY=false                     # DEV ONLY: skip id_token sig check
+NEXT_PUBLIC_SSO_ENABLED=true
+
+# ----- Web Push (VAPID) — browser notifications on all devices -----
+# Regenerate with: node scripts/generate-vapid-keys.js
+# Works across Chrome, Firefox, Edge, Safari 16.4+, Opera, Samsung Internet.
+# Without these, notifications only work while a CoLab tab is open.
+VAPID_PUBLIC_KEY=BCRpBGqTmJIgxSNURBGnVcHkYuy9mo0RfgrZFzfhHraYpaQQIt8DQbtJDFBzA4nQaaD6rmcpFPm2Tfg0J-DsLiQ
+VAPID_PRIVATE_KEY=OdDJyqhR-iTeRwKJ3TN1uFae1LSwd7Kg7UdHUDhvi_Q
+VAPID_SUBJECT=mailto:admin@colab.app
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=BCRpBGqTmJIgxSNURBGnVcHkYuy9mo0RfgrZFzfhHraYpaQQIt8DQbtJDFBzA4nQaaD6rmcpFPm2Tfg0J-DsLiQ
+
+# ----- Mobile push (Collab_mobile: Android + iOS) — see docs/MOBILE_PUSH.md -----
+# Firebase service account for project collab-7531d. Path is relative to the
+# repo root (same convention as SSO_JWE_PRIVATE_KEY_FILE); git-ignored.
+FCM_SERVICE_ACCOUNT_FILE=keys/fcm-service-account.json
+FCM_PROJECT_ID=collab-7531d

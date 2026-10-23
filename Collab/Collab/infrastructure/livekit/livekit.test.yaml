@@ -1,0 +1,22 @@
+# LiveKit SFU — TEST / "teams" server (collab.resul.com → 10.205.11.8).
+#
+# This server lives INSIDE the corporate network (a private 10.x address), so
+# clients reach it over the company LAN/VPN — NOT the public internet. Therefore
+# we DO NOT auto-detect a public IP (use_external_ip uses STUN against the
+# internet and would advertise the wrong address). Instead we pin node_ip to the
+# IP that internal clients actually use to reach this box.
+#
+# The ONLY line that differs from the live server's config is node_ip.
+port: 7534
+rtc:
+  udp_port: 7532
+  tcp_port: 7531
+  # Internal server → advertise this exact reachable IP for ICE candidates.
+  use_external_ip: false
+  node_ip: 10.200.3.64
+keys:
+  # Overridden at runtime by LIVEKIT_KEYS (LIVEKIT_API_KEY / _SECRET in .env).
+  colab-prod: devsecret-overridden-by-env-do-not-use-in-prod
+turn:
+  enabled: true
+  udp_port: 7533

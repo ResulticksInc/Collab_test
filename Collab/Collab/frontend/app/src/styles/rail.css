@@ -1,0 +1,191 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   RAIL — Figma "Collab Screens" › Collab Web › Dashboard (116:2627).
+   Overrides the legacy #rail rules in v1.css. Selectors are anchored on #rail
+   so they out-rank both the base rules and the body.dark variants there.
+   Colours come from tokens.css (--nav-*, --rail-line, --group-hdr …).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#rail {
+  width: var(--rail-w);
+  border-right: 1px solid var(--rail-line);
+}
+
+#rail .rl {
+  border-bottom-color: var(--rail-line);
+  /* padding: 0 12px 0 23px; */
+}
+
+/* 36px brand tile (Frame 62). */
+#rail .rl-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 7.5px;
+}
+
+/* Nav rows: 204×44, r10, 24px icons at stroke 2, 14/500 labels, 4px pitch. */
+#rail .rl-scroll {
+  padding: 4px 7px 0;
+}
+
+#rail .rl-scroll .rb,
+#rail .rl-foot .rb {
+  height: 44px;
+  border-radius: 10px;
+  padding: 0 10px;
+  gap: 14px;
+  width: calc(100% - 12px);
+  margin: 5px 4px 3px 8px;
+  border: 0px solid transparent;
+  box-sizing: border-box;
+  color: var(--fg-primary);
+}
+
+#rail .rb svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.5;
+}
+
+#rail .rb-lbl {
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
+}
+
+/* Active row: light-purple fill (#F5EBFD), dark-purple text/icon (#5E1087), no left bar. */
+#rail .rb.active {
+  background: var(--nav-active-bg);
+  /* border-left-color: var(--nav-active-fg); */
+  color: var(--nav-active-fg);
+  font-weight: var(--fw-medium);
+  border-radius: 10px;
+  border-left-width: 1px;
+}
+
+#rail .rb.active::before {
+  display: none;
+}
+
+#rail .rb.active .rb-ico {
+  color: var(--nav-active-fg);
+}
+
+/* The profile toggle is an "is this menu open" indicator, not "is this the
+   current page" — it must NOT pick up the nav-active purple fill this rule
+   gives every other rail row. It has its own "stay neutral" rule in v1.css
+   (.rl-profile.active), but that's two plain classes while this is an ID +
+   class, so it always wins the specificity fight and the row flashed purple
+   open→close (perceived as a flicker). Match its specificity here instead of
+   trying to out-rank it from v1.css. */
+#rail .rb.rl-profile.active {
+  background: transparent;
+  color: inherit;
+  border-radius: 0;
+  border-left-width: 0;
+}
+
+#rail .rb.rl-profile.active .rb-ico {
+  color: inherit;
+}
+
+/* Unread badge: always a dark-purple CIRCLE whose diameter grows with the count.
+   Width comes from the digits + side padding; aspect-ratio makes the height
+   follow it (height must be auto for that), so "5" is a 23px disc and "1000"
+   a proportionally larger disc — never a stretched pill. */
+#rail .rbadge {
+  min-width: 23px;
+  height: auto;
+  aspect-ratio: 1;
+  box-sizing: border-box;
+  border-radius: 50%;
+  padding: 0 5px;
+  line-height: 1;
+  background: var(--nav-badge);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+#rail.collapsed .rbadge {
+  min-width: 18px;
+  height: auto;
+  font-size: 9px;
+  padding: 0 2px;
+}
+
+/* WORKSPACE header: 18/700, muted grey. */
+/* WORKSPACE text top = 204, first nav row top = 240 (Figma). .rl-org is a
+   sibling of .rl-scroll, so the header itself carries the 26px lead-in. */
+#rail .rl-scroll .rl-grouphdr {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: var(--group-hdr);
+  padding: 15px 11px 11px;
+}
+
+#rail .rl-org {
+  padding: 15px 7px 0;
+}
+
+/* Foot: no divider, same row geometry and equal spacing as the nav. */
+/* Foot items (Settings · Help · Download app · Profile) match top menus: 44px height, 8px pitch. */
+#rail .rl-foot {
+  border-top: none;
+  padding: 0 7px 20px;
+  gap: 0;
+}
+
+#rail .rl-foot .rb-dl-wrap,
+#rail .rl-foot .rl-profile-wrap {
+  display: contents;
+}
+
+#rail .rl-foot .rl-profile-wrap {
+  order: unset;
+}
+
+#rail .rl-foot .rb-ico {
+  width: 24px;
+}
+
+/* Profile: same 44px row geometry and 10px padding as all other nav rows */
+#rail .rl-foot .rl-profile {
+  height: 44px;
+  gap: 12px;
+  padding: 0 10px;
+}
+
+#rail .rl-foot .rl-profile .rb-ico {
+  width: 34px;
+}
+
+#rail .rl-profile-av {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+  box-shadow: 0 0 0 1.4px var(--search-line);
+}
+
+#rail .rl-profile-pdot {
+  width: 9px;
+  height: 9px;
+  right: -1px;
+  bottom: -1px;
+  border-width: 2px;
+}
+
+#rail .rl-profile-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#rail .rl-profile-status {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-top: 1px;
+}
+
+#rail.collapsed .rl-foot .rl-profile {
+  padding: 0;
+  justify-content: center;
+}

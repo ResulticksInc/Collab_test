@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{color-scheme:dark;}
+  html,body{margin:0;}
+  img{max-width:100%;}
+  [hidden]{display:none !important;}
+</style>
+<title>CoLab Chat Webhooks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<style>
+  :root{
+    /* Ground + surfaces: the docs/ system already in this repo. */
+    --bg:#090d16; --surface:#121826; --surface-2:#0d1220; --border:#1e293b; --border-soft:#182234;
+    --text:#f8fafc; --text-dim:#cbd5e1; --muted:#94a3b8; --faint:#64748b;
+    --accent:#6366f1; --accent-soft:rgba(99,102,241,.14); --accent-line:rgba(99,102,241,.4);
+    /* Direction is the organising fact of this API, so it gets the colour. */
+    --in:#10b981;  --in-soft:rgba(16,185,129,.13);  --in-line:rgba(16,185,129,.38);
+    --out:#38bdf8; --out-soft:rgba(56,189,248,.13); --out-line:rgba(56,189,248,.38);
+    --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --r:14px; --r-sm:9px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--font); font-size:15px; line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+    padding:0 22px 90px;
+  }
+  .wrap{max-width:1080px; margin:0 auto;}
+  a{color:#a5b4fc; text-decoration:none; border-bottom:1px solid rgba(165,180,252,.3);}
+  a:hover{border-bottom-color:#a5b4fc;}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:4px;}
+  code{font-family:var(--mono);}
+  h1,h2,h3{text-wrap:balance; margin:0;}
+
+  /* ── Masthead ─────────────────────────────────────────────── */
+  header.top{padding:56px 0 34px; border-bottom:1px solid var(--border);}
+  .eyebrow{
+    font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--faint); margin-bottom:14px;
+  }
+  h1{font-size:clamp(30px,4.6vw,42px); font-weight:800; letter-spacing:-.025em; line-height:1.1;}
+  .lede{
+    margin-top:14px; max-width:64ch; color:var(--text-dim); font-size:17px; line-height:1.6;
+  }
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin-top:22px;}
+  .chip{
+    display:inline-flex; align-items:center; gap:7px; padding:5px 11px;
+    border:1px solid var(--border); border-radius:999px; background:var(--surface-2);
+    font-family:var(--mono); font-size:11.5px; color:var(--muted);
+  }
+  .chip b{color:var(--text-dim); font-weight:500;}
+  .dot{width:7px; height:7px; border-radius:50%; flex:none;}
+  .dot.in{background:var(--in);} .dot.out{background:var(--out);}
+
+  /* ── Section nav ──────────────────────────────────────────── */
+  nav.toc{
+    display:flex; flex-wrap:wrap; gap:6px;
+    padding:18px 0 0;
+  }
+  nav.toc a{
+    font-family:var(--mono); font-size:11.5px; letter-spacing:.02em;
+    padding:6px 11px; border-radius:999px; border:1px solid var(--border-soft);
+    background:var(--surface-2); color:var(--muted); border-bottom:1px solid var(--border-soft);
+  }
+  nav.toc a:hover{color:var(--text); border-color:var(--accent-line); background:var(--accent-soft);}
+
+  /* ── Sections ─────────────────────────────────────────────── */
+  section{padding-top:52px;}
+  .sec-head{display:flex; align-items:baseline; gap:13px; margin-bottom:8px;}
+  .sec-num{
+    font-family:var(--mono); font-size:12px; font-weight:700; color:var(--faint);
+    letter-spacing:.08em; flex:none; padding-top:3px;
+  }
+  h2{font-size:23px; font-weight:700; letter-spacing:-.015em;}
+  .sec-sub{color:var(--muted); max-width:68ch; margin:0 0 24px 33px; font-size:14.5px;}
+  @media (max-width:640px){ .sec-sub{margin-left:0;} }
+  h3{
+    font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.09em;
+    color:var(--text-dim); margin:34px 0 13px;
+  }
+  h3 .tag{
+    font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.08em;
+    padding:2px 7px; border-radius:5px; margin-right:9px; vertical-align:1px;
+  }
+  .tag.in{background:var(--in-soft); color:var(--in); border:1px solid var(--in-line);}
+  .tag.out{background:var(--out-soft); color:var(--out); border:1px solid var(--out-line);}
+  p{margin:0 0 14px; max-width:68ch; color:var(--text-dim);}
+  p.tight{margin-bottom:8px;}
+
+  /* ── Direction cards + flow diagram ───────────────────────── */
+  .dirs{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  @media (max-width:780px){ .dirs{grid-template-columns:1fr;} }
+  .dir{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+    padding:20px 22px 22px; border-top:2px solid var(--dir);
+  }
+  .dir.is-in{--dir:var(--in);} .dir.is-out{--dir:var(--out);}
+  .dir h4{
+    margin:0 0 4px; font-size:16px; font-weight:700; color:var(--text);
+    display:flex; align-items:center; gap:9px;
+  }
+  .dir h4 .dot{width:8px; height:8px;}
+  .dir .who{font-family:var(--mono); font-size:11.5px; color:var(--dir); margin-bottom:12px;}
+  .dir p{margin:0 0 12px; font-size:14px; color:var(--muted);}
+  .dir dl{margin:0; display:grid; grid-template-columns:auto 1fr; gap:7px 14px; font-size:13px;}
+  .dir dt{font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); padding-top:2px;}
+  .dir dd{margin:0; color:var(--text-dim);}
+
+  .flow{
+    margin:26px 0 0; padding:22px; background:var(--surface-2);
+    border:1px solid var(--border); border-radius:var(--r); overflow-x:auto;
+  }
+  .flow svg{display:block; min-width:600px; width:100%; height:auto;}
+
+  /* ── Request / response pairs ─────────────────────────────── */
+  .pair{
+    display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start;
+    margin-bottom:16px;
+  }
+  @media (max-width:900px){ .pair{grid-template-columns:1fr;} }
+  .pair.solo{grid-template-columns:1fr;}
+
+  .blk{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--r-sm); overflow:hidden; min-width:0;
+  }
+  .blk .bar{
+    display:flex; align-items:center; gap:9px; flex-wrap:wrap;
+    padding:9px 13px; background:var(--surface-2); border-bottom:1px solid var(--border);
+    font-family:var(--mono); font-size:11.5px; color:var(--muted);
+  }
+  .blk .bar .label{
+    font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; color:var(--faint);
+  }
+  .verb{
+    font-weight:700; font-size:10.5px; letter-spacing:.06em; padding:2px 6px; border-radius:4px;
+  }
+  .verb.post{background:rgba(52,211,153,.14); color:var(--ok);}
+  .verb.get{background:rgba(99,102,241,.16); color:#a5b4fc;}
+  .verb.patch{background:rgba(251,191,36,.14); color:var(--warn);}
+  .verb.del{background:rgba(248,113,113,.14); color:var(--bad);}
+  .path{color:var(--text-dim); word-break:break-all;}
+  .status{margin-left:auto; font-weight:700; font-size:11px;}
+  .status.s2{color:var(--ok);} .status.s4{color:var(--warn);} .status.s5{color:var(--bad);}
+  .blk pre{
+    margin:0; padding:14px 15px; overflow-x:auto;
+    font-family:var(--mono); font-size:12.4px; line-height:1.65; color:var(--text-dim);
+    tab-size:2;
+  }
+  .blk pre .k{color:#a5b4fc;}
+  .blk pre .s{color:#6ee7b7;}
+  .blk pre .n{color:#fbbf24;}
+  .blk pre .c{color:var(--faint); font-style:italic;}
+  .blk pre .hd{color:#c4b5fd;}
+  .note{
+    display:flex; gap:11px; padding:13px 15px; margin:0 0 16px;
+    background:var(--accent-soft); border:1px solid var(--accent-line);
+    border-radius:var(--r-sm); font-size:13.5px; color:var(--text-dim); max-width:none;
+  }
+  .note b{color:#c7d2fe; font-weight:600;}
+  .note .mark{
+    font-family:var(--mono); font-size:10px; font-weight:700; letter-spacing:.09em;
+    color:#a5b4fc; padding-top:3px; flex:none; text-transform:uppercase;
+  }
+  .note.danger{background:rgba(248,113,113,.1); border-color:rgba(248,113,113,.32);}
+  .note.danger b, .note.danger .mark{color:#fca5a5;}
+
+  /* ── Tables ───────────────────────────────────────────────── */
+  .tbl-wrap{overflow-x:auto; border:1px solid var(--border); border-radius:var(--r-sm); background:var(--surface);}
+  table{width:100%; border-collapse:collapse; font-size:13.5px; min-width:540px;}
+  th{
+    text-align:left; padding:11px 15px; background:var(--surface-2);
+    font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border);
+    white-space:nowrap;
+  }
+  td{padding:11px 15px; border-bottom:1px solid var(--border-soft); color:var(--text-dim); vertical-align:top;}
+  tr:last-child td{border-bottom:none;}
+  td code, th code{
+    font-family:var(--mono); font-size:12.2px; color:#c7d2fe;
+    background:var(--surface-2); padding:1.5px 5px; border-radius:4px; white-space:nowrap;
+  }
+  td.num{font-variant-numeric:tabular-nums;}
+  .m{font-family:var(--mono); font-size:11px; font-weight:700; padding:2px 6px; border-radius:4px; letter-spacing:.05em;}
+  .m.get{background:rgba(99,102,241,.16); color:#a5b4fc;}
+  .m.post{background:rgba(52,211,153,.14); color:var(--ok);}
+  .m.patch{background:rgba(251,191,36,.14); color:var(--warn);}
+  .m.del{background:rgba(248,113,113,.14); color:var(--bad);}
+  .pill{
+    font-family:var(--mono); font-size:10.5px; font-weight:700; padding:2px 7px;
+    border-radius:999px; letter-spacing:.05em; white-space:nowrap;
+  }
+  .pill.ok{background:rgba(52,211,153,.13); color:var(--ok); border:1px solid rgba(52,211,153,.32);}
+  .pill.warn{background:rgba(251,191,36,.13); color:var(--warn); border:1px solid rgba(251,191,36,.32);}
+  .pill.bad{background:rgba(248,113,113,.12); color:var(--bad); border:1px solid rgba(248,113,113,.32);}
+
+  footer{
+    margin-top:64px; padding-top:22px; border-top:1px solid var(--border);
+    display:flex; flex-wrap:wrap; gap:14px 26px; align-items:baseline;
+    font-family:var(--mono); font-size:11.5px; color:var(--faint);
+  }
+  @media (prefers-reduced-motion:reduce){ *{animation:none !important; transition:none !important;} }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">CoLab · Integration guide</div>
+  <h1>Chat webhooks</h1>
+  <p class="lede">
+    Wire one conversation to the outside world. Send messages <em>into</em> a chat from
+    any system that can make an HTTP request, and get every message <em>out</em> to a URL
+    you control &mdash; signed, queued, and retried.
+  </p>
+  <div class="chips">
+    <span class="chip"><span class="dot in"></span><b>Incoming</b> &nbsp;external&nbsp;&rarr;&nbsp;chat</span>
+    <span class="chip"><span class="dot out"></span><b>Outgoing</b> &nbsp;chat&nbsp;&rarr;&nbsp;your&nbsp;URL</span>
+    <span class="chip">Scope: <b>one DM or one group</b></span>
+    <span class="chip">Base: <b>/api/webhooks</b></span>
+  </div>
+  <nav class="toc">
+    <a href="#directions">The two directions</a>
+    <a href="#token">Getting your token</a>
+    <a href="#incoming">Post into a chat</a>
+    <a href="#recipe">Button in another app</a>
+    <a href="#outgoing">Receive from a chat</a>
+    <a href="#verify">Verify a signature</a>
+    <a href="#delivery">Delivery &amp; retries</a>
+    <a href="#reference">API reference</a>
+    <a href="#errors">Errors</a>
+    <a href="#config">Configuration</a>
+  </nav>
+</header>
+
+<!-- ══ 1 ══════════════════════════════════════════════════════ -->
+<section id="directions">
+  <div class="sec-head"><span class="sec-num">01</span><h2>The two directions</h2></div>
+  <p class="sec-sub">
+    A direct message <em>is</em> a conversation, so &ldquo;a webhook for a particular
+    person&rdquo; and &ldquo;a webhook for a group&rdquo; are the same thing with a different
+    kind. Pass <code>conversationId</code> for any conversation you are in, or
+    <code>userId</code> and your existing DM with that person is resolved for you.
+  </p>
+
+  <div class="dirs">
+    <div class="dir is-in">
+      <h4><span class="dot in"></span>Incoming</h4>
+      <div class="who">an external system &rarr; a conversation</div>
+      <p>You get a secret URL. Anything that can POST JSON &mdash; a CI job, a monitor,
+         a cron script &mdash; posts to it and the text appears in the chat.</p>
+      <dl>
+        <dt>Auth</dt><dd>None on the wire. The token in the URL <em>is</em> the credential.</dd>
+        <dt>Posts as</dt><dd>The person who created the webhook.</dd>
+        <dt>Timing</dt><dd>Synchronous &mdash; the response tells you the message id.</dd>
+      </dl>
+    </div>
+    <div class="dir is-out">
+      <h4><span class="dot out"></span>Outgoing</h4>
+      <div class="who">a conversation &rarr; your endpoint</div>
+      <p>You give us a URL. Every message in that conversation is POSTed to it, signed
+         so you can prove it came from CoLab.</p>
+      <dl>
+        <dt>Auth</dt><dd>Your endpoint decides. Verify the HMAC signature.</dd>
+        <dt>Delivery</dt><dd>Queued, at&#8209;least&#8209;once, retried with backoff.</dd>
+        <dt>Timing</dt><dd>About a second on a healthy endpoint.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="flow">
+    <svg viewBox="0 0 700 190" role="img" aria-label="Incoming webhooks carry an external system's JSON through the ingest endpoint into a conversation. Outgoing webhooks carry each message from the conversation through a delivery queue to your endpoint.">
+      <defs>
+        <marker id="ain" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="#10b981"/>
+        </marker>
+        <marker id="aout" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="#38bdf8"/>
+        </marker>
+      </defs>
+      <!-- nodes -->
+      <g font-family="JetBrains Mono, monospace" font-size="11">
+        <rect x="1" y="14" width="132" height="44" rx="8" fill="#0d1220" stroke="#1e293b"/>
+        <text x="67" y="34" fill="#cbd5e1" text-anchor="middle">Your CI / monitor</text>
+        <text x="67" y="48" fill="#64748b" text-anchor="middle" font-size="10">any HTTP client</text>
+
+        <rect x="222" y="14" width="146" height="44" rx="8" fill="#0d1220" stroke="rgba(16,185,129,.38)"/>
+        <text x="295" y="34" fill="#10b981" text-anchor="middle">POST /webhooks/in</text>
+        <text x="295" y="48" fill="#64748b" text-anchor="middle" font-size="10">token = credential</text>
+
+        <rect x="460" y="52" width="176" height="86" rx="10" fill="#121826" stroke="#6366f1"/>
+        <text x="548" y="88" fill="#f8fafc" text-anchor="middle" font-size="12.5" font-family="Inter, sans-serif" font-weight="600">Conversation</text>
+        <text x="548" y="106" fill="#94a3b8" text-anchor="middle" font-size="10">one DM, or one group</text>
+
+        <rect x="222" y="132" width="146" height="44" rx="8" fill="#0d1220" stroke="rgba(56,189,248,.38)"/>
+        <text x="295" y="152" fill="#38bdf8" text-anchor="middle">delivery queue</text>
+        <text x="295" y="166" fill="#64748b" text-anchor="middle" font-size="10">signed &middot; retried</text>
+
+        <rect x="1" y="132" width="132" height="44" rx="8" fill="#0d1220" stroke="#1e293b"/>
+        <text x="67" y="152" fill="#cbd5e1" text-anchor="middle">Your endpoint</text>
+        <text x="67" y="166" fill="#64748b" text-anchor="middle" font-size="10">must answer 2xx</text>
+      </g>
+      <!-- incoming path -->
+      <path d="M133 36 L216 36" stroke="#10b981" stroke-width="1.6" fill="none" marker-end="url(#ain)"/>
+      <path d="M368 36 L512 36 L512 44" stroke="#10b981" stroke-width="1.6" fill="none" marker-end="url(#ain)"/>
+      <!-- outgoing path -->
+      <path d="M512 138 L512 154 L374 154" stroke="#38bdf8" stroke-width="1.6" fill="none" marker-end="url(#aout)"/>
+      <path d="M222 154 L139 154" stroke="#38bdf8" stroke-width="1.6" fill="none" marker-end="url(#aout)"/>
+      <!-- labels -->
+      <g font-family="JetBrains Mono, monospace" font-size="9.5" letter-spacing="1">
+        <text x="175" y="26" fill="#10b981" text-anchor="middle">{"text"}</text>
+        <text x="175" y="144" fill="#38bdf8" text-anchor="middle">SIGNED</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ══ 2 ══════════════════════════════════════════════════════ -->
+<section id="token">
+  <div class="sec-head"><span class="sec-num">02</span><h2>Getting your token</h2></div>
+  <p class="sec-sub">
+    There are <strong>two different credentials</strong> here, and only one of them is an
+    <code>Authorization</code> header. Most integrations never need the header at all after
+    the first day &mdash; and where the header <em>is</em> needed, how you get it depends on
+    whether you sign in with a password or through SSO.
+  </p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:32%">What you are doing</th><th style="width:30%">Header</th><th>Credential</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Managing</strong> webhooks &mdash; create, list, rotate, delete</td>
+          <td><code>Authorization: Bearer &lt;token&gt;</code></td>
+          <td>Your normal user session. Expires.</td>
+        </tr>
+        <tr>
+          <td><strong>Posting into a chat</strong> &mdash; <code>/api/webhooks/in/:token</code></td>
+          <td><em>none</em></td>
+          <td>The token already in the URL. Does not expire.</td>
+        </tr>
+        <tr>
+          <td><strong>Receiving from a chat</strong></td>
+          <td>n/a &mdash; we call you</td>
+          <td>Verify the signature we send.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note" style="margin-top:16px;">
+    <span class="mark">Key</span>
+    <div><b>You need the bearer token once, not on every request.</b> Create the webhook with
+      it, keep the URL it returns, and your unattended system posts to that URL forever with
+      no <code>Authorization</code> header and nothing to refresh. If a script of yours is
+      sending a bearer token on every post, it is calling the wrong endpoint.</div>
+  </div>
+
+  <h3>Where the bearer token comes from</h3>
+  <p>Sign in over the API with the same email and password you use in the app. The token is
+     <code>data.token</code> in the response.</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/auth/login</span></div>
+<pre><span class="hd">Content-Type:</span> application/json
+
+{
+  <span class="k">"email"</span>: <span class="s">"you@example.com"</span>,
+  <span class="k">"password"</span>: <span class="s">"your-password"</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">200 OK</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="c">// ← this is your Authorization header value</span>
+    <span class="k">"token"</span>: <span class="s">"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…"</span>,
+    <span class="k">"user"</span>: {
+      <span class="k">"id"</span>: <span class="s">"u_you"</span>,
+      <span class="k">"name"</span>: <span class="s">"You"</span>,
+      <span class="k">"email"</span>: <span class="s">"you@example.com"</span>,
+      <span class="k">"role"</span>: <span class="s">"owner"</span>
+    },
+    <span class="k">"sessionId"</span>: <span class="s">"18db94f2-abd6-4218-9127-952781ca129d"</span>,
+    <span class="c">// used to renew without signing in again</span>
+    <span class="k">"refreshToken"</span>: <span class="s">"rt_9c1f…"</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <p class="tight">Then send it on management calls, exactly as it came back:</p>
+  <div class="blk" style="margin-bottom:16px;">
+    <div class="bar"><span class="label">Header</span></div>
+<pre><span class="hd">Authorization:</span> Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…</pre>
+  </div>
+
+  <h3>If your account signs in with SSO</h3>
+  <div class="note danger">
+    <span class="mark">First</span>
+    <div><b><code>/api/auth/login</code> will never work for an SSO account.</b> It is created
+      with no password at all, and the login route rejects any account without one &mdash; so
+      it answers <code>401 &ldquo;Invalid email or password.&rdquo;</code> whatever you send it.
+      That is the design, not a misconfiguration. Your token comes from the end of the SSO
+      round&#8209;trip instead.</div>
+  </div>
+
+  <p>The good news: it is the <em>same</em> token. The SSO callback returns the identical
+     <code>{ token, user, sessionId, refreshToken }</code> shape as a password login, so
+     everything else on this page applies unchanged.</p>
+
+  <div class="blk" style="margin-bottom:16px;">
+    <div class="bar"><span class="label">The round-trip</span><span class="path">where the token appears</span></div>
+<pre><span class="hd">1.</span> GET  /api/auth/sso/start        <span class="c">→ 302 to your identity provider</span>
+<span class="hd">2.</span> <span class="c">you authenticate there            ← needs a real browser</span>
+<span class="hd">3.</span> <span class="c">the IdP redirects back to the app with ?code&amp;state</span>
+<span class="hd">4.</span> POST /api/auth/sso/callback     <span class="c">{ code, state }</span>
+<span class="hd">5.</span> <span class="s">→ { token, user, sessionId, refreshToken }</span>   <span class="c">← identical shape</span></pre>
+  </div>
+
+  <p><strong>Why curl cannot do this on its own.</strong> The PKCE verifier is sealed inside
+     the signed <code>state</code> the server minted at step 1, and
+     the IdP session is ended on app logout (<code>/api/auth/sso/logout</code>) &mdash; which deliberately pushes you
+     through the provider&rsquo;s login and second factor on <em>every</em> sign-in. Steps 1 to 3
+     need a browser and a human. There is no password grant to fall back on.</p>
+
+  <h3>So take the token out of the browser &mdash; once</h3>
+  <p>Sign in to CoLab with SSO as normal, then open the developer console on that tab:</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Console</span><span class="path">on the signed-in tab</span></div>
+<pre>localStorage.getItem(<span class="s">"clb_token"</span>)
+<span class="c">// → "eyJhbGciOiJIUzI1…"  your Bearer value</span>
+
+localStorage.getItem(<span class="s">"clb_refresh"</span>)
+<span class="c">// → "rt_9c1f…"  keep this one, it renews the above</span></pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Or</span><span class="path">DevTools → Network</span></div>
+<pre><span class="c">// Find the request made as you signed in:</span>
+POST /api/auth/sso/callback
+
+<span class="c">// Response → data.token
+//          → data.refreshToken</span></pre>
+    </div>
+  </div>
+  <p>On the <strong>desktop app</strong> the refresh token may live in the OS keychain rather
+     than <code>localStorage</code>, but <code>clb_token</code> always keeps a
+     <code>localStorage</code> mirror, so the console read works there too.</p>
+
+  <div class="note">
+    <span class="mark">Then</span>
+    <div><b>You never need the browser again.</b> <code>POST /api/auth/refresh</code> renews
+      the access token with no identity-provider round-trip at all &mdash; so one SSO sign-in
+      is enough to keep a script running indefinitely, as long as it stores each rotated
+      refresh token. And for webhooks specifically you need a token
+      <em>once, ever</em>: create the webhook, then the ingest URL is the credential.</div>
+  </div>
+
+  <h3>For a fully unattended script</h3>
+  <p>If something really must create or rotate webhooks on a schedule with no human, don&rsquo;t
+     scrape a person&rsquo;s SSO session &mdash; have an org admin put a local password on a
+     dedicated automation account. That turns <code>/api/auth/login</code> back on for that
+     one account.</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Admin does this once</span><span class="verb post">POST</span><span class="path">/api/orgs/current/members/:userId/reset-password</span></div>
+<pre><span class="hd">Authorization:</span> Bearer &lt;an admin's token&gt;
+
+{
+  <span class="k">"password"</span>: <span class="s">"a-long-generated-password"</span>
+}
+
+<span class="c">// Requires the [members:manage] permission, and you
+// cannot reset someone who outranks you.</span></pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">The script then</span><span class="verb post">POST</span><span class="path">/api/auth/login</span></div>
+<pre>{
+  <span class="k">"email"</span>: <span class="s">"ci-bot@example.com"</span>,
+  <span class="k">"password"</span>: <span class="s">"a-long-generated-password"</span>
+}
+
+<span class="c">// → the normal { token, user, refreshToken }</span></pre>
+    </div>
+  </div>
+  <p>Add that account only to the conversations it needs. A webhook can never reach further
+     than its creator can, so a narrow automation account is a real boundary, not a
+     formality.</p>
+
+  <h3>Two calls, end to end</h3>
+  <div class="blk" style="margin-bottom:16px;">
+    <div class="bar"><span class="label">curl</span><span class="path">sign in, create, then post forever</span></div>
+<pre><span class="c"># 1. sign in — grab the token</span>
+TOKEN=$(curl -s -X POST https://colab.example.com/api/auth/login \
+  -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'{"email":"you@example.com","password":"your-password"}'</span> \
+  | python3 -c <span class="s">"import sys,json;print(json.load(sys.stdin)['data']['token'])"</span>)
+
+<span class="c"># 2. create the webhook — the ONLY call that needs the header</span>
+curl -s -X POST https://colab.example.com/api/webhooks \
+  -H <span class="s">"Authorization: Bearer $TOKEN"</span> \
+  -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'{"direction":"in","conversationId":"conv_product","name":"CI Bot"}'</span>
+
+<span class="c"># 3. from now on, no token, no header, no expiry</span>
+curl -X POST <span class="s">"https://colab.example.com/api/webhooks/in/whin_P5xYiu…"</span> \
+  -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'{"text":"Build #412 failed on main"}'</span></pre>
+  </div>
+
+  <h3>Using Postman</h3>
+  <p>The repository ships a ready collection, so you don&rsquo;t have to build these requests by
+     hand. Import both files, pick the environment top-right, and set <code>baseUrl</code> to
+     your deployment <strong>including <code>/api</code></strong>:</p>
+  <div class="blk" style="margin-bottom:16px;">
+    <div class="bar"><span class="label">Import</span><span class="path">Postman → Import → Files</span></div>
+<pre>docs/colab-webhooks.postman_collection.json    <span class="c">// 18 requests, in the order you run them</span>
+docs/colab.postman_environment.json            <span class="c">// the variables they share</span>
+
+baseUrl = https://colab.example.com/api        <span class="c">// ← set this first</span></pre>
+  </div>
+  <p>Collection auth is already <strong>Bearer <code>{{colabToken}}</code></strong>, and each
+     request saves what the next one needs &mdash; the user id, the conversation id, the
+     webhook id, the ingest token &mdash; so you can work straight down the list. Two requests
+     are deliberately set to <strong>No Auth</strong>: signing in, and posting through the
+     webhook.</p>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">If you sign in with email</span><span class="status s2">all in Postman</span></div>
+<pre><span class="hd">1.</span> <span class="c">Set colabEmail and colabPassword in the environment.</span>
+<span class="hd">2.</span> <span class="c">Send  0 · Get a token / Sign in</span>
+<span class="hd">3.</span> <span class="c">Done — colabToken and colabRefresh are filled in
+   for you, and every other request just works.</span></pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">If you sign in with SSO</span><span class="status s4">one browser step</span></div>
+<pre><span class="hd">1.</span> <span class="c">Sign in to CoLab in your browser as normal.</span>
+<span class="hd">2.</span> <span class="c">Console on that tab:</span>
+     localStorage.getItem(<span class="s">"clb_token"</span>)
+     localStorage.getItem(<span class="s">"clb_refresh"</span>)
+<span class="hd">3.</span> <span class="c">Paste them into colabToken and colabRefresh.</span>
+<span class="hd">4.</span> <span class="c">From now on, Send  Renew the token  whenever
+   anything returns 401. No browser again.</span>
+
+<span class="c">// "Sign in" cannot work for you — an SSO
+// account has no password. See above.</span></pre>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="mark">Both</span>
+    <div><b>&ldquo;Renew the token&rdquo; is the request that keeps you working.</b> It needs no
+      browser and no identity provider, so it is how an SSO user stays signed in to Postman
+      indefinitely &mdash; and how an email user avoids re-typing a password. Refresh tokens
+      are single-use; the collection stores the rotated one for you.</div>
+  </div>
+
+  <div class="note danger">
+    <span class="mark">Gotcha</span>
+    <div><b>CoLab allows a limited number of simultaneous sessions per account</b> (five by
+      default), and every Send of &ldquo;Sign in&rdquo; opens another one. Once you hit the
+      limit, signing in returns your list of sessions instead of a token. The collection
+      handles it: it marks the least-recently-used session to be replaced, and you press Send
+      once more. Using &ldquo;Renew the token&rdquo; instead of repeatedly signing in avoids
+      the situation entirely.</div>
+  </div>
+
+  <h3>How long it lasts, and how to renew it</h3>
+  <p>The access token is a JWT valid for <strong>7 days</strong> by default
+     (<code>AUTH_TOKEN_TTL</code>). When it lapses, every management call returns
+     <code>401</code>. Exchange the <code>refreshToken</code> for a fresh one rather than
+     signing in again &mdash; and note the refresh token is single&#8209;use, so store the new
+     one it hands back.</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/auth/refresh</span></div>
+<pre>{
+  <span class="k">"refreshToken"</span>: <span class="s">"rt_9c1f…"</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">200 OK</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"token"</span>: <span class="s">"eyJhbGciOiJIUzI1…"</span>,       <span class="c">// use this now</span>
+    <span class="k">"refreshToken"</span>: <span class="s">"rt_4a77…"</span>,      <span class="c">// store this one</span>
+    <span class="k">"user"</span>: { <span class="k">"id"</span>: <span class="s">"u_you"</span>, … }
+  }
+}</pre>
+    </div>
+  </div>
+
+  <h3>Checking a token is still good</h3>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb get">GET</span><span class="path">/api/auth/me</span></div>
+<pre><span class="hd">Authorization:</span> Bearer eyJhbGciOiJIUzI1…</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">200 OK</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"id"</span>: <span class="s">"u_you"</span>,
+    <span class="k">"email"</span>: <span class="s">"you@example.com"</span>,
+    <span class="k">"role"</span>: <span class="s">"owner"</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <h3>If sign-in returns a challenge instead of a token</h3>
+  <p>When multi-factor auth is switched on, <code>/api/auth/login</code> answers with
+     <code>mfaRequired</code> and no token. Exchange the challenge and your authenticator code
+     for the real session.</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Login response</span><span class="status s2">200 OK</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"mfaRequired"</span>: <span class="n">true</span>,
+    <span class="k">"challengeId"</span>: <span class="s">"c1.eyJ1IjoidV95…"</span>,
+    <span class="k">"methods"</span>: [<span class="s">"totp"</span>]
+  }
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Then</span><span class="verb post">POST</span><span class="path">/api/auth/mfa/verify</span></div>
+<pre>{
+  <span class="k">"challengeId"</span>: <span class="s">"c1.eyJ1IjoidV95…"</span>,
+  <span class="k">"code"</span>: <span class="s">"481920"</span>
+}
+
+<span class="c">// → the same { token, user, refreshToken }
+//   shape as a normal login</span></pre>
+    </div>
+  </div>
+
+  <div class="note danger">
+    <span class="mark">No</span>
+    <div><b>There are no API keys or service accounts.</b> The bearer token is always a real
+      person&rsquo;s session, so it expires and it carries exactly that person&rsquo;s access &mdash;
+      which is why a webhook can never reach a conversation its creator cannot. For an
+      unattended system, the <em>incoming webhook URL is</em> the long-lived credential.
+      Don&rsquo;t park a login password in a CI job to mint tokens on the fly; create the
+      webhook once by hand and give the job only its URL.</div>
+  </div>
+</section>
+
+<!-- ══ 2 ══════════════════════════════════════════════════════ -->
+<section id="incoming">
+  <div class="sec-head"><span class="sec-num">03</span><h2>Post into a chat</h2></div>
+  <p class="sec-sub">Two calls: create the webhook once as a signed-in member, then POST to
+    the URL it gives you, forever, from anywhere.</p>
+
+  <h3><span class="tag in">Step 1</span>Create it &mdash; on a group</h3>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/webhooks</span></div>
+<pre><span class="hd">Authorization:</span> Bearer eyJhbGciOiJIUzI1…
+<span class="hd">Content-Type:</span> application/json
+
+{
+  <span class="k">"direction"</span>: <span class="s">"in"</span>,
+  <span class="k">"conversationId"</span>: <span class="s">"conv_product"</span>,
+  <span class="k">"name"</span>: <span class="s">"CI Bot"</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">201 Created</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"webhook"</span>: {
+      <span class="k">"id"</span>: <span class="s">"0c4d4ebf-af08-41b9-a10d-98cef109adc7"</span>,
+      <span class="k">"direction"</span>: <span class="s">"in"</span>,
+      <span class="k">"name"</span>: <span class="s">"CI Bot"</span>,
+      <span class="k">"conversationId"</span>: <span class="s">"conv_product"</span>,
+      <span class="k">"scope"</span>: <span class="s">"group"</span>,
+      <span class="k">"conversationTitle"</span>: <span class="s">"Product Pod"</span>,
+      <span class="k">"ownerId"</span>: <span class="s">"u_you"</span>,
+      <span class="k">"events"</span>: [<span class="s">"message.created"</span>],
+      <span class="k">"enabled"</span>: <span class="n">true</span>,
+      <span class="k">"tokenHint"</span>: <span class="s">"9Ibh06"</span>,
+      <span class="k">"lastStatus"</span>: <span class="n">null</span>,
+      <span class="k">"failureCount"</span>: <span class="n">0</span>,
+      <span class="k">"createdAt"</span>: <span class="s">"2026-09-03T11:56:32.952Z"</span>
+    },
+    <span class="c">// shown once, never readable again</span>
+    <span class="k">"token"</span>: <span class="s">"whin_P5xYiuJAe69EaR_0DTeva18hxu9Ibh06"</span>,
+    <span class="k">"url"</span>: <span class="s">"https://colab.example.com/api/webhooks</span>
+             <span class="s">/in/whin_P5xYiuJAe69EaR_0DTeva18hxu9Ibh06"</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <div class="note danger">
+    <span class="mark">Keep</span>
+    <div><b>Copy the token now.</b> It is stored only as a SHA&#8209;256 hash, so nothing can
+      read it back &mdash; you will only ever see the last six characters
+      (<code>tokenHint</code>) again. Treat the URL like a password: anything that can read
+      it can post to that conversation. Lost it? <code>POST /api/webhooks/:id/rotate</code>
+      issues a new one and kills the old one instantly.</div>
+  </div>
+
+  <h3><span class="tag in">Step 1b</span>Or create it on a direct message</h3>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/webhooks</span></div>
+<pre>{
+  <span class="k">"direction"</span>: <span class="s">"in"</span>,
+  <span class="k">"userId"</span>: <span class="s">"u_emily"</span>,
+  <span class="k">"name"</span>: <span class="s">"Alerts for Emily"</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">201 Created</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"webhook"</span>: {
+      <span class="c">// resolved to your existing DM with Emily</span>
+      <span class="k">"conversationId"</span>: <span class="s">"conv_emily"</span>,
+      <span class="k">"scope"</span>: <span class="s">"user"</span>,
+      <span class="k">"conversationTitle"</span>: <span class="n">null</span>,
+      …
+    },
+    <span class="k">"token"</span>: <span class="s">"whin_9tKq2mVb…"</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <h3><span class="tag in">Step 2</span>Post to it &mdash; no authentication header</h3>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/webhooks/in/whin_P5xYiu…</span></div>
+<pre><span class="hd">Content-Type:</span> application/json
+
+{
+  <span class="k">"text"</span>: <span class="s">"Build #412 failed on main"</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">200 OK</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"posted"</span>: <span class="n">true</span>,
+    <span class="k">"messageId"</span>: <span class="s">"089e0027-0a72-484d-9792-62c16c03aa61"</span>,
+    <span class="k">"conversationId"</span>: <span class="s">"conv_product"</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <div class="blk" style="margin-bottom:16px;">
+    <div class="bar"><span class="label">curl</span><span class="path">the whole thing</span></div>
+<pre>curl -X POST <span class="s">"$COLAB_WEBHOOK_URL"</span> \
+  -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'{"text":"Build #412 failed on main"}'</span></pre>
+  </div>
+
+  <h3>Body shapes it already understands</h3>
+  <p>So you can point existing tooling at it without rewriting the payload.</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:26%">Source</th><th style="width:38%">You send</th><th>Appears in chat as</th></tr></thead>
+      <tbody>
+        <tr><td>CoLab / Slack</td><td><code>{"text":"Deploy done"}</code></td><td>Deploy done</td></tr>
+        <tr><td>Teams-style card</td><td><code>{"title":"Deploy","text":"v2 live"}</code></td><td><strong>Deploy</strong><br>v2 live</td></tr>
+        <tr><td>Slack attachments</td><td><code>{"attachments":[{"text":"…"}]}</code></td><td>the attachment text</td></tr>
+        <tr><td>Aliases</td><td><code>message</code>, <code>content</code>, <code>body</code>, <code>summary</code></td><td>treated as above</td></tr>
+        <tr><td>Plain string</td><td><code>"Deploy done"</code></td><td>Deploy done</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note" style="margin-top:16px;">
+    <span class="mark">Note</span>
+    <div>The message arrives as an <b>ordinary message from the webhook&rsquo;s owner</b>, so
+      unread counts, live updates, push notifications and retention all behave normally
+      &mdash; it is not a second class of message with its own rules. Text is capped at
+      8,000 characters, and a body with no usable text is a <code>400</code> rather than an
+      empty message in the chat.</div>
+  </div>
+</section>
+
+<!-- ══ 4 ══════════════════════════════════════════════════════ -->
+<section id="recipe">
+  <div class="sec-head"><span class="sec-num">04</span><h2>Recipe: a button in another app</h2></div>
+  <p class="sec-sub">
+    Your other product has a &ldquo;Message on CoLab&rdquo; button. Someone clicks it and a
+    particular person gets a chat message. This is the whole build.
+  </p>
+
+  <div class="note">
+    <span class="mark">Read</span>
+    <div><b>How the recipient signs in makes no difference.</b> SSO or email-and-password,
+      they receive the message identically &mdash; receiving a chat message has nothing to do
+      with how you authenticate. Sign-in method only ever affects the identity your
+      integration sends <em>as</em>, and the answer there is: neither. Give it its own
+      account.</div>
+  </div>
+
+  <h3>Send as the integration, not as the person clicking</h3>
+  <p>It is tempting to post as whoever clicked. Don&rsquo;t &mdash; it means holding every
+     user&rsquo;s credentials, which is impossible for SSO accounts anyway (see
+     <a href="#token">02</a>). You get the same result with none of the risk by naming the
+     person in the message text:</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Do this</span><span class="status s2">attribution</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"Ticket #412"</span>,
+  <span class="k">"text"</span>: <span class="s">"Rajaram asked you to look at this.</span>
+           <span class="s">https://tracker.example.com/t/412"</span>
+}
+
+<span class="c">// Arrives from "Tracker", and says who sent it.
+// One account, no user credentials anywhere.</span></pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Not this</span><span class="status s5">impersonation</span></div>
+<pre><span class="c">// Posting AS the clicking user would need:
+//   • an email user's password    → never store these
+//   • an SSO user's session       → impossible without
+//                                   a browser, per §02
+// And a leaked token would carry that person's
+// whole CoLab access, not just one message.</span></pre>
+    </div>
+  </div>
+
+  <h3>Set up the integration account &mdash; once, ever</h3>
+  <div class="blk" style="margin-bottom:16px;">
+    <div class="bar"><span class="label">Step 1</span><span class="path">an admin creates the account and gets its token</span></div>
+<pre><span class="c"># A dedicated account — NOT a person's. It needs a password, because
+# SSO cannot be automated. If self-service sign-up is off, an admin
+# creates the member and sets a password with
+# POST /api/orgs/current/members/:userId/reset-password</span>
+
+TOKEN=$(curl -s -X POST https://colab.example.com/api/auth/login \
+  -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'{"email":"tracker-bot@example.com","password":"…"}'</span> \
+  | python3 -c <span class="s">"import sys,json;print(json.load(sys.stdin)['data']['token'])"</span>)</pre>
+  </div>
+
+  <h3>Wire up each recipient &mdash; once per person</h3>
+  <p>Do this lazily: the first time your app needs to message someone, run these three calls
+     and cache the URL against them. Everything here uses the integration account&rsquo;s token.</p>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Step 2</span><span class="verb get">GET</span><span class="path">/api/users/search?q=&lt;email&gt;</span></div>
+<pre><span class="c">// Find the CoLab user. Match on the email your
+// apps already share.</span>
+
+<span class="k">"data"</span>: [
+  { <span class="k">"id"</span>: <span class="s">"u_priya"</span>,
+    <span class="k">"email"</span>: <span class="s">"priya@example.com"</span>,
+    <span class="k">"name"</span>: <span class="s">"Priya Nair"</span> }
+]</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Step 3</span><span class="verb post">POST</span><span class="path">/api/invites</span></div>
+<pre>{ <span class="k">"toUserId"</span>: <span class="s">"u_priya"</span> }
+
+<span class="c">// Makes sure a direct message exists between the
+// integration account and that person. The DM is
+// created immediately and its id comes straight back.</span>
+
+<span class="k">"data"</span>: { <span class="k">"conversationId"</span>: <span class="s">"748fbba4-c466-…"</span> }</pre>
+    </div>
+  </div>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Step 4</span><span class="verb post">POST</span><span class="path">/api/webhooks</span></div>
+<pre>{
+  <span class="k">"direction"</span>: <span class="s">"in"</span>,
+  <span class="k">"conversationId"</span>: <span class="s">"748fbba4-c466-…"</span>,
+  <span class="k">"name"</span>: <span class="s">"Tracker → Priya"</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Store this</span><span class="status s2">201 Created</span></div>
+<pre>{
+  <span class="k">"token"</span>: <span class="s">"whin_oSze1PpZitC5vKw0iK5…"</span>,
+  <span class="k">"url"</span>: <span class="s">"https://colab.example.com/api</span>
+         <span class="s">/webhooks/in/whin_oSze1PpZ…"</span>
+}
+
+<span class="c">// Save url against this person in your own
+// database. It never expires.</span></pre>
+    </div>
+  </div>
+
+  <h3>Every click, from then on</h3>
+  <div class="blk" style="margin-bottom:16px;">
+    <div class="bar"><span class="label">Step 5</span><span class="verb post">POST</span><span class="path">the stored URL &mdash; no Authorization header</span></div>
+<pre>curl -X POST <span class="s">"$STORED_URL_FOR_PRIYA"</span> \
+  -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'{"title":"Ticket #412",</span>
+       <span class="s">"text":"Rajaram asked you to look at this. https://tracker.example.com/t/412"}'</span>
+
+<span class="c"># → {"ok":true,"data":{"posted":true,"messageId":"215665a3-…"}}</span></pre>
+  </div>
+
+  <div class="blk" style="margin-bottom:16px;">
+    <div class="bar"><span class="label">Node</span><span class="path">the click handler, end to end</span></div>
+<pre><span class="k">async function</span> <span class="hd">notifyOnCoLab</span>(recipientEmail, actorName, ticket) {
+  <span class="k">let</span> url = <span class="k">await</span> db.colabWebhookUrlFor(recipientEmail);
+
+  <span class="c">// First time we've messaged this person — wire them up.</span>
+  <span class="k">if</span> (!url) {
+    <span class="k">const</span> token = <span class="k">await</span> colabIntegrationToken();   <span class="c">// cached; see step 1</span>
+    <span class="k">const</span> auth  = { Authorization: <span class="s">`Bearer ${token}`</span>, <span class="s">"Content-Type"</span>: <span class="s">"application/json"</span> };
+
+    <span class="k">const</span> [user] = (<span class="k">await</span> get(<span class="s">`/api/users/search?q=${encodeURIComponent(recipientEmail)}`</span>, auth)).data;
+    <span class="k">if</span> (!user) <span class="k">throw new</span> Error(<span class="s">`No CoLab account for ${recipientEmail}`</span>);
+
+    <span class="k">const</span> { conversationId } =
+      (<span class="k">await</span> post(<span class="s">"/api/invites"</span>, auth, { toUserId: user.id })).data;
+
+    <span class="k">const</span> hook = (<span class="k">await</span> post(<span class="s">"/api/webhooks"</span>, auth, {
+      direction: <span class="s">"in"</span>, conversationId, name: <span class="s">`Tracker → ${user.name}`</span>,
+    })).data;
+
+    url = hook.url;
+    <span class="k">await</span> db.saveColabWebhookUrl(recipientEmail, url);
+  }
+
+  <span class="c">// The click itself: one POST, no auth, nothing to refresh.</span>
+  <span class="k">await</span> fetch(url, {
+    method: <span class="s">"POST"</span>,
+    headers: { <span class="s">"Content-Type"</span>: <span class="s">"application/json"</span> },
+    body: JSON.stringify({
+      title: <span class="s">`Ticket #${ticket.id}`</span>,
+      text:  <span class="s">`${actorName} asked you to look at this. ${ticket.url}`</span>,
+    }),
+  });
+}</pre>
+  </div>
+
+  <h3>What actually differs between the two kinds of recipient</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:44%">Step</th><th style="width:28%">SSO recipient</th><th>Email recipient</th></tr></thead>
+      <tbody>
+        <tr><td>Find them by email</td><td><span class="pill ok">same</span></td><td><span class="pill ok">same</span></td></tr>
+        <tr><td>Create the direct message</td><td><span class="pill ok">same</span></td><td><span class="pill ok">same</span></td></tr>
+        <tr><td>Create the webhook</td><td><span class="pill ok">same</span></td><td><span class="pill ok">same</span></td></tr>
+        <tr><td>Post on click</td><td><span class="pill ok">same</span></td><td><span class="pill ok">same</span></td></tr>
+        <tr><td>They receive it</td><td><span class="pill ok">same</span></td><td><span class="pill ok">same</span></td></tr>
+        <tr><td><em>Integration&rsquo;s own account</em></td><td colspan="2">Must be a password account either way &mdash; SSO cannot be automated.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Three things to expect</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:32%">Behaviour</th><th>What to do about it</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>The first message arrives as a <strong>connection request</strong>, with Accept
+              and Decline, if the integration account and that person aren&rsquo;t connected yet.</td>
+          <td>Expected, and it is the same courtesy gate a person gets. Ask your team to accept
+              &ldquo;Tracker&rdquo; once. After that its messages land as ordinary chat.</td>
+        </tr>
+        <tr>
+          <td>Until they accept, the integration can send <strong>text only</strong>.</td>
+          <td>No action &mdash; incoming webhooks only ever send text anyway.</td>
+        </tr>
+        <tr>
+          <td>The integration account&rsquo;s token expires (7 days).</td>
+          <td>Only steps 2&ndash;4 use it, and those run once per person. The click path in step 5
+              has no token at all. Renew with <code>/api/auth/refresh</code> when you next wire
+              someone up.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note danger">
+    <span class="mark">Scope</span>
+    <div><b>Add the integration account only where it belongs.</b> A webhook can never reach
+      further than the account that created it, so an integration confined to its own direct
+      messages cannot read or post anywhere else &mdash; even if one of its webhook URLs
+      leaks. Don&rsquo;t make it an org owner for convenience.</div>
+  </div>
+</section>
+
+<!-- ══ 3 ══════════════════════════════════════════════════════ -->
+<section id="outgoing">
+  <div class="sec-head"><span class="sec-num">05</span><h2>Receive from a chat</h2></div>
+  <p class="sec-sub">Register a URL, then handle signed POSTs. Subscribe to any combination of
+    <code>message.created</code>, <code>message.updated</code> and <code>message.deleted</code>.</p>
+
+  <h3><span class="tag out">Step 1</span>Register your endpoint</h3>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/webhooks</span></div>
+<pre><span class="hd">Authorization:</span> Bearer eyJhbGciOiJIUzI1…
+
+{
+  <span class="k">"direction"</span>: <span class="s">"out"</span>,
+  <span class="k">"conversationId"</span>: <span class="s">"conv_product"</span>,
+  <span class="k">"name"</span>: <span class="s">"Ops bridge"</span>,
+  <span class="k">"targetUrl"</span>: <span class="s">"https://ops.example.com/colab"</span>,
+  <span class="k">"events"</span>: [<span class="s">"message.created"</span>]
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">201 Created</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"webhook"</span>: {
+      <span class="k">"id"</span>: <span class="s">"1a1a0d05-0584-4bec-b802-1327542996c2"</span>,
+      <span class="k">"direction"</span>: <span class="s">"out"</span>,
+      <span class="k">"name"</span>: <span class="s">"Ops bridge"</span>,
+      <span class="k">"conversationId"</span>: <span class="s">"conv_product"</span>,
+      <span class="k">"scope"</span>: <span class="s">"group"</span>,
+      <span class="k">"targetUrl"</span>: <span class="s">"https://ops.example.com/colab"</span>,
+      <span class="k">"events"</span>: [<span class="s">"message.created"</span>],
+      <span class="k">"enabled"</span>: <span class="n">true</span>,
+      <span class="k">"failureCount"</span>: <span class="n">0</span>
+    },
+    <span class="c">// shown once — you need it to verify signatures</span>
+    <span class="k">"secret"</span>: <span class="s">"whsec_exVdKWQjTNXDpqYD-IDjUrJUyKMqppC2"</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <h3><span class="tag out">Step 2</span>What your endpoint receives</h3>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Headers</span><span class="verb post">POST</span><span class="path">https://ops.example.com/colab</span></div>
+<pre><span class="hd">Content-Type:</span>       application/json
+<span class="hd">User-Agent:</span>         CoLab-Webhooks/1.0
+<span class="hd">X-CoLab-Event:</span>      message.created
+<span class="hd">X-CoLab-Delivery:</span>   a6a80364-f93d-41e9-bcc4-509ebf7ad545
+<span class="hd">X-CoLab-Webhook-Id:</span> 0ad97ef1-e60a-49ec-a48f-621bf2734881
+<span class="hd">X-CoLab-Signature:</span>  t=1772539134,v1=9f2c4b8e…</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Body</span><span class="path">the exact bytes that are signed</span></div>
+<pre>{
+  <span class="k">"event"</span>: <span class="s">"message.created"</span>,
+  <span class="k">"timestamp"</span>: <span class="s">"2026-09-03T11:58:54.428Z"</span>,
+  <span class="k">"webhook"</span>: {
+    <span class="k">"id"</span>: <span class="s">"0ad97ef1-e60a-49ec-a48f-621bf2734881"</span>,
+    <span class="k">"name"</span>: <span class="s">"Ops bridge"</span>
+  },
+  <span class="k">"conversation"</span>: {
+    <span class="k">"id"</span>: <span class="s">"conv_product"</span>,
+    <span class="k">"kind"</span>: <span class="s">"group"</span>,
+    <span class="k">"title"</span>: <span class="s">"Product Pod"</span>
+  },
+  <span class="k">"message"</span>: {
+    <span class="k">"id"</span>: <span class="s">"1179ffb2-f935-45c9-ab60-e089c9d61f42"</span>,
+    <span class="k">"text"</span>: <span class="s">"Ship it."</span>,
+    <span class="k">"type"</span>: <span class="s">"text"</span>,
+    <span class="k">"createdAt"</span>: <span class="s">"2026-09-03T11:58:54.356Z"</span>,
+    <span class="k">"encrypted"</span>: <span class="n">false</span>,
+    <span class="k">"sender"</span>: { <span class="k">"id"</span>: <span class="s">"u_you"</span>, <span class="k">"name"</span>: <span class="s">"You"</span> },
+    <span class="k">"parentMessageId"</span>: <span class="n">null</span>,
+    <span class="k">"file"</span>: <span class="n">null</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Your reply</span><span class="status s2">200 OK</span></div>
+<pre><span class="c">// Any 2xx. Answer fast — the timeout is 8s.
+// Acknowledge first, do the work afterwards.</span>
+{ <span class="k">"ok"</span>: <span class="n">true</span> }</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Encrypted conversation</span><span class="path">what changes</span></div>
+<pre>  <span class="k">"message"</span>: {
+    <span class="k">"text"</span>: <span class="n">null</span>,
+    <span class="c">// the server holds no readable plaintext,</span>
+    <span class="c">// and says so rather than sending an</span>
+    <span class="c">// empty-looking message</span>
+    <span class="k">"encrypted"</span>: <span class="n">true</span>
+  }</pre>
+    </div>
+  </div>
+
+  <h3><span class="tag out">Step 3</span>Check it works before real traffic depends on it</h3>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/webhooks/:id/test</span></div>
+<pre><span class="hd">Authorization:</span> Bearer eyJhbGciOiJIUzI1…</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">200 OK</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"deliveryId"</span>: <span class="s">"b330473c-89f3-4f03-8bdc-67827d578310"</span>,
+    <span class="k">"queued"</span>: <span class="n">true</span>
+  }
+}</pre>
+    </div>
+  </div>
+  <p>Your endpoint then receives a normal delivery carrying <code>"test": true</code> and the
+     message text <em>&ldquo;This is a test delivery from CoLab.&rdquo;</em> &mdash; signed exactly
+     like the real thing, so it exercises your verification code too.</p>
+</section>
+
+<!-- ══ 4 ══════════════════════════════════════════════════════ -->
+<section id="verify">
+  <div class="sec-head"><span class="sec-num">06</span><h2>Verify a signature</h2></div>
+  <p class="sec-sub">
+    The signature covers <code>"{timestamp}.{raw request body}"</code>. Verify against the
+    <strong>raw bytes</strong> &mdash; a body you parsed and re-serialized will not match,
+    and that is the single most common reason verification fails.
+  </p>
+
+  <div class="blk" style="margin-bottom:16px;">
+    <div class="bar"><span class="label">Header format</span></div>
+<pre><span class="hd">X-CoLab-Signature:</span> t=<span class="n">1772539134</span>,v1=<span class="s">9f2c4b8e…</span>
+                   │            └── HMAC-SHA256(secret, "1772539134.{body}")
+                   └── unix seconds, signed too, so a captured
+                       delivery cannot be replayed later</pre>
+  </div>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Node.js</span><span class="path">express, raw body</span></div>
+<pre><span class="k">const</span> crypto = <span class="k">require</span>(<span class="s">"crypto"</span>);
+
+<span class="k">function</span> <span class="hd">verify</span>(rawBody, header, secret, tolerance = <span class="n">300</span>) {
+  <span class="k">const</span> p = Object.fromEntries(
+    header.split(<span class="s">","</span>).map((kv) =&gt; kv.split(<span class="s">"="</span>))
+  );
+  <span class="k">const</span> expected = crypto
+    .createHmac(<span class="s">"sha256"</span>, secret)
+    .update(<span class="s">`${p.t}.${rawBody}`</span>)
+    .digest(<span class="s">"hex"</span>);
+
+  <span class="k">const</span> a = Buffer.from(p.v1 || <span class="s">""</span>, <span class="s">"hex"</span>);
+  <span class="k">const</span> b = Buffer.from(expected, <span class="s">"hex"</span>);
+  <span class="k">if</span> (a.length !== b.length) <span class="k">return</span> <span class="n">false</span>;
+  <span class="k">if</span> (!crypto.timingSafeEqual(a, b)) <span class="k">return</span> <span class="n">false</span>;
+
+  <span class="c">// reject a replayed capture</span>
+  <span class="k">return</span> Math.abs(Date.now() / <span class="n">1000</span> - Number(p.t)) &lt; tolerance;
+}
+
+app.post(<span class="s">"/colab"</span>, express.raw({ type: <span class="s">"*/*"</span> }), (req, res) =&gt; {
+  <span class="k">const</span> raw = req.body.toString(<span class="s">"utf8"</span>);
+  <span class="k">if</span> (!verify(raw, req.get(<span class="s">"x-colab-signature"</span>), SECRET))
+    <span class="k">return</span> res.sendStatus(<span class="n">401</span>);
+  res.sendStatus(<span class="n">200</span>);          <span class="c">// ack first</span>
+  handle(JSON.parse(raw));       <span class="c">// work after</span>
+});</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Python</span><span class="path">flask, raw body</span></div>
+<pre><span class="k">import</span> hmac, hashlib, time, json
+<span class="k">from</span> flask <span class="k">import</span> request, abort
+
+<span class="k">def</span> <span class="hd">verify</span>(raw: <span class="k">bytes</span>, header: <span class="k">str</span>, secret: <span class="k">str</span>, tol=<span class="n">300</span>):
+    p = <span class="k">dict</span>(kv.split(<span class="s">"="</span>, <span class="n">1</span>) <span class="k">for</span> kv <span class="k">in</span> header.split(<span class="s">","</span>))
+    expected = hmac.new(
+        secret.encode(),
+        <span class="s">f"{p['t']}."</span>.encode() + raw,
+        hashlib.sha256,
+    ).hexdigest()
+
+    <span class="k">if not</span> hmac.compare_digest(p.get(<span class="s">"v1"</span>, <span class="s">""</span>), expected):
+        <span class="k">return False</span>
+
+    <span class="c"># reject a replayed capture</span>
+    <span class="k">return</span> <span class="k">abs</span>(time.time() - <span class="k">int</span>(p[<span class="s">"t"</span>])) &lt; tol
+
+
+<span class="hd">@app.post</span>(<span class="s">"/colab"</span>)
+<span class="k">def</span> <span class="hd">colab</span>():
+    raw = request.get_data()
+    <span class="k">if not</span> verify(raw, request.headers[<span class="s">"X-CoLab-Signature"</span>], SECRET):
+        abort(<span class="n">401</span>)
+    enqueue(json.loads(raw))   <span class="c"># work off the request path</span>
+    <span class="k">return</span> <span class="s">""</span>, <span class="n">200</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 5 ══════════════════════════════════════════════════════ -->
+<section id="delivery">
+  <div class="sec-head"><span class="sec-num">07</span><h2>Delivery &amp; retries</h2></div>
+  <p class="sec-sub">
+    Sending a chat message never waits on your endpoint. Deliveries are queued and drained
+    in the background, so a slow or dead consumer costs the conversation nothing.
+  </p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:22%">Your endpoint answers</th><th style="width:20%">Result</th><th>What happens next</th></tr></thead>
+      <tbody>
+        <tr><td><code>2xx</code></td><td><span class="pill ok">delivered</span></td><td>Done. Recorded in the delivery log with the status code.</td></tr>
+        <tr><td><code>5xx</code>, <code>408</code>, <code>429</code></td><td><span class="pill warn">retried</span></td><td>Backs off and tries again: roughly 30s, 2m, 8m, 32m &mdash; 5 attempts, then permanently failed.</td></tr>
+        <tr><td>timeout or refused</td><td><span class="pill warn">retried</span></td><td>Same backoff ladder. The timeout is 8s per attempt.</td></tr>
+        <tr><td>any other <code>4xx</code></td><td><span class="pill bad">failed</span></td><td>Not retried &mdash; an unchanged body will not become valid. Fix the endpoint, then re-run <code>/test</code>.</td></tr>
+        <tr><td><code>3xx</code></td><td><span class="pill bad">failed</span></td><td>Redirects are never followed; they would sidestep the address check.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Read the delivery log</h3>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb get">GET</span><span class="path">/api/webhooks/:id/deliveries</span></div>
+<pre><span class="hd">Authorization:</span> Bearer eyJhbGciOiJIUzI1…</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">200 OK</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: [
+    {
+      <span class="k">"id"</span>: <span class="s">"7d8f2883-55ef-481b-8f05-0b4d8205f565"</span>,
+      <span class="k">"event"</span>: <span class="s">"message.created"</span>,
+      <span class="k">"status"</span>: <span class="s">"delivered"</span>,
+      <span class="k">"attempts"</span>: <span class="n">1</span>,
+      <span class="k">"responseCode"</span>: <span class="n">200</span>,
+      <span class="k">"error"</span>: <span class="n">null</span>,
+      <span class="k">"createdAt"</span>: <span class="s">"2026-09-03T11:59:18.124Z"</span>,
+      <span class="k">"deliveredAt"</span>: <span class="s">"2026-09-03T11:59:18.699Z"</span>
+    },
+    {
+      <span class="c">// endpoint was down — waiting on its backoff</span>
+      <span class="k">"status"</span>: <span class="s">"pending"</span>,
+      <span class="k">"attempts"</span>: <span class="n">1</span>,
+      <span class="k">"responseCode"</span>: <span class="n">null</span>,
+      <span class="k">"error"</span>: <span class="s">"fetch failed"</span>
+    },
+    {
+      <span class="c">// endpoint rejected the body — given up on</span>
+      <span class="k">"status"</span>: <span class="s">"failed"</span>,
+      <span class="k">"attempts"</span>: <span class="n">1</span>,
+      <span class="k">"responseCode"</span>: <span class="n">422</span>,
+      <span class="k">"error"</span>: <span class="s">"HTTP 422"</span>
+    }
+  ]
+}</pre>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="mark">Two</span>
+    <div><b>Deduplicate on <code>X&#8209;CoLab&#8209;Delivery</code></b> if a repeat would matter &mdash;
+      delivery is at&#8209;least&#8209;once, so a retry after a timeout you actually processed will
+      arrive twice. And <b>a message that arrived <em>through</em> an incoming webhook is never
+      sent back out</b>, which is what stops an in&#8209;and&#8209;out pair on the same conversation
+      becoming an infinite loop. If you are building a genuine two-way bridge, the far side
+      must originate its own messages rather than echoing what it receives.</div>
+  </div>
+</section>
+
+<!-- ══ 6 ══════════════════════════════════════════════════════ -->
+<section id="reference">
+  <div class="sec-head"><span class="sec-num">08</span><h2>API reference</h2></div>
+  <p class="sec-sub">
+    Every route needs <code>Authorization: Bearer &lt;token&gt;</code> except the ingest endpoint,
+    which is unauthenticated by design.
+  </p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:9%">Method</th><th style="width:33%">Path</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><span class="m get">GET</span></td><td><code>/api/webhooks</code></td><td>Every webhook you own, in conversations you can still see.</td></tr>
+        <tr><td><span class="m get">GET</span></td><td><code>/api/webhooks?conversationId=…</code></td><td>Webhooks on that conversation.</td></tr>
+        <tr><td><span class="m get">GET</span></td><td><code>/api/webhooks?userId=…</code></td><td>Webhooks on your DM with that person.</td></tr>
+        <tr><td><span class="m get">GET</span></td><td><code>/api/webhooks/events</code></td><td>Supported event names, and whether the feature is switched on.</td></tr>
+        <tr><td><span class="m post">POST</span></td><td><code>/api/webhooks</code></td><td>Create. Returns the token or secret <strong>once</strong>.</td></tr>
+        <tr><td><span class="m patch">PATCH</span></td><td><code>/api/webhooks/:id</code></td><td>Rename, enable/disable, or change the event subscription.</td></tr>
+        <tr><td><span class="m post">POST</span></td><td><code>/api/webhooks/:id/rotate</code></td><td>New credential. Same id, same history; the old one dies immediately.</td></tr>
+        <tr><td><span class="m post">POST</span></td><td><code>/api/webhooks/:id/test</code></td><td>Queue a synthetic delivery. Outgoing only.</td></tr>
+        <tr><td><span class="m get">GET</span></td><td><code>/api/webhooks/:id/deliveries</code></td><td>Recent deliveries with status, attempts and error.</td></tr>
+        <tr><td><span class="m del">DELETE</span></td><td><code>/api/webhooks/:id</code></td><td>Remove it.</td></tr>
+        <tr><td><span class="m post">POST</span></td><td><code>/api/webhooks/in/:token</code></td><td><strong>The ingest endpoint.</strong> No auth header &mdash; the token is the credential.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Create &mdash; request fields</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:20%">Field</th><th style="width:14%">Required</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>direction</code></td><td>yes</td><td><code>"in"</code> to post into chat, <code>"out"</code> to receive from it.</td></tr>
+        <tr><td><code>conversationId</code></td><td>one of</td><td>Any conversation you are a member of &mdash; group or DM.</td></tr>
+        <tr><td><code>userId</code></td><td>one of</td><td>Resolves to your existing DM with that person. Never opens a new one.</td></tr>
+        <tr><td><code>targetUrl</code></td><td>outgoing</td><td>Public <code>https</code> endpoint. Checked at creation <em>and</em> on every delivery.</td></tr>
+        <tr><td><code>name</code></td><td>no</td><td>How it is labelled. Defaults to &ldquo;Incoming/Outgoing webhook&rdquo;.</td></tr>
+        <tr><td><code>events</code></td><td>no</td><td>Any of <code>message.created</code>, <code>message.updated</code>, <code>message.deleted</code>. Defaults to <code>message.created</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Who can do what</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:30%">Person</th><th>Can</th></tr></thead>
+      <tbody>
+        <tr><td>Any member of the conversation</td><td>Create a webhook on it, and list the ones on it.</td></tr>
+        <tr><td>The webhook&rsquo;s creator</td><td>Rename, disable, rotate, test, read deliveries, delete.</td></tr>
+        <tr><td>A conversation owner or admin</td><td>The same &mdash; so a group is not held hostage by an integration whose author has moved on.</td></tr>
+        <tr><td>Anyone else</td><td>Nothing. <code>403</code> on every management route.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══ 7 ══════════════════════════════════════════════════════ -->
+<section id="errors">
+  <div class="sec-head"><span class="sec-num">09</span><h2>Errors</h2></div>
+  <p class="sec-sub">
+    Every failure returns the same envelope. The <strong>HTTP status carries the real
+    signal</strong> &mdash; the <code>code</code> field collapses to <code>BAD_REQUEST</code> for
+    all 4xx, so branch on the status, not the string.
+  </p>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Empty body</span><span class="status s4">400</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">false</span>,
+  <span class="k">"error"</span>: {
+    <span class="k">"code"</span>: <span class="s">"BAD_REQUEST"</span>,
+    <span class="k">"message"</span>: <span class="s">"Nothing to post — send JSON</span>
+                <span class="s">with a \"text\" field."</span>
+  }
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Not a member</span><span class="status s4">403</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">false</span>,
+  <span class="k">"error"</span>: {
+    <span class="k">"code"</span>: <span class="s">"BAD_REQUEST"</span>,
+    <span class="k">"message"</span>: <span class="s">"You are not a member of</span>
+                <span class="s">this conversation."</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:8%">Status</th><th style="width:30%">Means</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td class="num"><code>400</code></td><td>No usable text in the body, or an invalid target URL.</td><td>Send <code>{"text":"…"}</code>. For a target, use a public <code>https</code> address.</td></tr>
+        <tr><td class="num"><code>401</code></td><td>Missing or expired session on a management route.</td><td>Sign in again and resend the bearer token.</td></tr>
+        <tr><td class="num"><code>403</code></td><td>You are not a member, or not the creator/admin. On ingest: the webhook&rsquo;s owner has left the conversation.</td><td>Re-add the owner, or recreate the webhook as a current member.</td></tr>
+        <tr><td class="num"><code>404</code></td><td>On ingest &mdash; wrong, rotated, disabled or deleted token. All four look identical on purpose, so guessing tokens reveals nothing.</td><td>Check <code>GET /api/webhooks</code>, then rotate and re-copy the URL.</td></tr>
+        <tr><td class="num"><code>409</code></td><td>The conversation is at its webhook limit (10 by default).</td><td>Delete one you no longer use, or raise the limit.</td></tr>
+        <tr><td class="num"><code>429</code></td><td>Past the per-minute budget for this webhook (60 by default).</td><td>Batch your posts, or raise <code>WEBHOOKS_INGEST_PER_MINUTE</code>.</td></tr>
+        <tr><td class="num"><code>503</code></td><td>Webhooks are switched off on this deployment.</td><td>Set <code>WEBHOOKS_ENABLED=true</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>When a target URL is rejected</h3>
+  <p>An outgoing target is a URL <em>the server</em> fetches, so it is refused if it resolves
+     into loopback, link-local (including the cloud metadata address), private or carrier-NAT
+     space &mdash; and that check runs again on <em>every</em> delivery attempt, because DNS can
+     be repointed after you register.</p>
+  <div class="blk">
+    <div class="bar"><span class="label">Response</span><span class="status s4">400 Bad Request</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">false</span>,
+  <span class="k">"error"</span>: {
+    <span class="k">"code"</span>: <span class="s">"BAD_REQUEST"</span>,
+    <span class="k">"message"</span>: <span class="s">"That host resolves to a private or loopback address. Set</span>
+                <span class="s">WEBHOOKS_ALLOW_PRIVATE_TARGETS=true if this deployment really</span>
+                <span class="s">does target an internal endpoint."</span>
+  }
+}</pre>
+  </div>
+</section>
+
+<!-- ══ 8 ══════════════════════════════════════════════════════ -->
+<section id="config">
+  <div class="sec-head"><span class="sec-num">10</span><h2>Configuration</h2></div>
+  <p class="sec-sub">Environment variables, with their defaults. All are documented in
+     <code>.env.example</code> under <strong>Chat webhooks</strong>.</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:38%">Variable</th><th style="width:12%">Default</th><th>Controls</th></tr></thead>
+      <tbody>
+        <tr><td><code>WEBHOOKS_ENABLED</code></td><td class="num">true</td><td>Master switch. Off makes the feature dormant &mdash; ingest 404s, nothing is ever sent out.</td></tr>
+        <tr><td><code>WEBHOOKS_MAX_PER_CONVERSATION</code></td><td class="num">10</td><td>Cap per conversation, so one member cannot turn a busy group into an amplifier.</td></tr>
+        <tr><td><code>WEBHOOKS_TIMEOUT_MS</code></td><td class="num">8000</td><td>How long a single delivery attempt waits for your endpoint.</td></tr>
+        <tr><td><code>WEBHOOKS_MAX_ATTEMPTS</code></td><td class="num">5</td><td>Attempts before a delivery is permanently failed.</td></tr>
+        <tr><td><code>WEBHOOKS_INGEST_PER_MINUTE</code></td><td class="num">60</td><td>Messages accepted per incoming webhook per minute.</td></tr>
+        <tr><td><code>WEBHOOKS_INGEST_IP_RATE_MAX</code></td><td class="num">120</td><td>Per-IP ceiling on the unauthenticated ingest endpoint.</td></tr>
+        <tr><td><code>WEBHOOKS_DRAIN_SECONDS</code></td><td class="num">20</td><td>Safety-net poll for the delivery queue. An enqueue also nudges it within ~1s.</td></tr>
+        <tr><td><code>WEBHOOKS_DELIVERY_RETENTION_DAYS</code></td><td class="num">30</td><td>How long the delivery log is kept &mdash; it embeds message text, so it is pruned.</td></tr>
+        <tr><td><code>WEBHOOKS_ALLOW_PRIVATE_TARGETS</code></td><td class="num">false</td><td>On-prem escape hatch for genuinely internal endpoints. Never on by default.</td></tr>
+        <tr><td><code>PUBLIC_API_URL</code></td><td class="num">&mdash;</td><td>Base URL used to render the copy-paste ingest URL.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <span>CoLab &mdash; chat webhooks</span>
+  <span>Reference: <code>docs/CHAT_WEBHOOKS.md</code></span>
+  <span>Code: <code>backend/app/src/services/webhookService.ts</code></span>
+  <span>Schema: <code>database/migrations/0115_chat_webhooks.sql</code></span>
+</footer>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,193 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   PUBLIC MEETING LINK — guest lobby + status screens (/join/<token>).
+   The device-check / name lobby itself is PreJoinMeeting (pj-*); this file adds
+   the guest name field and the standalone status cards (loading / invalid /
+   ended / left). Colours come from the shared tokens so dark mode follows.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Name field inside the pre-join card ─────────────────────────────────── */
+.pj-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--meet-fg);
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--meet-btn);
+  border: 1px solid var(--meet-btn-line);
+  outline: none;
+  transition: border-color var(--dur-fast, 120ms) ease, box-shadow var(--dur-fast, 120ms) ease;
+}
+.pj-name-input::placeholder {
+  color: var(--meet-sub);
+  font-weight: 400;
+}
+.pj-name-input:focus {
+  border-color: var(--ac);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac) 28%, transparent);
+}
+.pj-name-input[aria-invalid="true"] {
+  border-color: var(--red, #dc2626);
+}
+/* This browser already joined the meeting: the name is fixed to that identity. */
+.pj-name-input.locked {
+  cursor: default;
+  color: var(--meet-sub);
+  background: color-mix(in srgb, var(--meet-btn) 60%, transparent);
+}
+.pj-name-input.locked:focus {
+  border-color: var(--meet-btn-line);
+  box-shadow: none;
+}
+.pj-name-help {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--meet-sub);
+  min-height: 17px;
+}
+.pj-name-help.err {
+  color: var(--red, #dc2626);
+}
+.pj-join-v2:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.pj-join-v2:disabled:hover {
+  opacity: 0.45;
+}
+
+/* ── Status cards ─────────────────────────────────────────────────────────── */
+.gj-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6, 24px) var(--sp-4, 16px);
+  box-sizing: border-box;
+}
+.gj-card {
+  width: min(440px, 100%);
+  box-sizing: border-box;
+  padding: var(--sp-8, 32px) var(--sp-6, 24px);
+  background: var(--surface-raised, #fff);
+  color: var(--fg-primary, #111);
+  border: 1px solid var(--line-subtle, #e5e7eb);
+  border-radius: var(--r-2xl, 20px);
+  box-shadow: 0 18px 60px rgba(56, 19, 84, 0.18);
+}
+.gj-brand {
+  text-align: center;
+  font-size: var(--fs-lg, 15px);
+  font-weight: var(--fw-bold, 700);
+  letter-spacing: 0.02em;
+  color: var(--brand-ink, #521d6d);
+  margin-bottom: var(--sp-6, 24px);
+}
+body.dark .gj-brand {
+  color: var(--fg-primary, #fafafa);
+}
+.gj-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3, 12px);
+  text-align: center;
+}
+.gj-h {
+  margin: 0;
+  font-size: var(--fs-3xl, 22px);
+  line-height: var(--lh-tight, 1.2);
+  font-weight: var(--fw-semibold, 600);
+}
+.gj-muted {
+  margin: 0;
+  font-size: var(--fs-base, 14px);
+  line-height: var(--lh-normal, 1.5);
+  color: var(--fg-muted, #6b7280);
+}
+.gj-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-accent-soft, #f5ebfd);
+  color: var(--fg-accent, #8b29be);
+}
+.gj-icon.warn {
+  background: var(--warning-soft, #fef3c7);
+  color: var(--warning, #b45309);
+}
+.gj-icon.ok {
+  background: var(--success-soft, #dcfce7);
+  color: var(--success, #15803d);
+}
+.gj-center .ui-btn {
+  margin-top: var(--sp-2, 8px);
+}
+
+/* ── Host: public-link control (calendar details / in-meeting invite popover) ─ */
+.pl-ctl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.pl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line-subtle, #e5e7eb);
+  border-radius: var(--r-sm, 8px);
+  background: var(--surface-base, transparent);
+}
+.pl-ico {
+  display: inline-flex;
+  color: var(--fg-accent, #8b29be);
+  flex-shrink: 0;
+}
+.pl-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--fg-secondary, #374151);
+}
+.pl-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.pl-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.pl-off {
+  color: var(--fg-danger, #b91c1c);
+}
+.pl-hint {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--fg-muted, #6b7280);
+}
+.mr-invite-pub {
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--meet-pop-line, var(--line-subtle, #e5e7eb));
+}

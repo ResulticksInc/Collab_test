@@ -1,0 +1,66 @@
+# azure-pipelines-ci.yml — CI gate for the branches that get deployed (run, UAT).
+# Mirrors .github/workflows/web-build.yml (which targets a `main` branch that
+# does not exist here). Blocks the PR / push on: secrets, typecheck, backend
+# tests against a real MySQL, dependency audit and the Next.js build.
+
+trigger:
+  branches:
+    include:
+      - run
+      - UAT
+
+pr:
+  branches:
+    include:
+      - run
+      - UAT
+
+pool:
+  name: DevOps-GLB-BGAgent
+
+variables:
+  - name: TEST_DATABASE_URL
+    value: "mysql://root:colab@127.0.0.1:3307/colab_test"
+
+steps:
+  - checkout: self
+    fetchDepth: 1
+
+  - task: NodeTool@0
+    inputs:
+      versionSpec: "20.x"
+    displayName: "Install Node.js"
+
+  - script: npm ci
+    displayName: "Install dependencies"
+
+  # Blocking: any committed credential fails the build.
+  - script: npm run secrets
+    displayName: "Secret scan (secretlint)"
+
+  - script: npm run typecheck
+    displayName: "Typecheck (frontend + backend)"
+
+  - script: npm run security
+    displayName: "Dependency audit (high+)"
+
+  # Throwaway MySQL so the backend suite RUNS instead of silently skipping.
+  - script: |
+      docker run -d --name ci-mysql -e MYSQL_ROOT_PASSWORD=colab -e MYSQL_DATABASE=colab_test \
+        -p 3307:3306 mysql:8 --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci
+      for i in $(seq 1 40); do
+        docker exec ci-mysql mysqladmin ping -h127.0.0.1 -pcolab --silent && exit 0
+        sleep 3
+      done
+      echo "MySQL did not become ready" && exit 1
+    displayName: "Start MySQL for tests"
+
+  - script: npm run test:unit
+    displayName: "Backend unit tests"
+
+  - script: npm run build
+    displayName: "Next.js build"
+
+  - script: docker rm -f ci-mysql
+    displayName: "Stop MySQL"
+    condition: always()

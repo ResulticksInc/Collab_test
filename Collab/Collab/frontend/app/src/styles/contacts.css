@@ -1,0 +1,178 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   CONTACTS — one row per person: avatar + presence dot, name over email, and
+   right-aligned text actions. Not-yet-connected rows show a single brand
+   "Connect" CTA; connected rows show Message (outlined) · Call (soft) ·
+   Add to group (text link).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#vcontacts .ct-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--sp-3) var(--sp-3);
+}
+
+#vcontacts .ct-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 72px;
+  padding: var(--sp-3) var(--sp-2);
+  border-bottom: 1px solid var(--line-subtle);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+#vcontacts .ct-row:hover {
+  background: var(--surface-hover);
+}
+
+#vcontacts .ct-av {
+  position: relative;
+  flex-shrink: 0;
+}
+
+#vcontacts .ct-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--card);
+}
+
+#vcontacts .ct-info {
+  flex: 1;
+  min-width: 0;
+}
+
+#vcontacts .ct-name {
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-primary);
+  line-height: var(--lh-snug);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#vcontacts .ct-det {
+  margin-top: 2px;
+  font-size: var(--fs-md);
+  color: var(--fg-muted);
+  line-height: var(--lh-snug);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#vcontacts .ct-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+#vcontacts .ct-state {
+  font-size: var(--fs-sm);
+  color: var(--fg-muted);
+  margin-right: var(--sp-1);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+#vcontacts .ct-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 var(--sp-3);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: none;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    filter var(--dur-fast) var(--ease-out);
+}
+
+#vcontacts .ct-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Connect / Accept — brand gradient, same as every other primary CTA. */
+#vcontacts .ct-btn--primary {
+  min-width: 76px;
+  justify-content: center;
+  background: var(--brand-cta-gradient);
+  color: #fff;
+}
+
+#vcontacts .ct-btn--primary:hover {
+  filter: brightness(1.12);
+}
+
+/* Message — white with a hairline border and brand text/icon. */
+#vcontacts .ct-btn--outline {
+  background: var(--card);
+  border-color: var(--line-strong);
+  color: var(--brand-text);
+}
+
+#vcontacts .ct-btn--outline:hover {
+  border-color: var(--brand-500);
+}
+
+/* Call / Decline / Cancel — soft grey fill, neutral text. */
+#vcontacts .ct-btn--soft {
+  background: var(--g100);
+  color: var(--fg-primary);
+}
+
+#vcontacts .ct-btn--soft:hover {
+  background: var(--g200);
+}
+
+/* Add to group — plain brand text link. */
+#vcontacts .ct-btn--link {
+  padding: 0 var(--sp-2);
+  color: var(--brand-name);
+}
+
+#vcontacts .ct-btn--link:hover {
+  text-decoration: underline;
+}
+
+/* Legacy square primary icon button (brand gradient) — kept for any other
+   screen that still uses the Calls-log button anatomy. */
+.call-back-btn.call-back-btn--primary {
+  background: var(--brand-cta-gradient);
+  border-color: transparent;
+  color: #fff;
+}
+
+.call-back-btn.call-back-btn--primary:hover {
+  background: var(--brand-cta-gradient);
+  border-color: transparent;
+  filter: brightness(1.08);
+}
+
+@media (max-width: 640px) {
+  #vcontacts .ct-list {
+    padding: 0 var(--sp-2) var(--sp-2);
+  }
+
+  #vcontacts .ct-acts {
+    gap: var(--sp-1);
+  }
+
+  #vcontacts .ct-btn--link {
+    display: none;
+  }
+}

@@ -1,0 +1,301 @@
+[
+  {"t":"h","level":1,"text":"10. Security Architecture"},
+
+  {"t":"p","text":"This section is the authoritative reference for how CoLab authenticates users, protects sessions, authorizes access to resources, secures data in transit, and (optionally) end-to-end encrypts direct-message content. It is written to be honest about what is *shipped today* versus what is *planned*. Where the wider recon notes disagreed with the code, this section corrects them against the real source files. The two most important corrections are stated up front so no downstream reader inherits a wrong assumption."},
+
+  {"t":"callout","kind":"warning","title":"Two grounding corrections (verified against source)","text":"(1) The session **JWT default TTL is `7d`**, not ~1 hour. The ~1h/3600s value is the *separate* LiveKit room token (`config.livekit.tokenTtlSec`), not the API session token. (2) There is **no refresh-token or silent remint flow** anywhere in the codebase — a single long-lived access JWT is issued at login/signup and the user re-authenticates when it expires. Do not document a refresh mechanism that does not exist."},
+
+  {"t":"p","text":"Plain-language summary: when you log in, the server checks your password, then hands your browser a signed pass (a JWT) that is valid for 7 days. Your browser stores that pass in `localStorage` and presents it on every request. The server trusts the signature on the pass, so it does not need to keep a server-side session table — but it *does* keep a small \"revoked passes\" list (the token blocklist) so that logging out actually invalidates the pass before it naturally expires. Engineering language and the exact data flow follow below."},
+
+  {"t":"p","text":"Authoritative source files referenced throughout this section (all paths absolute):"},
+  {"t":"ul","items":[
+    "`backend/app/src/services/authService.ts` — password hashing (scrypt), JWT mint/verify, login/signup logic.",
+    "`backend/app/src/middleware/auth.ts` — HTTP bearer-token middleware (verify + blocklist check).",
+    "`backend/app/src/services/credentialPolicy.ts` — server-side authority for email + password validation at signup.",
+    "`frontend/app/src/lib/passwordPolicy.ts` — non-authoritative client mirror for live UX feedback.",
+    "`backend/app/src/services/tokenBlocklist.ts` — logout revocation list (Redis with in-memory fallback).",
+    "`backend/app/src/middleware/rateLimit.ts` — in-memory fixed-window limiter.",
+    "`backend/app/src/app.ts` — security headers, CORS, rate-limit wiring, central error handler.",
+    "`backend/app/src/index.ts` — production secret guard (`assertProductionSecrets`) + LiveKit/DB boot guards.",
+    "`backend/app/src/realtime/socket.ts` — Socket.IO handshake auth + per-user send throttle.",
+    "`backend/app/src/services/meetingService.ts` — host / co-host RBAC gates.",
+    "`frontend/app/src/lib/e2ee/manager.ts` + `frontend/app/src/lib/e2ee/safety.ts` — the actual E2EE implementation.",
+    "`config/src/index.ts` — all security-relevant configuration defaults."
+  ]},
+
+  {"t":"diagram","kind":"layered","title":"Security layers, outermost to innermost","layers":[
+    {"label":"Transport / Edge","items":["TLS at LB or Caddy","Security headers","CORS allow-list"]},
+    {"label":"Rate Limiting","items":["Auth limiter 30/15min","Global API 600/min","Socket send bucket 20"]},
+    {"label":"Authentication","items":["scrypt password hash","HS256 JWT (7d)","Token blocklist"]},
+    {"label":"Authorization","items":["Resource-membership gates","Host / co-host controls","LiveKit token grants"]},
+    {"label":"Content (optional)","items":["DM E2EE (ECIES, off by default)"]}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"10.1 Authentication"},
+
+  {"t":"h","level":3,"text":"10.1.1 Password storage (scrypt)"},
+  {"t":"p","text":"Passwords are hashed with Node's built-in `scrypt` (no external dependency such as bcrypt or argon2). The implementation lives in `authService.ts`. A 16-byte random salt is generated per password, the derived key is 64 bytes, and the stored value is the literal string `saltHex:hashHex`. Verification recomputes the hash with the *stored* salt and compares using `crypto.timingSafeEqual`, which is a constant-time comparison that does not leak how many leading bytes matched."},
+  {"t":"code","lines":[
+    "function hashPassword(pw) {",
+    "  const salt = randomBytes(16);",
+    "  return salt.toString('hex') + ':' + scryptSync(pw, salt, 64).toString('hex');",
+    "}",
+    "// verify recomputes with the stored salt and timingSafeEqual-compares"
+  ]},
+  {"t":"p","text":"**Engineering note on the verify path:** `verifyPassword` is defensive. It returns `false` if the stored value is missing or has no `:` separator, and it wraps `scryptSync` in a try/catch so a malformed stored hash cannot throw an unhandled error into the login route. The comparison also guards on length equality before calling `timingSafeEqual` (which throws on length mismatch). Passwords are never logged and never returned in any API envelope — `pubUser()` serialization strips the hash."},
+  {"t":"callout","kind":"note","title":"scrypt cost factors","text":"The code uses `scryptSync` defaults (N=16384, r=8, p=1). This is a reasonable interactive cost. If you later raise the cost factor, you must store the parameters alongside the hash (the current `saltHex:hashHex` format does not encode N/r/p), or migrate by re-hashing on next successful login. Flag this before any cost change — silently changing the default would make every existing hash unverifiable."},
+
+  {"t":"h","level":3,"text":"10.1.2 Signup credential policy (server-side authority)"},
+  {"t":"p","text":"All signup validation is enforced server-side in `credentialPolicy.ts` and is called *before* the account row is created (`signup()` in `authService.ts` calls `validateEmail` then `validatePassword` and throws an HTTP 400 on the first issue). The client cannot bypass this — the frontend mirror at `frontend/app/src/lib/passwordPolicy.ts` exists purely for live UX (strength meter, inline hints) and carries no authority."},
+  {"t":"p","text":"**Email validation (`validateEmail`):** normalizes to trimmed lowercase; requires a strict-but-simple shape (`EMAIL_RE`, deliberately not full RFC 5322); rejects length > 254; rejects doubled dots, leading dots, and trailing dots in the domain; and rejects a static blocklist of roughly 70 disposable/throwaway inbox providers (mailinator, guerrillamail, 10minutemail, yopmail, etc.). The blocklist is extendable at deploy time via the `DISPOSABLE_EMAIL_DOMAINS` environment variable (comma-separated) with no code change."},
+  {"t":"p","text":"**Password validation (`validatePassword`):** the constant `PASSWORD_MIN = 9`. Rules, returned as the *first* blocking issue:"},
+  {"t":"ul","items":[
+    "Length between 9 and 200 characters.",
+    "Must contain at least one lowercase letter, one uppercase letter, one digit, and one special (non-alphanumeric) character.",
+    "Rejects a set of ~60 common / trivially-guessable passwords. Critically, it tests **both** the raw lowercased password **and** its alphanumeric core, so decorated variants like `Password1234!` or `P@ssw0rd!` cannot sneak past via a trailing symbol or character substitution."
+  ]},
+  {"t":"callout","kind":"note","title":"Intentional non-block: identity-in-password","text":"Containing the email local-part or a name token is a **soft tip** in the strength meter, NOT a hard block. This is deliberate and documented in the source: an otherwise-strong password like `Mark@123456789` was being rejected purely for containing `mark`, which confused users. Do not \"fix\" this into a hard block without a product decision."},
+
+  {"t":"diagram","kind":"pipeline","title":"Signup request lifecycle","steps":[
+    {"label":"POST /api/auth/signup","detail":"Body {email, name, password}; auth rate limiter applies (30/15min/IP)."},
+    {"label":"normalizeEmail + validateEmail","detail":"Shape, length, doubled-dot, disposable-domain checks. 400 on failure."},
+    {"label":"validatePassword","detail":"Length, composition, common-password core check. 400 on failure."},
+    {"label":"Claim-or-create","detail":"If an invited stub exists with no passwordHash, claim it; if already registered, 409."},
+    {"label":"hashPassword + upsert","detail":"scrypt hash stored; audit event auth.signup recorded; JWT minted and returned."}
+  ]},
+
+  {"t":"h","level":3,"text":"10.1.3 Login and account endpoints"},
+  {"t":"p","text":"The auth router (`routes/auth.ts`) exposes five endpoints. Login deliberately returns the **same** message — `Invalid email or password.` — for both an unknown email and a wrong password, so the endpoint does not reveal whether an email is registered (a standard anti-enumeration measure). Every auth action records an append-only audit event via `auditService.record`."},
+  {"t":"table","headers":["Endpoint","Auth","Purpose","Audit action"],"widths":[2600,1200,3400,1800],"rows":[
+    ["POST /api/auth/signup","none","Create or claim an account; enforce credential policy","auth.signup"],
+    ["POST /api/auth/login","none","Verify credentials, mint JWT","auth.login"],
+    ["GET /api/auth/me","bearer","Return the current serialized user","—"],
+    ["POST /api/auth/logout","bearer","Add current token to blocklist (revoke)","auth.logout"],
+    ["DELETE /api/auth/account","bearer","Soft + anonymized account delete, then revoke token","account.delete"]
+  ]},
+  {"t":"callout","kind":"note","title":"Account deletion is soft, not hard","text":"`DELETE /account` soft-deletes and anonymizes the user (freeing the email for re-registration) and cascades owned data, but **keeps authored messages** attached to an anonymized \"Deleted user\" shell — a true row delete is impossible because `messages.sender_id` is an FK with RESTRICT semantics. The current session token is then blocklisted. There is no hard-delete path anywhere."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"10.2 JWT, Sessions, and Revocation"},
+
+  {"t":"h","level":3,"text":"10.2.1 Token shape and signing"},
+  {"t":"p","text":"Sessions are stateless JWTs minted by `tokenFor()` in `authService.ts` using `jsonwebtoken`. The signing algorithm is the library default **HS256** — a symmetric HMAC-SHA-256 — and the algorithm is **not explicitly pinned** at sign or verify time. The payload is minimal: `{ sub: userId, name }`. The secret is `config.auth.jwtSecret` (env `AUTH_JWT_SECRET`, dev default `dev-only-change-me`). The expiry is `config.auth.tokenTtl` (env `AUTH_TOKEN_TTL`), whose default is **`7d`** (confirmed in `config/src/index.ts`)."},
+  {"t":"code","lines":[
+    "jwt.sign({ sub: user.id, name: user.name }, config.auth.jwtSecret,",
+    "         { expiresIn: config.auth.tokenTtl }); // tokenTtl default '7d'"
+  ]},
+  {"t":"callout","kind":"risk","title":"Algorithm not pinned on verify","text":"`authService.verify` calls `jwt.verify(token, secret)` without an `algorithms` allow-list. For an HMAC secret this is low risk in practice (an attacker cannot forge HS256 without the secret, and there is no asymmetric public key in play that would enable an `alg` confusion downgrade). Still, the hardening best practice is to pass `{ algorithms: ['HS256'] }` to both `sign` and `verify`. Recommended, not yet done — flag for the next security pass."},
+
+  {"t":"h","level":3,"text":"10.2.2 Where the token lives, and the 7-day TTL trade-off"},
+  {"t":"p","text":"The browser stores the JWT in `localStorage` under key `clb_token` (per the frontend bootstrap in `CoLabV1.tsx`) and presents it as `Authorization: Bearer <jwt>` on every REST call and in the Socket.IO handshake `auth.token`. Because the token is long-lived (7 days) and there is no refresh flow, the security posture is: convenience-first (users stay logged in across a work week) at the cost of a longer window of validity for a stolen token. The mitigations for that window are the **logout blocklist** (Section 10.2.4) and the client-side **401 auto-logout** (Section 10.2.5)."},
+  {"t":"callout","kind":"warning","title":"localStorage vs XSS","text":"A token in `localStorage` is readable by any script running on the page, so an XSS vulnerability would expose the session token. CoLab's defenses against that are: DOMPurify sanitization of all rendered message HTML (`lib/sanitizeHtml.ts`), `X-Content-Type-Options: nosniff`, and `X-Frame-Options: DENY`. There is no `HttpOnly` cookie session as an alternative, because the same-origin proxy + bearer model was chosen for cross-host portability. Treat the message-HTML sanitization path as security-critical: any regression there is effectively a session-theft vector."},
+
+  {"t":"h","level":3,"text":"10.2.3 Verification on every request"},
+  {"t":"p","text":"The HTTP auth middleware (`middleware/auth.ts`) is the single chokepoint for REST authentication. It is applied per-router (`router.use(authMiddleware)`) on nearly every router, and per-route on the auth router. The flow is: extract the bearer token; `jwt.verify` it; check it is not in the blocklist; set `req.user = { userId: p.sub, name: p.name }`. Any failure returns `401 UNAUTHORIZED`."},
+  {"t":"code","lines":[
+    "const p = authService.verify(token);            // 401 if signature/exp invalid",
+    "if (await isBlocked(token))                      // 401 if revoked at logout",
+    "  return res.status(401).json(fail('UNAUTHORIZED','Token revoked'));",
+    "req.user = { userId: p.sub, name: p.name };"
+  ]},
+
+  {"t":"h","level":3,"text":"10.2.4 The logout token blocklist (revocation)"},
+  {"t":"p","text":"Because JWTs are stateless, a plain logout would still leave the token valid until natural expiry. CoLab closes that gap with `tokenBlocklist.ts`. On logout (and on account deletion) the route verifies the token to read its `exp`, then calls `blockToken(token, exp)`. The blocklist is keyed by the token's **signature segment** (`token.split('.')[2]`), not the whole token — the signature is unique per token and avoids storing the full credential."},
+  {"t":"p","text":"**Storage with graceful degradation:** when `REDIS_URL` is set, the entry is stored in Redis under prefix `jwt:block:` with `EX` set to the token's remaining TTL (so it auto-expires exactly when the token would). When Redis is absent, it falls back to an in-memory `Map` swept every 60 seconds. The Redis client is hardened with `reconnectStrategy: false` plus a 3.5s connect race, because `isBlocked()` runs on *every authenticated request* — a hanging Redis connect would otherwise freeze the entire API. If Redis is unreachable, the code degrades to the in-memory store rather than blocking."},
+  {"t":"diagram","kind":"flow","title":"Logout revocation path","nodes":[
+    {"label":"POST /logout","sub":"bearer token"},
+    {"label":"verify → read exp"},
+    {"label":"blockToken(sig, exp)","sub":"Redis EX or memory"},
+    {"label":"isBlocked() = true","sub":"on next request"}
+  ]},
+  {"t":"callout","kind":"risk","title":"Two honest limits of the blocklist","text":"(1) **Per-instance memory fallback is not shared.** If you run multiple backend instances *without* Redis, a logout recorded on instance A is invisible to instance B until the token naturally expires. For multi-instance deployments, Redis (`REDIS_URL`) is effectively required for correct revocation. (2) **The Socket.IO handshake does NOT re-check the blocklist** — only the HTTP middleware does (see 10.2.6). A socket opened before logout, or re-opened with a blocklisted-but-unexpired token, will still authenticate at the realtime layer."},
+
+  {"t":"h","level":3,"text":"10.2.5 Client-side 401 auto-logout"},
+  {"t":"p","text":"The frontend API layer (`lib/api.ts`) treats a single 401 as *possibly transient* (a backend restart, a redeploy, a brief blip) rather than immediately tearing down the session — the old behavior of logging out on any 401 surfaced as \"unexpected logouts\" during calls on flaky networks. Instead, on a 401 to any endpoint *other than* `/api/auth/me`, it re-validates by calling `/api/auth/me`; only a 401 *there* is conclusive and dispatches the `colab:unauthorized` window event, which `CoLabV1` handles by clearing the token and returning to the login screen. A 401 directly on `/auth/me` is acted on immediately (and avoids a loop)."},
+
+  {"t":"h","level":3,"text":"10.2.6 Socket authentication"},
+  {"t":"p","text":"The Socket.IO server (`realtime/socket.ts`) authenticates in `io.use(...)` middleware: it `await`s the Redis-adapter readiness gate, then `verify`s `socket.handshake.auth.token`. On success it sets `socket.userId = p.sub` and the connection handler joins `user:<uid>`; on failure it rejects the handshake with `Error('unauthorized')`. As noted above, this path verifies the JWT signature/expiry but **does not consult the token blocklist** — a deliberate simplification to keep the handshake fast, and an accepted gap to document."},
+
+  {"t":"table","headers":["Concept","Value / mechanism","Source"],"widths":[2600,4000,2400],"rows":[
+    ["Signing algorithm","HS256 (HMAC-SHA-256), not pinned on verify","authService.ts"],
+    ["Token payload","{ sub: userId, name }","authService.ts"],
+    ["Session TTL (default)","**7d** (env AUTH_TOKEN_TTL)","config/src/index.ts"],
+    ["LiveKit room token TTL","3600s / 1h (separate token)","config/src/index.ts"],
+    ["Refresh / remint","**None** — re-auth on expiry","(absent by design)"],
+    ["Revocation","Blocklist keyed by signature segment","tokenBlocklist.ts"],
+    ["Blocklist storage","Redis (EX) or in-memory Map fallback","tokenBlocklist.ts"],
+    ["Client storage","localStorage key clb_token","CoLabV1.tsx"]
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"10.3 Authorization, RBAC, and Host Controls"},
+
+  {"t":"h","level":3,"text":"10.3.1 Roles are coarse; authorization is membership-based"},
+  {"t":"p","text":"CoLab has a coarse global `role` field on the user row (default `member`; `admin` is the other value seen in `serialize.ts` and the signup upsert). However, **almost all authorization is resource-membership based, not global-role based.** Whether you can read a conversation, send a message, mint a call token, or fetch a file is decided by your membership of the relevant resource, not by a global role. This is the correct model for a collaboration product: an `admin` flag does not grant access to other people's private DMs."},
+  {"t":"ul","items":[
+    "**Messaging:** `messageService` calls `assertMember`, which throws `403` if the requester is not a member of the conversation; DM sends additionally enforce block lists.",
+    "**E2EE key endpoints:** `e2eeService.putConversationKeys` / `myConversationKeys` throw `403` if the caller is not a conversation member.",
+    "**Files:** `fileService.permissionFor()` resolves an effective permission (rank owner > edit > comment > view) from uploader ownership, direct file shares, active share-link permission, or membership of the conversation the file is attached to; no permission yields a `404` (not a `403`, to avoid confirming the file exists).",
+    "**Call/meeting tokens:** the `/api/calls/token` route resolves the room from `callId` / `conversationId` / `meetingId` and gates each on the corresponding membership or meeting-entry check (see 10.3.3)."
+  ]},
+
+  {"t":"h","level":3,"text":"10.3.2 Meeting host and co-host controls"},
+  {"t":"p","text":"Meetings have a two-tier privilege model in `meetingService.ts`. The **host** is `meeting.createdBy`. The second tier is a per-attendee role `co-host`, read via `db.meetings.getAttendeeRole`. Host *or* co-host may admit/deny lobby entries, admit-all, lock the meeting, eject and mute participants, and list the lobby — each gated with an explicit `403 'Only host or co-host can ...'`. Promotion and demotion of co-hosts is **host-only** (`m.createdBy === userId`), with `403 'Only the host can promote/demote co-hosts.'`"},
+  {"t":"table","headers":["Action","Allowed by","Failure"],"widths":[3400,3200,2400],"rows":[
+    ["Admit / deny / admit-all (lobby)","host or co-host","403"],
+    ["Lock meeting","host or co-host","403"],
+    ["Eject / mute participant, mute-all","host or co-host","403"],
+    ["List lobby","host or co-host","403"],
+    ["Promote / demote co-host","host only","403"],
+    ["Eject persists across re-mint","meeting_ejected table consulted first","403 'removed'"]
+  ]},
+  {"t":"callout","kind":"note","title":"Eject survives token re-mint","text":"Host controls are enforced at the service layer, not trusted from the client. When a host ejects a participant, the `meeting_ejected` table is consulted *first* on every `enterRoom` — so an ejected user cannot simply re-mint a fresh LiveKit token and walk back in; `enterRoom` throws `403` ('removed'). The same gate also enforces lock and lobby states ('locked', 'not admitted yet'). The meeting UUID grants *eligibility to ask*, never unconditional entry."},
+
+  {"t":"h","level":3,"text":"10.3.3 LiveKit room tokens are minted server-side"},
+  {"t":"p","text":"Media access is never client-trusted. The browser cannot join an SFU room on its own — it must obtain a signed LiveKit `AccessToken` from the backend (`livekitService.roomToken`), which is minted with the LiveKit API secret and gated by the membership/entry checks above. The token grant is scoped (`roomJoin`, `canPublish`, `canSubscribe`, `canPublishData`) and the identity is `<userId>__<randomUUID>` so an honest reload does not trip `DUPLICATE_IDENTITY`. Host-control operations resolve the live `userId__<uuid>` identity by prefix, so a host acts on a *user*, not a transient connection. The LiveKit token TTL is 1 hour (`tokenTtlSec` = 3600), entirely separate from the 7-day session JWT."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"10.4 Transport Security, Headers, Rate Limiting, and the Secret Guard"},
+
+  {"t":"h","level":3,"text":"10.4.1 Encryption in transit (TLS)"},
+  {"t":"p","text":"The API and frontend do not terminate TLS themselves in the common deployment; TLS is terminated **upstream** — either by the corporate load balancer on :443 (the nginx path) or by Caddy (the production-compose path). nginx honors `X-Forwarded-Proto` (defaulting to `https`) and the backend derives browser-facing `wss://` URLs from the forwarded origin. This matters for calls specifically: browsers block `getUserMedia` and secure WebSocket upgrades outside a secure context, so **a TLS front is mandatory for calls/meetings to work at all** — a plain-HTTP bare-IP deployment will fail media with an \"insecure context\" symptom even though the app HTML loads."},
+  {"t":"callout","kind":"warning","title":"Internal hops are plain HTTP","text":"TLS protects the client-to-edge hop. Internal hops — backend to MySQL, backend to MinIO (`http://minio:9000`), nginx to backend/LiveKit — are plain HTTP/TCP inside the trusted Docker/corporate network. This is acceptable on the single-tenant firewalled network CoLab targets, but it means there is no defense-in-depth encryption between services. Do not move any service outside the trusted network boundary without adding TLS to that hop."},
+
+  {"t":"h","level":3,"text":"10.4.2 Security headers"},
+  {"t":"p","text":"`app.ts` sets a baseline of high-value headers on every API response via an inline middleware, and disables the `X-Powered-By` banner. There is intentionally **no Content-Security-Policy on the API** — the API serves JSON only; the app HTML (where a CSP would matter) is served by Next.js, not Express."},
+  {"t":"table","headers":["Header","Value","When"],"widths":[3200,4000,1800],"rows":[
+    ["X-Content-Type-Options","nosniff","always"],
+    ["X-Frame-Options","DENY","always"],
+    ["Referrer-Policy","no-referrer","always"],
+    ["X-DNS-Prefetch-Control","off","always"],
+    ["Permissions-Policy","geolocation=(), payment=(), usb=()","always"],
+    ["Strict-Transport-Security","max-age=31536000; includeSubDomains","production only"],
+    ["X-Powered-By","(removed)","always"]
+  ]},
+  {"t":"p","text":"CORS is applied with `cors({ origin: corsOrigin(config.backend.corsOrigins), credentials: true })`, so only configured origins (`CORS_ORIGINS`) may make credentialed cross-origin calls. The JSON body limit is `5mb` (raw-body upload routes such as file upload and LiveKit webhook use their own larger raw parsers ahead of the JSON parser)."},
+
+  {"t":"h","level":3,"text":"10.4.3 Rate limiting"},
+  {"t":"p","text":"Rate limiting (`middleware/rateLimit.ts`) is an in-memory fixed-window limiter with no external dependency, keyed by client IP (first hop of `X-Forwarded-For`, which is trustworthy because `trust proxy` is enabled). It sets `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After`, and returns `429 RATE_LIMITED` when exceeded. There are three tiers plus a realtime tier:"},
+  {"t":"table","headers":["Limiter","Scope","Limit","Purpose"],"widths":[2400,2600,2200,1800],"rows":[
+    ["authLimiter","/auth/login + /auth/signup","30 / 15 min / IP","Brake brute-force"],
+    ["apiLimiter","whole /api prefix","600 / 60s / IP","Stop retry-storm DB saturation"],
+    ["uploadLimiter","file upload","60 / min / IP","Cap upload abuse"],
+    ["link-preview limiter","link preview","60 / min","Cap SSRF-fetch abuse"],
+    ["socket send bucket","MESSAGE_SEND per user","cap 20, refill 5/s","Clamp message floods"]
+  ]},
+  {"t":"p","text":"The Socket.IO send throttle is a per-*user* token bucket (capacity 20 burst, refill 5/sec) keyed by `userId` and shared across a user's tabs. A human sending fast peaks at ~1-2 msg/s, so it never rejects legitimate use; on rejection it emits a sender-only `message:rate_limited` advisory and drops the send (the client renders on the `MESSAGE_NEW` echo, so a dropped send simply produces no echo)."},
+  {"t":"callout","kind":"risk","title":"Per-instance limiter caveat","text":"All four IP-based limiters and the socket bucket are **in-memory and per-instance**. Across multiple backend instances behind a load balancer, each instance counts independently, so the effective ceiling is `N × limit`. For strict global limits at multi-instance scale, front the API with an LB/WAF rate limiter or swap in a Redis-backed limiter. The code comments explicitly acknowledge this and frame the limiter as closing the 'zero rate limiting' gap, not as a distributed quota system."},
+
+  {"t":"h","level":3,"text":"10.4.4 Production secret guard"},
+  {"t":"p","text":"`index.ts` refuses to boot a production server with forgeable secrets. `assertProductionSecrets()` runs only when `NODE_ENV === 'production'` and exits the process (FATAL) if `AUTH_JWT_SECRET` is still `dev-only-change-me` or is shorter than 32 characters, or if `LIVEKIT_API_SECRET` is still its bundled default. Two sibling guards run alongside it: `assertLiveKitUrl()` (refuses a localhost/127.0.0.1 `LIVEKIT_WS_URL` in production, which would make the browser try to connect to itself) and `assertDbProfile()` (refuses a `DB_PROFILE` whose `DATABASE_URL_<PROFILE>` is unset, preventing a silent fallback to the wrong database)."},
+  {"t":"callout","kind":"note","title":"DB/MinIO creds are intentionally not gated","text":"The secret guard deliberately does NOT block default MySQL or MinIO credentials. The source comment explains why: CoLab runs on a private, firewalled, single-tenant corporate network where the bundled datastore creds are acceptable and never surface in the product UI. The JWT and LiveKit secrets — which *can* forge sessions or media tokens — are the ones that are gated. This is a conscious trade-off for this deployment context, not an oversight."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"10.5 End-to-End Encryption (DM messaging)"},
+  {"t":"p","text":"This subsection is written to a strict honesty standard: it describes what is *shipped*, names exactly what is *not* implemented, and clearly separates *future* work. Do not let any reader come away believing the Signal Protocol, X3DH, a double ratchet, or media (SRTP-key) encryption are implemented. They are not."},
+
+  {"t":"h","level":3,"text":"10.5.1 Current Status"},
+  {"t":"ul","items":[
+    "**Scope:** E2EE exists for **direct messages and self-conversations only.** Groups, channels, calls, and meetings are NOT end-to-end encrypted — they are plaintext-to-the-server exactly as before.",
+    "**Default:** **OFF on both sides.** The frontend gate is `NEXT_PUBLIC_E2EE_ENABLED === 'true'`; the backend gate is `E2EE_ENABLED` (env, default `false`). When off, no encryption path runs and the product is byte-for-byte unchanged.",
+    "**Server posture when on:** **server-blind.** The server stores only public keys and opaque ciphertext envelopes; a database/Redis/storage dump or an administrator cannot read DM content.",
+    "**Implementation:** custom **native Web Crypto ECIES**, not the Signal library. The file `lib/e2ee/SignalStore.ts` is a naming artifact, not a dependency on Signal."
+  ]},
+
+  {"t":"h","level":3,"text":"10.5.2 Completed Work (what actually ships)"},
+  {"t":"p","text":"The shipped scheme (`lib/e2ee/manager.ts`) is a per-recipient-device ECIES construction: **P-256 ECDH + HKDF-SHA-256 + AES-GCM-256**, all in the browser, with zero added server infrastructure beyond a public-key/ciphertext store."},
+  {"t":"ul","items":[
+    "**Device identity key:** a long-term P-256 ECDH keypair whose private key is a **non-extractable** `CryptoKey` held in IndexedDB (`SignalStore.ts`). It is never exportable by JavaScript, so even an XSS payload cannot exfiltrate it.",
+    {"text":"**Per-message envelope:** each message uses a **fresh ephemeral ECDH keypair per recipient device**; the ephemeral public key travels in the envelope and the ephemeral private key is discarded after deriving the AES key. One sealed envelope is produced per recipient device, plus one per the sender's *own other devices* (multi-device self-delivery).","items":[
+      "AES-GCM **AAD** binds `version | senderUser+device | recipientUser+device | conversationId | nonce`, so the server cannot splice, move, or replay an envelope into a different context.",
+      "Public-key import validates the raw uncompressed P-256 point (65 bytes, `0x04` prefix), which blocks invalid-curve attacks."
+    ]},
+    "**TOFU + fail-closed MITM defense:** peer identity keys are pinned on first sight (`storeTrustedIdentity`). If a pinned key later changes, the device is added to `changedIdentities` and the app **refuses to encrypt to it** pending re-verification.",
+    "**Fail-closed encryption:** `encryptForUser` throws rather than ever emitting plaintext for an E2EE conversation; if it would produce zero envelopes it errors ('Recipient is not set up for encryption yet').",
+    "**Downgrade protection on decrypt:** `decryptMessageList` rejects a message that claims to be encrypted but arrives without ciphertext, rendering it as `[Unencrypted message — rejected]` rather than trusting server-injected plaintext.",
+    "**Safety number is computed:** `lib/e2ee/safety.ts` `computeSafetyNumber` produces a deterministic, order-independent SHA-256 over the two sorted identity public keys, rendered as Signal-style grouped digit blocks for out-of-band comparison.",
+    "**File E2EE:** an attachment's AES file key is ECIES-wrapped in the message envelope; the blob is fetched and decrypted client-side (`lib/e2ee/media.ts`). Encrypted uploads carry an `x-colab-e2ee` header and the server stores already-encrypted ciphertext (server-blind for files too)."
+  ]},
+
+  {"t":"diagram","kind":"pipeline","title":"E2EE message seal (per recipient device)","steps":[
+    {"label":"Discover + pin peer keys","detail":"ensureSessionsForUser: TOFU pin; fail-closed on key change."},
+    {"label":"Ephemeral ECDH","detail":"Fresh P-256 keypair; ECDH with peer identity pub."},
+    {"label":"HKDF-SHA-256 → AES-GCM-256","detail":"Derive a one-shot AES key; salt = ephemeral pub bytes."},
+    {"label":"AES-GCM encrypt + AAD","detail":"AAD binds version/sender/recipient/conversation/nonce."},
+    {"label":"Envelope per device","detail":"Plus self-delivery to sender's own other devices."}
+  ]},
+
+  {"t":"h","level":3,"text":"10.5.3 Pending Work (built but not finished / not wired)"},
+  {"t":"ul","items":[
+    {"text":"**Safety-number verification UI.** The *computation* exists (`safety.ts`) but it is **not wired into any UI component** — a grep finds only the e2ee library referencing it. Until a verification screen is built, the MITM defense relies on TOFU pinning alone, with no user-facing way to compare safety numbers out of band.","items":[
+      "Business impact: a key-change is correctly fail-closed (sends are blocked), but the user has no in-product way to confirm and re-trust a legitimately rotated key."
+    ]},
+    "**Signed pre-key is null.** P-256 ECDH keys cannot ECDSA-sign, so `signedPreKey` is published as `null`; the v1 trust anchor is the identity key via TOFU, not a signed bundle.",
+    "**One-time prekeys are dormant.** 100 one-time prekeys are generated and published per device, but v1 ECIES uses per-message ephemerals and never consumes them. They exist only so a future X3DH/ratchet can adopt them without a migration.",
+    "**Group sender-key distribution is a no-op.** `distributeGroupSenderKey` is an intentional placeholder so dormant call sites stay valid; groups/channels remain plaintext in v1."
+  ]},
+
+  {"t":"h","level":3,"text":"10.5.4 Honest Limits"},
+  {"t":"callout","kind":"risk","title":"No forward secrecy yet","text":"Per-message ephemeral ECDH gives confidentiality against the server/DB/storage/admin, but NOT full forward secrecy. The recipient's *identity* private key is long-term, so theft of that device key would allow decryption of past captured envelopes addressed to it. Real forward secrecy needs a ratchet (Phase 2). This is documented in the `manager.ts` header and must not be overclaimed."},
+  {"t":"ul","items":[
+    "Calls and meetings media are **not** E2EE — they flow through the LiveKit SFU and are protected only by transport security (DTLS-SRTP on the media legs, TLS on signalling), not by any application-level end-to-end key.",
+    "This is **custom ECIES, not Signal**: no X3DH, no Double Ratchet, no sealed-sender are implemented today.",
+    "A history gap (a message sealed before this device existed) renders as `[Encrypted — not available on this device]` — expected behavior, not tampering. A genuine AES-GCM auth failure renders as `[Encrypted message — could not be verified]`."
+  ]},
+
+  {"t":"h","level":3,"text":"10.5.5 Future Work (planned, explicitly NOT shipped)"},
+  {"t":"p","text":"The following are roadmap items, clearly separated from the shipped ECIES scheme above. None of these exist in the codebase today; the existing structures (dormant one-time prekeys, the `SignalStore` naming, the no-op group distributor) are deliberate seams that let these be adopted later without a data migration."},
+  {"t":"table","headers":["Planned capability","What it adds","Status"],"widths":[2800,4200,2000],"rows":[
+    ["Signal Protocol adoption","Replace custom ECIES with a vetted protocol stack","Future / not started"],
+    ["X3DH key agreement","Asynchronous session setup using signed + one-time prekeys","Future (prekeys reserved)"],
+    ["Double Ratchet","Per-message key ratchet → true forward secrecy + post-compromise security","Future (the FS gap)"],
+    ["Group sender keys","E2EE for groups/channels","Future (no-op placeholder today)"],
+    ["Media (SRTP-key) E2EE","End-to-end key for call/meeting media over the SFU","Future / not started"],
+    ["Safety-number UI","User-facing out-of-band verification screen","Pending (compute exists)"]
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"10.6 Threat Model, Failure Scenarios, and Troubleshooting"},
+
+  {"t":"h","level":3,"text":"10.6.1 What each layer defends against"},
+  {"t":"table","headers":["Threat","Primary defense","Residual risk"],"widths":[2600,3400,3000],"rows":[
+    ["Password brute-force","authLimiter 30/15min + scrypt + timing-safe compare","Per-instance limiter at multi-instance scale"],
+    ["Credential stuffing / weak passwords","credentialPolicy (composition + common-password core)","No HIBP/breach-list check"],
+    ["Token forgery","HS256 + secret guard (≥32 chars in prod)","alg not pinned on verify"],
+    ["Stolen token (post-logout)","Blocklist keyed by signature, Redis/memory","Socket handshake skips blocklist; memory fallback not shared"],
+    ["XSS → token theft","DOMPurify sanitize + nosniff + frame-DENY","Token in localStorage is script-readable"],
+    ["IDOR on resources","Membership/permission gates, 403/404","—"],
+    ["Server reads DM content","Optional DM E2EE (server-blind)","Off by default; DM-only; no FS"],
+    ["Open relay / SSRF via TURN","coturn peer ACL + RFC1918 denies","Static TURN credential is committed"]
+  ]},
+
+  {"t":"h","level":3,"text":"10.6.2 Common failure scenarios and what to check"},
+  {"t":"ol","items":[
+    "**Backend refuses to boot in production with a FATAL secrets message.** `assertProductionSecrets` fired. Set a real `AUTH_JWT_SECRET` (≥32 random chars) and the real `LIVEKIT_API_SECRET`. This is intended fail-fast behavior, not a bug.",
+    "**Users get logged out unexpectedly during calls on flaky networks.** Should be mitigated by the `/auth/me` re-validation before `colab:unauthorized`. If it recurs, confirm the frontend is the current build and that transient 401s are not coming from a blocklist false-positive (e.g. a multi-instance deployment without shared Redis).",
+    "**Logout 'does not take' on one instance.** Multi-instance without `REDIS_URL`: the in-memory blocklist is per-instance. Set `REDIS_URL` so revocations are shared.",
+    "**Calls fail with media/insecure-context errors but the app loads.** The deployment is plain-HTTP on a bare IP. Put a TLS front (LB or Caddy) in place; browsers block `getUserMedia`/`wss` outside a secure context.",
+    "**429 RATE_LIMITED during legitimate heavy use.** Raise `API_RATE_MAX` / `API_RATE_WINDOW_MS`. The default 600/min is generous for normal bursty usage since realtime rides the socket, not REST.",
+    "**E2EE message shows '[Unencrypted message — rejected]' or '[…could not be verified]'.** The former is downgrade protection (a message claimed encrypted but had no ciphertext); the latter is an AES-GCM auth failure (tamper or wrong key). A '[…not available on this device]' is a benign history gap, not an attack."
+  ]},
+
+  {"t":"h","level":3,"text":"10.6.3 Recommended hardening backlog"},
+  {"t":"p","text":"None of these are shipped; they are the prioritized next steps a future maintainer should consider, each grounded in a gap named above."},
+  {"t":"ul","items":[
+    "Pin the JWT algorithm: pass `{ algorithms: ['HS256'] }` to `jwt.verify` (and `sign`).",
+    "Re-check the token blocklist in the Socket.IO handshake, not just HTTP middleware.",
+    "Require Redis for revocation correctness in any multi-instance deployment (or document single-instance as a hard constraint).",
+    "Wire the safety-number verification UI so users can confirm key changes out of band.",
+    "Rotate the static coturn TURN credential out of committed files (it currently lives in `infrastructure/coturn/turnserver.conf` and deploy docs).",
+    "Consider an `HttpOnly` cookie session as a future alternative to the `localStorage` bearer model to reduce XSS token-theft exposure."
+  ]},
+
+  {"t":"callout","kind":"tip","title":"One-line security summary","text":"CoLab is a stateless-JWT (HS256, 7-day) bearer-auth app with scrypt password hashing, an enterprise signup credential policy, membership-based authorization, host/co-host meeting RBAC, server-side LiveKit token minting, baseline security headers, in-memory rate limiting, a production secret guard, and an OPTIONAL, OFF-by-default, server-blind DM-only E2EE built on native Web Crypto ECIES — with forward secrecy, safety-number UI, group/media E2EE, and Signal/X3DH/ratchet all framed as explicit future work."}
+]

@@ -1,0 +1,137 @@
+appId: com.resulticks.collab.desktop
+productName: Collab
+copyright: © 2026 Resulticks
+
+# Pinned because `desktop` is an npm workspace member — electron is hoisted to
+# the repo-root node_modules, which electron-builder can't auto-detect from here.
+# Keep in sync with devDependencies.electron in package.json.
+electronVersion: 32.3.3
+
+directories:
+  output: dist
+  buildResources: build
+
+# The desktop client is a THIN SHELL that loads the hosted Collab web app
+# (see config.js / collab.config.json) — it does NOT bundle the Next.js frontend
+# and never runs a localhost server. Only the Electron sources + electron-store
+# ship inside the app; the frontend lives on the hosted server.
+# Only the Electron sources are listed. electron-builder AUTOMATICALLY bundles
+# production dependencies (electron-store) and EXCLUDES devDependencies
+# (sharp, png-to-ico, electron, electron-builder) — do NOT add node_modules/**/*
+# here or the dev-only native modules get packed (bloat + Windows file locks).
+files:
+  - main.js
+  - preload.js
+  - desktopNotif.js
+  - mediaPermissions.js
+  - remoteInput.js # Remote Control native-input bridge — required by main.js (loads @nut-tree-fork/nut-js lazily). MUST be listed or the app crashes on launch with "Cannot find module './remoteInput'".
+  - logger.js
+  - config.js
+  - updater.js
+  - recovery.html
+  - reconnect.html
+  - screenpicker.html
+  - screenpicker-preload.js
+  # Brand icons are normally buildResources (NOT bundled at runtime). The system
+  # TRAY loads one at runtime via path.join(__dirname,"build",…), so the PNG/ICO
+  # MUST ship inside the app. Without these the tray silently won't appear in a
+  # packaged build (loadTrayIcon() returns null → graceful no-tray fallback).
+  - build/icon.png
+  - build/icon.ico
+
+# No native runtime modules to recompile (electron-store is pure JS), so skip the
+# rebuild step — it's what triggered the EBUSY rename on node_modules/electron.
+npmRebuild: false
+
+# Default environment config shipped OUTSIDE the asar so IT/ops can repoint a
+# build (dev/staging/prod) by editing resources/collab.config.json — no rebuild.
+extraResources:
+  - from: collab.config.json
+    to: collab.config.json
+
+# Custom URL scheme registration: lets the INSTALLED app handle colab://… deep
+# links (notifications, browser links, the OS). On Windows/Linux this writes the
+# scheme handler at install time; on macOS it adds CFBundleURLTypes to Info.plist
+# (which feeds app.on("open-url")). The renderer parses + whitelists the path.
+protocols:
+  - name: Collab
+    schemes:
+      - colab
+
+# Neutral default name; per-target overrides below give the Windows installer
+# its "Collab Setup <version>.exe" name.
+artifactName: "${productName}-${version}.${ext}"
+
+# ── Windows (Windows 10/11) ──────────────────────────────────────────────────
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.ico
+  publisherName: Resulticks
+  # Code-signing is picked up automatically from CSC_LINK + CSC_KEY_PASSWORD
+  # env vars (or a installed cert) when present — no config change needed.
+
+nsis:
+  artifactName: "${productName} Setup ${version}.${ext}" # → "Collab Setup 1.0.0.exe"
+  oneClick: true
+  perMachine: false # per-user install → no admin prompt for standard employees
+  allowToChangeInstallationDirectory: false
+  allowElevation: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  menuCategory: false
+  shortcutName: Collab
+  uninstallDisplayName: Collab
+  deleteAppDataOnUninstall: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+
+portable:
+  artifactName: "${productName} Portable ${version}.${ext}"
+
+# ── macOS (Apple Silicon + Intel, universal) ─────────────────────────────────
+mac:
+  category: public.app-category.business
+  icon: build/icon.png # electron-builder derives .icns from this 1024px master
+  hardenedRuntime: true # required for notarization
+  gatekeeperAssess: false
+  entitlements: entitlements.mac.plist
+  entitlementsInherit: entitlements.mac.plist
+  # Notarization runs automatically when APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD
+  # + APPLE_TEAM_ID env vars are set; left false so unsigned dev builds succeed.
+  notarize: false
+  target:
+    - target: dmg
+      arch: [universal]
+    - target: zip
+      arch: [universal]
+    - target: pkg
+      arch: [universal]
+  # Runtime permission prompts (TCC) — shown the first time the hosted app calls
+  # getUserMedia / getDisplayMedia inside the desktop shell.
+  extendInfo:
+    NSCameraUsageDescription: Collab needs camera access for video calls and meetings.
+    NSMicrophoneUsageDescription: Collab needs microphone access for calls and meetings.
+    NSScreenCaptureUsageDescription: Collab needs screen access to share your screen in meetings.
+
+dmg:
+  artifactName: "${productName} ${version}.${ext}"
+
+# ── Linux (Ubuntu primary) ───────────────────────────────────────────────────
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  icon: build/icon.png
+  category: Office
+  synopsis: Secure team messaging, calls and meetings
+  description: Collab desktop client — messaging, calls and meetings against the hosted Collab environment.
+  desktop:
+    Name: Collab
+    StartupWMClass: Collab

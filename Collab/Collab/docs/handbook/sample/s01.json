@@ -1,0 +1,23 @@
+[
+  { "t": "h", "level": 1, "text": "1. Renderer Self-Test" },
+  { "t": "p", "text": "This paragraph exercises **bold**, *italic*, and `inline code` to confirm the inline markdown parser builds the correct runs. It should wrap and flow normally with comfortable line spacing." },
+  { "t": "h", "level": 2, "text": "1.1 Lists" },
+  { "t": "ul", "items": ["First bullet with **emphasis**", { "text": "Parent bullet", "items": ["Nested child one", "Nested child two with `code`"] }, "Third bullet"] },
+  { "t": "ol", "items": ["Step one", "Step two", "Step three"] },
+  { "t": "ol", "items": ["Restarts at one", "Two"] },
+  { "t": "h", "level": 3, "text": "1.1.1 Callouts" },
+  { "t": "callout", "kind": "note", "title": "Note", "text": "This is a note callout with a blue accent bar." },
+  { "t": "callout", "kind": "tip", "title": "Tip", "text": "This is a tip callout in green." },
+  { "t": "callout", "kind": "warning", "title": "Warning", "text": "This is a warning callout in amber." },
+  { "t": "callout", "kind": "risk", "title": "Production Risk", "text": "This is a risk callout in red." },
+  { "t": "h", "level": 2, "text": "1.2 Table" },
+  { "t": "table", "headers": ["Component", "Purpose", "Failure impact"], "rows": [["LiveKit", "SFU media routing", "All calls fail"], ["coturn", "TURN relay for strict NAT", "Off-network calls fail"], ["Redis", "Room state and huddle store", "Call state desync"]] },
+  { "t": "h", "level": 2, "text": "1.3 Code" },
+  { "t": "code", "lines": ["docker compose --env-file .env.live -f docker-compose.live.yml up -d", "docker logs colab-livekit | grep -i candidate"] },
+  { "t": "h", "level": 2, "text": "1.4 Diagrams" },
+  { "t": "diagram", "kind": "layered", "title": "Layered architecture", "layers": [{ "label": "Frontend", "items": ["Next.js", "React"] }, { "label": "Backend", "items": ["Express", "Socket.IO"] }, { "label": "Data", "items": ["MySQL", "Redis"] }, { "label": "Media", "items": ["LiveKit", "coturn"] }] },
+  { "t": "diagram", "kind": "flow", "title": "Media flow", "nodes": [{ "label": "Client A", "sub": "browser" }, { "label": "SFU", "sub": "LiveKit" }, { "label": "Client B", "sub": "browser" }] },
+  { "t": "diagram", "kind": "pipeline", "title": "Request lifecycle", "steps": [{ "label": "Request", "detail": "HTTP hits nginx" }, { "label": "Middleware", "detail": "auth, rate limit, validation" }, { "label": "Service", "detail": "business logic" }, { "label": "Response", "detail": "JSON returned" }] },
+  { "t": "diagram", "kind": "grid", "title": "Component map", "cols": 3, "boxes": [{ "label": "Auth", "sub": "JWT" }, { "label": "Messaging", "sub": "Socket.IO" }, { "label": "Calls", "sub": "LiveKit" }, { "label": "Files", "sub": "storage" }, { "label": "Tasks", "sub": "MySQL" }] },
+  { "t": "p", "text": "End of self-test." }
+]

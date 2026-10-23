@@ -1,0 +1,50 @@
+# --- dependencies & build output ---
+node_modules/
+.next/
+dist/
+build/
+out/
+coverage/
+.turbo/
+.cache/
+*.tsbuildinfo
+next-env.d.ts.bak
+
+# --- secrets (live only on the servers / in Jenkins credentials) ---
+.env
+.env.*
+!.env.example
+!.env.live.template
+keys/*
+!keys/README.md
+*.pem
+*.p8
+*.key
+fcm-service-account.json
+GoogleService-Info.plist
+cookies.txt
+
+# --- runtime data, backups, dumps ---
+data/files/
+*.sql
+*.sql.gz
+*.zip
+*.tar.gz
+*_bkp*
+*.bak
+
+# --- logs & test output ---
+logs/
+*.log
+npm-debug.log*
+playwright-report/
+test-results/
+
+# --- editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Jenkins-generated (never commit) ---
+docker-compose.jenkins.yml

@@ -1,0 +1,443 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   DASHBOARD — Figma "Collab Screens" › Collab Web › Dashboard
+   (116:2627 with the VIP quick-reply row, 116:3120 without).
+   Layout: centred 968px column (.d4-stack) → greeting → next-call card → VIP quick
+   replies → search. Legacy .dash2-* rules in v1.css are overridden here via
+   the #vdash anchor; new pieces use the d4-* prefix.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#vdash .dash2 {
+  /* 975px column + the side gutter (border-box), so desktop width is unchanged
+     while a narrow pane keeps the card off the rail and the window edge. */
+  max-width: calc(975px + 48px);
+  gap: 0;
+  padding: 32px 40px;
+}
+
+/* ── Greeting ─────────────────────────────────────────────────────────── */
+#vdash .dash2-head {
+  margin-bottom: 32px;
+}
+
+#vdash .dash2-greet {
+  font-size: 2rem;
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+/* A gradient isn't a valid `color` — paint it as the background and clip it
+   to the glyphs. `color` stays as a solid fallback. */
+#vdash .dash2-name {
+  background: var(--brand-cta-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: #7a24a7;
+}
+
+#vdash .dash2-sub {
+  font-size: 19x;
+  line-height: 1.6;
+  opacity: 1;
+  margin-top: 8px;
+  color: var(--fg-primary);
+}
+
+#vdash .dash2-sub strong {
+  font-weight: var(--fw-bold);
+}
+
+/* ── Next-call card (Frame 2147207593) ───────────────────────────────── */
+.d4-card {
+  width: 100%;
+  max-width: 968px;
+  box-sizing: border-box;
+  background: var(--dash-card-bg);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  box-shadow: var(--sh);
+  flex-shrink: 0;
+}
+
+.d4-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.d4-card-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--fg-primary);
+}
+
+.d4-card-when svg,
+.d4-card-video svg {
+  color: var(--brand-ink);
+  stroke-width: 1.5;
+}
+
+.d4-card-video {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.d4-card-video:hover {
+  background: var(--brand-soft);
+}
+
+.d4-card-mid {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.d4-card-title-wrap {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.d4-card-bar {
+  width: 4px;
+  border-radius: 4px;
+  background: var(--brand-ink);
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.d4-card-title {
+  font-size: 18px;
+  font-weight: var(--fw-bold);
+  line-height: 1.2;
+  color: var(--fg-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.d4-card-loc {
+  font-size: 14px;
+  margin-top: 6px;
+  color: var(--fg-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Attendee stack: 44px discs overlapping by 14px, white ring, "+N" bubble. */
+.d4-avstack {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.d4-avstack>* {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Later discs sit ON TOP of earlier ones (as in the design), so the "+N"
+   bubble is never hidden under a photo. */
+.d4-avstack> :nth-child(1) {
+  z-index: 1;
+}
+
+.d4-avstack> :nth-child(2) {
+  z-index: 2;
+}
+
+.d4-avstack> :nth-child(3) {
+  z-index: 3;
+}
+
+.d4-avstack>*+* {
+  margin-left: -14px;
+}
+
+.d4-avstack .ca {
+  box-shadow: 0 0 0 2px var(--dash-card-solid);
+}
+
+.d4-avmore {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--brand-soft-2);
+  color: var(--brand-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 21px;
+  box-shadow: 0 0 0 2px var(--dash-card-solid);
+}
+
+.d4-card-actions {
+  display: grid;
+  /* 449px time pill : 438px Join (Frame 2147207396 / 2147207397). */
+  grid-template-columns: 449fr 438fr;
+  gap: 12px;
+}
+
+.d4-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--dash-chip-bg);
+  color: var(--fg-primary);
+  font-size: 16px;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.d4-time svg {
+  flex-shrink: 0;
+}
+
+.d4-time--btn {
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+
+.d4-time--btn:hover {
+  filter: brightness(0.96);
+}
+
+.d4-join {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--brand-cta-gradient);
+  color: var(--fg-on-accent);
+  font-size: 14px;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+
+.d4-join:hover {
+  filter: brightness(1.08);
+}
+
+.d4-join:focus-visible,
+.d4-time--btn:focus-visible,
+.d4-chip:focus-visible,
+.d4-card-video:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ── VIP quick replies (Chat Suggestion) ─────────────────────────────── */
+.d4-vip {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.d4-vip-lead {
+  font-size: 16px;
+  margin: 0 0 10px 2px;
+  color: var(--fg-primary);
+}
+
+.d4-vip-lead strong {
+  font-weight: var(--fw-bold);
+}
+
+.d4-chips-wrap {
+  overflow: hidden;
+  /* Fade only the trailing edge: the row starts unscrolled, so the first chip
+     must read at full strength. */
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 96px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 96px), transparent);
+}
+
+.d4-chips {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px;
+}
+
+.d4-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.d4-chip {
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  border: 1.4px solid var(--brand-500);
+  color: var(--brand-text);
+  font-size: 15px;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.d4-chip:hover {
+  background: color-mix(in srgb, var(--brand-500) 18%, var(--dash-card-solid));
+}
+
+/* ── Search (Group 1171277283) ───────────────────────────────────────── */
+#vdash .dash2-search {
+  margin-top: 0;
+  height: 48px;
+  max-width: none;
+  border-radius: 12px;
+  background: var(--search-bg);
+  border: 1.8px solid var(--search-line);
+  padding: 0 12px 0 18px;
+  gap: 10px;
+  box-shadow: none;
+}
+
+#vdash .dash2-search:focus-within {
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500) 22%, transparent);
+}
+
+#vdash .d2s-ico {
+  width: 20px;
+  height: 20px;
+  stroke: var(--search-fg);
+  stroke-width: 1.8;
+}
+
+#vdash .dash2-search input {
+  font-size: 14px;
+}
+
+#vdash .dash2-search input::placeholder {
+  color: var(--search-fg);
+}
+
+#vdash .d2s-btn {
+  width: 35px;
+  height: 35px;
+  border-radius: 45px;
+  background: var(--brand-cta-gradient) !important;
+}
+
+#vdash .d2s-btn svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.2;
+  margin-top: 0px;
+}
+
+/* ── Stack: card → quick replies → search ─────────────────────────────
+   One 968px column (the card's Figma width) so all three share left/right
+   edges; the gap replaces the per-element margins they used to carry. */
+#vdash .d4-stack {
+  width: 100%;
+  max-width: 968px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#vdash .d4-stack>* {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
+/* ── Narrow / phone ──────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  #vdash .dash2 {
+    padding: 24px 16px;
+  }
+
+  #vdash .dash2-head {
+    margin-bottom: 28px;
+  }
+
+  #vdash .dash2-greet {
+    font-size: 28px;
+  }
+
+  #vdash .dash2-sub {
+    font-size: 16px;
+  }
+
+  .d4-card {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .d4-card-mid {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  /* Stacked, the title block would size to its unwrapped text and run past the
+     card edge — keep it card-wide and let title/sub-line wrap. */
+  .d4-card-title-wrap {
+    align-self: stretch;
+  }
+
+  .d4-card-title,
+  .d4-card-loc {
+    white-space: normal;
+  }
+
+  .d4-card-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .d4-time,
+  .d4-join {
+    height: 44px;
+    font-size: 15px;
+  }
+
+  #vdash .dash2-search {
+    height: 48px;
+  }
+
+  #vdash .dash2-search input {
+    font-size: 14px;
+  }
+}
+
+/* Vertically centre the hero block (greeting · next-call card · search) in
+   the pane — `safe` keeps it scrollable rather than clipped if the viewport
+   is ever too short. */
+#vdash .dash2 {
+  justify-content: safe center;
+  transform: translateY(-60px);
+
+}

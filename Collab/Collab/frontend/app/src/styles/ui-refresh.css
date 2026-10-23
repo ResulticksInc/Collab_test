@@ -1,0 +1,583 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   UI REFRESH — layered over v1.css / rail.css / chats.css (imported LAST).
+   Lavender app canvas · transparent rail + conversation list · floating white
+   chat card · white hover/active surfaces · stroke weights:
+     top/header icons 1.2 · left rail icons 1.8 · chat (message/composer) icons 1.2
+   Light theme only; dark theme keeps its existing surfaces.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body:not(.dark) #app {
+  --hdr-h: 64px;
+  /* background: linear-gradient(180deg, #f4eafc 0%, #efeef2 100%); */
+  background: linear-gradient(135deg, #f6f1ff 0%, #eeeeee 50%, #eeeeee 100%);
+}
+
+/* ── Left rail ─────────────────────────────────────────────────────────── */
+body:not(.dark) #rail {
+  background: transparent;
+  border-right: 1px solid rgba(17, 24, 39, 0.06);
+}
+#rail.collapsed { width: 52px; }
+#rail .rl { border-bottom: 0; }
+#rail.collapsed .rl { justify-content: center; padding: 0; }
+#rail .rl-logo { width: 30px; height: 30px; border-radius: 7px; }
+
+#rail .rb svg { stroke-width: 1.8; }
+
+/* Collapsed: compact centred icon tiles. */
+#rail.collapsed .rl-scroll .rb,
+#rail.collapsed .rl-foot .rb {
+  width: 36px;
+  height: 36px;
+  margin: 4px auto;
+  padding: 0;
+  justify-content: center;
+  border-radius: 10px;
+}
+
+/* Expanded: edge-to-edge square rows. */
+#rail:not(.collapsed) .rl-scroll .rb,
+#rail:not(.collapsed) .rl-foot .rb {
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+  border-color: transparent;
+}
+#rail:not(.collapsed) .rb.active { border-radius: 0; border-left-width: 0; }
+
+/* Hover = white, active = light purple (active wins on hover too). */
+body:not(.dark) #rail .rb:hover { background: #fff; }
+body:not(.dark) #rail .rb.active,
+body:not(.dark) #rail .rb.active:hover { background: var(--nav-active-bg); }
+#rail .rb.rl-profile:hover { background: transparent; }
+
+/* ── Conversation list ─────────────────────────────────────────────────── */
+body:not(.dark) #sidebar {
+  background: #ffffff;
+  border-right: 0;
+}
+#sidebar .sb-hd { border-bottom: 1px solid var(--g200); }
+#sidebar .sb-hd .ib { width: 34px; height: 34px; border-radius: 8px; }
+#sidebar .sb-hd .ib svg { width: 20px; height: 20px; stroke-width: 1.2; }
+
+/* Filter tabs (All / Requests / Favourites …): fully rounded pills. */
+#sidebar .fb button { border-radius: 999px; }
+body:not(.dark) #sidebar .fb button { border-color: #ddd3ea; background: rgba(255, 255, 255, 0.35); }
+body:not(.dark) #sidebar .fb button.active,
+body:not(.dark) #sidebar .fb button.on {
+  background: var(--nav-badge, #5e1087);
+  border-color: var(--nav-badge, #5e1087);
+  color: #fff;
+}
+
+/* Favourites / Chats section headers: white pill on hover. */
+#sidebar .sec-lbl { margin: 0 8px; padding: 8px 4px; border-radius: 8px; transition: background 0.12s; }
+body:not(.dark) #sidebar .sec-lbl:hover { background: #fff; }
+
+/* Chat rows: flat by default, white card on hover / active (no inset border). */
+body:not(.dark) #sidebar .cv,
+body:not(.dark) #sidebar .you-item {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 12px;
+}
+body:not(.dark) #sidebar .cv:hover,
+body:not(.dark) #sidebar .cv.active,
+body:not(.dark) #sidebar .you-item:hover,
+body:not(.dark) #sidebar .you-item.active {
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+
+/* ── Chat main: floating white card ────────────────────────────────────── */
+body:not(.dark) #main {
+  margin: 0 0 0 1px;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(16, 24, 40, 0.08);
+  overflow: hidden;
+}
+#app .ch { height: 64px; }
+#main .ch .ab svg,
+#main .gx-topbar svg { stroke-width: 1.2; }
+
+/* Message area + composer icons. */
+#main .ci-box .sb-btn svg,
+#main .msgs button svg { stroke-width: 1.2; }
+body:not(.dark) #main .ci-box { border-color: #e7e5ee; border-radius: 8px; }
+
+/* Composer: no grey strip behind the input box. */
+body:not(.dark) #main .ci { background: #f1eff4; }
+
+/* ── Chat list: unread vs read emphasis ─────────────────────────────────── */
+/* Unread: bold black name, black message. */
+body:not(.dark) #sidebar .cv.unread .cn,
+body:not(.dark) #sidebar .cv.unread.active .cn { font-weight: 700; color: #000; }
+body:not(.dark) #sidebar .cv.unread .cp,
+body:not(.dark) #sidebar .cv.unread .cp * { color: #000; font-weight: 500; }
+/* Read: normal-weight dark-gray name, gray message. */
+body:not(.dark) #sidebar .cv:not(.unread) .cn,
+body:not(.dark) #sidebar .cv:not(.unread).active .cn { font-weight: 400; color: #374151; }
+body:not(.dark) #sidebar .cv:not(.unread) .cp,
+body:not(.dark) #sidebar .cv:not(.unread) .cp * { color: #6b7280; font-weight: 400; }
+
+/* Chat rows: tighter vertical padding so the white hover/active card hugs the content. */
+#sidebar { --cvpy: 8px; }
+#sidebar .cv,
+#sidebar .you-item { padding-top: 8px; padding-bottom: 8px; margin-top: 2px; margin-bottom: 2px; }
+
+/* Same tight spacing for every row state (active, starred/favourite, unread). */
+#sidebar .cv.active,
+#sidebar .cv.starred-conv,
+#sidebar .cv.active.starred-conv,
+#sidebar .cv.unread,
+#sidebar .you-item.active {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  margin-top: 2px;
+  margin-bottom: 2px;
+  min-height: 0;
+}
+
+/* Rail foot: breathing room between "Download app" and the profile avatar. */
+#rail .rl-foot .rb.rl-profile { margin-top: 12px; }
+
+/* Divider between Favourites and Chats: same 1px / colour as the rail right border. */
+body:not(.dark) #sidebar .div-h { height: 1px; background: rgba(17, 24, 39, 0.06); }
+
+/* Muted conversation: the avatar becomes a light-gray circle with a bell-off icon. */
+.cv-mute-av {
+  width: var(--cvav, 40px);
+  height: var(--cvav, 40px);
+  border-radius: 50%;
+  background: #e5e7eb;
+  color: #4b5563;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cv-mute-av svg { stroke-width: 1.2; }
+
+/* "Select" on the Chats header: keep it off the right edge. */
+#sidebar .sec-lbl { padding-right: 14px; }
+
+/* Message bubbles: sent and received share one radius on all four corners (no square "tail" corner). */
+#main .bub { border-radius: 7px; }
+#main .fb-bub { border-radius: 12px; }
+
+/* Sender name above group-chat messages: normal weight. */
+#main .msnd { font-weight: 400; }
+
+/* Message text: normal weight (bold/strong formatting inside a message is untouched). */
+#main .bub,
+#main .bub .msg-body { font-weight: 400; }
+
+/* ⋮ overflow button on the filter row: a true circle, pinned to the right edge. */
+#sidebar .fb > div:has(> .ft-more) { margin-left: auto; flex-shrink: 0; }
+#sidebar .ft-more:not(:has(.ft-more-lab)) {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: 50%;
+}
+
+/* ── Message column geometry ───────────────────────────────────────────────
+   Received rows: less space before the avatar (4px instead of 16px).
+   Composer: its left edge lines up with where a received message's TEXT starts
+   (gutter + 4px row padding + 28px avatar + 10px gap) and its right edge with
+   the right end of sent messages (gutter + 16px row padding). */
+#main .msgs .mw:not(.me) { padding-left: 4px; }
+#main .ci {
+  --msg-gutter: clamp(16px, 3vw, 44px);
+  padding-left: calc(var(--msg-gutter) + 42px);
+  padding-right: calc(var(--msg-gutter) + 16px + 5px); /* +5px = reserved scrollbar gutter */
+}
+#main .msgs { scrollbar-gutter: stable; }
+
+/* ── Message time: rendered beside the bubble, shown on hover ───────────────
+   Received → right of the bubble · Sent → left of the bubble. */
+#main .msgs .mb-body { position: relative; }
+#main .msg-side-time {
+  position: absolute;
+  top: 14px;
+  white-space: nowrap;
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: #6b7280;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+#main .mw:hover .msg-side-time,
+#main .mw.active .msg-side-time,
+#main .mw:focus-within .msg-side-time { opacity: 1; }
+#main .mw:not(.me) .msg-side-time { left: 100%; margin-left: 10px; }
+#main .mw.me .msg-side-time { right: 100%; margin-right: 10px; }
+
+/* ── Composer: typed text normal weight, clearer border ─────────────────── */
+#main .ci-box .tiptap,
+#main .ci-box .ProseMirror,
+#main .ci-box textarea { font-weight: 400; }
+body:not(.dark) #main .ci-box { border-color: #c9ccd6; border-width: 1px; }
+
+/* Message bubbles: 8px vertical, 12px horizontal padding (was 8px 9px). */
+#main .msgs .bub { padding: 8px 12px; }
+
+/* Message bubbles: no border (received bubbles had a hairline). Attachment/media cards keep theirs. */
+#main .msgs .bub:not(.bub-file):not(.bub-media) { border: 0; }
+
+/* ── Profile modal (click an author's avatar in a group / channel) ─────────── */
+.pm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  background: rgba(17, 24, 39, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: pm-fade 0.16s ease;
+}
+.pm-card {
+  position: relative;
+  width: min(640px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--sb, #fff);
+  color: var(--g900, #111827);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+  padding: 28px 32px 24px;
+  animation: pm-pop 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes pm-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pm-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+.pm-close {
+  position: absolute; top: 16px; right: 16px;
+  width: 32px; height: 32px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--g600, #4b5563); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.pm-close:hover { background: var(--g100, #f3f4f6); }
+.pm-head { display: flex; align-items: center; gap: 24px; }
+.pm-avatar { position: relative; flex-shrink: 0; }
+.pm-pdot { position: absolute; right: 2px; bottom: 2px; width: 22px; height: 22px; border: 3px solid var(--sb, #fff); border-radius: 50%; }
+.pm-name { font-size: 26px; font-weight: 700; margin: 0 0 12px; line-height: 1.2; }
+.pm-actions { display: flex; gap: 8px; }
+.pm-act {
+  width: 40px; height: 40px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--g700, #374151); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.pm-act svg { stroke-width: 1.5; }
+.pm-act:hover { background: var(--g100, #f3f4f6); color: var(--nav-active-fg, #5e1087); }
+.pm-tabs { display: flex; gap: 8px; margin-top: 28px; border-bottom: 1px solid var(--g200, #e5e7eb); }
+.pm-tab {
+  padding: 10px 8px; margin-right: 12px; border: 0; background: transparent; cursor: pointer;
+  font-size: 15px; color: var(--g800, #1f2937); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.pm-tab.on { color: var(--nav-active-fg, #5e1087); border-bottom-color: var(--nav-active-fg, #5e1087); font-weight: 600; }
+.pm-body { padding-top: 18px; }
+.pm-status {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+  border: 1px solid var(--g200, #e5e7eb); border-radius: 6px; font-size: 15px;
+}
+.pm-h { font-size: 15px; font-weight: 700; margin: 24px 0 14px; }
+.pm-row { display: flex; align-items: center; gap: 16px; padding: 8px 0; font-size: 15px; }
+.pm-row-ico { width: 28px; display: inline-flex; justify-content: center; color: var(--g700, #374151); }
+.pm-row-lbl { font-size: 12.5px; color: var(--g600, #4b5563); margin-bottom: 2px; }
+.pm-link { color: var(--nav-active-fg, #5e1087); text-decoration: none; word-break: break-all; }
+.pm-link:hover { text-decoration: underline; }
+.pm-more { margin: 14px 0 6px; padding: 0; border: 0; background: none; cursor: pointer; font-size: 15px; color: var(--nav-active-fg, #5e1087); }
+.pm-more:hover { text-decoration: underline; }
+.pm-empty { color: var(--g500, #6b7280); font-size: 14px; padding: 6px 0; }
+@media (max-width: 520px) { .pm-head { flex-direction: column; align-items: flex-start; } .pm-card { padding: 22px 18px; } }
+
+/* ── Hover profile card ───────────────────────────────────────────────────
+   "Contact" label: normal weight, black. Mail/phone icons sit in the same 16px
+   column (with the same 11px inset) as the status icon below, so the icons — and
+   the email / "Available" text — line up. */
+.person-card-contact-label { font-weight: 400; color: #000; }
+.person-card-contact-row { padding: 0 11px; gap: 8px; }
+.person-card-contact-row svg { width: 16px; height: 16px; flex: 0 0 16px; }
+
+/* Message hover toolbar: dim siblings on hover, thin icon strokes */
+[role="toolbar"][aria-label="Message actions"] > button[aria-label^="React with"] { transition: opacity .15s ease, background .1s !important; }
+[role="toolbar"][aria-label="Message actions"]:has(> button[aria-label^="React with"]:hover) > button[aria-label^="React with"]:not(:hover) { opacity: .4; }
+[role="toolbar"][aria-label="Message actions"] > button[aria-label^="React with"]:hover { opacity: 1; }
+[role="toolbar"][aria-label="Message actions"] > button[aria-label="More reactions"] svg,
+[role="toolbar"][aria-label="Message actions"] > button[aria-label="Copy message text"] svg,
+[role="toolbar"][aria-label="Message actions"] > button[aria-label="Reply"] svg,
+[role="toolbar"][aria-label="Message actions"] > button[aria-label="Edit message"] svg,
+[role="toolbar"][aria-label="Message actions"] > button[aria-label="More actions"] svg { stroke-width: 1.7 !important; }
+
+@keyframes msgActionsSlideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.msg-actions-pop { animation: msgActionsSlideUp .32s cubic-bezier(.22,1,.36,1) both; }
+@media (prefers-reduced-motion: reduce) { .msg-actions-pop { animation: none; } }
+
+@keyframes msgActionsSlideDown {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(12px); }
+}
+.msg-actions-out { animation: msgActionsSlideDown .2s cubic-bezier(.4,0,1,1) both; }
+@media (prefers-reduced-motion: reduce) { .msg-actions-out { animation: none; } }
+
+/* Custom tooltip for the message action toolbar */
+[role="toolbar"][aria-label="Message actions"] > button[data-mtip] { position: relative; }
+[role="toolbar"][aria-label="Message actions"] > button[data-mtip]::after {
+  content: attr(data-mtip);
+  position: absolute; bottom: calc(100% + 10px); left: 50%;
+  transform: translate(-50%, 4px);
+  background: #fff; color: #111827; font-size: 13px; font-weight: 400; line-height: 1;
+  padding: 9px 14px; border-radius: 8px; white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(16,24,40,.16), 0 0 0 1px rgba(16,24,40,.05);
+  opacity: 0; pointer-events: none; transition: opacity .15s ease .25s, transform .15s ease .25s;
+  z-index: 2;
+}
+[role="toolbar"][aria-label="Message actions"] > button[data-mtip]:hover::after { opacity: 1; transform: translate(-50%, 0); }
+
+/* Filter overflow (⋮) dropdown: visible hover / keyboard-focus state */
+body:not(.dark) #sidebar .fb .mt-overflow-menu { padding: 6px; border-radius: 12px; }
+body:not(.dark) #sidebar .fb .mt-overflow-item { background: transparent; border: none; font-weight: 500; color: #374151; transition: background .12s ease, color .12s ease; }
+body:not(.dark) #sidebar .fb .mt-overflow-item:hover,
+body:not(.dark) #sidebar .fb .mt-overflow-item:focus-visible { background: #efe7f7; color: var(--nav-badge, #5e1087); outline: none; }
+body:not(.dark) #sidebar .fb .mt-overflow-item[data-active="1"] { color: var(--nav-badge, #5e1087); font-weight: 600; }
+body:not(.dark) #sidebar .fb .mt-overflow-item[data-active="1"]:hover { background: #e6d9f3; }
+
+/* Message toolbar + More menu: theme colour on hover */
+[role="toolbar"][aria-label="Message actions"] > button:hover { background: #efe7f7 !important; }
+[role="toolbar"][aria-label="Message actions"] > button[aria-label="More reactions"]:hover svg,
+[role="toolbar"][aria-label="Message actions"] > button[aria-label="Edit message"]:hover svg,
+[role="toolbar"][aria-label="Message actions"] > button[aria-label="Reply"]:hover svg,
+[role="toolbar"][aria-label="Message actions"] > button[aria-label="More actions"]:hover svg { stroke: var(--nav-badge, #5e1087) !important; }
+[role="toolbar"][aria-label="Message actions"] > button[aria-label^="React with"]:hover { background: #f3edf9 !important; }
+[role="menu"][aria-label="Message actions"] > button[role="menuitem"] { background: transparent !important; transition: background .12s ease, color .12s ease !important; }
+[role="menu"][aria-label="Message actions"] > button[role="menuitem"]:hover,
+[role="menu"][aria-label="Message actions"] > button[role="menuitem"]:focus-visible {
+  background: #efe7f7 !important; color: var(--nav-badge, #5e1087) !important; outline: none;
+}
+[role="menu"][aria-label="Message actions"] > button[role="menuitem"]:hover svg,
+[role="menu"][aria-label="Message actions"] > button[role="menuitem"]:focus-visible svg { stroke: var(--nav-badge, #5e1087) !important; }
+
+/* Message More menu: same look as the chat-list filter dropdown */
+[role="menu"][aria-label="Message actions"] {
+  padding: 8px !important; border-radius: 16px !important; min-width: 220px !important;
+  background: #f9fafc !important; border: 1px solid rgba(17,24,39,.06) !important;
+  box-shadow: 0 10px 30px rgba(16,24,40,.14) !important;
+}
+[role="menu"][aria-label="Message actions"] > button[role="menuitem"] {
+  border-radius: 10px !important; padding: 10px 14px !important; font-weight: 500 !important; color: #374151 !important;
+}
+
+/* Reply banner inside the composer: corners follow the composer's radius */
+#main .ci-box .reply-bar { border-radius: 12px; }
+#main .reply-bar { border-radius: 12px; }
+
+/* Bottom breathing room: chat list scroller sits above the window edge like the main card */
+#sidebar .sb-body { padding-bottom: 10px; }
+
+/* Rail: active item uses the filled icon variant */
+#rail .rb.active:not(.rl-profile) svg { fill: currentColor; }
+/* inner details cut out of the fill */
+#rail .rb.active:not(.rl-profile) svg path[d="M3 10h18"],
+#rail .rb.active:not(.rl-profile) svg path[d$=".01"] { stroke: var(--nav-active-bg, #f3e8ff); fill: none; }
+#rail .rb.active.rb-accent svg circle[r="3"] { fill: var(--nav-active-bg, #f3e8ff); stroke: var(--nav-active-bg, #f3e8ff); }
+#rail .rb.active.rb-accent svg path[d^="M9.09"],
+#rail .rb.active.rb-accent svg path[d="M12 17h.01"] { fill: none; stroke: var(--nav-active-bg, #f3e8ff); }
+#rail .rb.active:not(.rl-profile) svg path[d^="M10.268"] { fill: none; }
+
+/* "You" row has no trailing meta lane: the preview uses the full width, and only
+   while the hover ⋯ is visible does it truncate short of it. */
+#sidebar .you-item .cv-info { padding-right: 0; transition: padding-right .12s ease; }
+#sidebar .you-item:hover .cv-info,
+#sidebar .you-item:focus-within .cv-info { padding-right: 38px; }
+
+/* Collapsed folder headers (Favourites / Chats) are bold */
+#sidebar .sec-lbl.is-collapsed, #sidebar .sec-lbl.is-collapsed * { font-weight: 700; }
+#sidebar .sec-lbl.is-collapsed .sec-select-btn { font-weight: 500; }
+
+/* Composer focus: crisp theme border + soft lifted shadow instead of a thick ring */
+body:not(.dark) #main .ci-box { transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; box-shadow: 0 1px 2px rgba(16,24,40,.03); }
+body:not(.dark) #main .ci-box:focus-within {
+  border-color: color-mix(in srgb, var(--nav-badge, #5e1087) 62%, #fff);
+  background: #fff;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--nav-badge, #5e1087) 14%, transparent),
+              0 8px 24px -6px color-mix(in srgb, var(--nav-badge, #5e1087) 20%, transparent);
+}
+#main .ci-box .tiptap:focus, #main .ci-box .ProseMirror:focus, #main .ci-box textarea:focus { outline: none; box-shadow: none; }
+
+/* App tooltips (rail, header icons, …): same white card look as the emoji toolbar tooltip */
+body:not(.dark) .gtt {
+  background: #fff; color: #111827; font-size: 11px; font-weight: 400; line-height: 1.2;
+  padding: 8px 12px; border-radius: 5px; max-width: 280px;
+  box-shadow: 0 4px 16px rgba(16,24,40,.16), 0 0 0 1px rgba(16,24,40,.05);
+}
+
+/* ═════ Premium sent bubble — blue gradient (Premium-Collab-Ui) ═════
+   Default (Theme): sky → cobalt → indigo. A custom bubble colour from Settings
+   feeds --me-bub-1/2/3 (see useCoLab0) so the same gradient treatment applies. */
+#main .msgs .mw.me .bub:not(.bub-file):not(.bub-media){
+  position:relative; overflow:hidden; isolation:isolate;
+  background:linear-gradient(135deg, var(--me-bub-1,#0EA5E9) 0%, var(--me-bub-2,#2563EB) 55%, var(--me-bub-3,#4F46E5) 100%);
+  color:#fff;
+  box-shadow:0 6px 16px rgba(37,99,235,.22), 0 1px 4px rgba(37,99,235,.2);
+  padding:9px 14px;
+}
+/* top sheen + soft corner glow */
+#main .msgs .mw.me .bub:not(.bub-file):not(.bub-media)::before{
+  content:""; position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background:
+    radial-gradient(ellipse at top, rgba(255,255,255,.22), transparent 60%),
+    radial-gradient(circle at 100% 0, rgba(255,255,255,.14), transparent 45%);
+}
+#main .msgs .mw.me .bub a.msg-link{color:#fff;text-decoration:underline;text-decoration-color:rgba(255,255,255,.6);text-underline-offset:2px}
+/* received bubbles: crisp white card to pair with the gradient */
+body:not(.dark) #main .msgs .mw:not(.me) .bub:not(.bub-file):not(.bub-media){
+  background:#fff; box-shadow:0 1px 3px rgba(17,24,39,.08);
+}
+
+/* ── Details panel search (1:1 chats) ── */
+.ips{padding:2px 0 14px;border-bottom:1px solid var(--line,rgba(0,0,0,.08));margin-bottom:12px}
+.ips-box{display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border-radius:999px;background:var(--search-bg,#f9fafc);border:1px solid var(--search-line,#e1e8f1);color:var(--search-fg,#60768d)}
+.ips-box:focus-within{border-color:var(--nav-badge,#5e1087);box-shadow:0 0 0 3px color-mix(in srgb,var(--nav-badge,#5e1087) 14%,transparent)}
+.ips-in{flex:1;min-width:0;border:0;outline:0;background:transparent;font:inherit;font-size:13px;color:inherit}
+.ips-x{border:0;background:transparent;color:inherit;cursor:pointer;display:inline-flex;padding:2px}
+.ips-chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
+.ips-chip{height:26px;padding:0 11px;border-radius:999px;border:1px solid var(--search-line,#e1e8f1);background:transparent;font:inherit;font-size:12px;font-weight:500;color:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.ips-chip i{font-style:normal;font-size:10.5px;opacity:.7}
+.ips-chip.on{background:var(--nav-badge,#5e1087);border-color:transparent;color:#fff}
+.ips-list{display:flex;flex-direction:column;margin-top:6px}
+.ips-row{display:flex;align-items:center;gap:8px;text-align:left;border:0;background:transparent;padding:8px 6px;border-radius:10px;cursor:pointer;font:inherit;color:inherit}
+.ips-row:hover{background:var(--nav-active-bg,#f5ebfd)}
+.ips-t{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ips-t mark{background:color-mix(in srgb,var(--nav-badge,#5e1087) 20%,transparent);color:inherit;border-radius:3px;padding:0 1px}
+.ips-d{font-size:11px;opacity:.55;flex:none}
+.ips-ic{display:inline-flex;opacity:.7;flex:none}
+.ips-empty,.ips-hint{margin-top:8px;font-size:12px;opacity:.6}
+
+/* 1:1 details panel = search + shared media only: no profile header, call buttons or About block. */
+.info-panel.info-dm .info-id,
+.info-panel.info-dm .info-actions { display: none !important; }
+
+/* Profile modal — 1:1 settings rows (Mute / Block) */
+.pm-card .pm-set{width:100%;margin:2px 0;padding:10px 4px;border:0;background:transparent;border-radius:8px}
+.pm-card .pm-set:hover{background:var(--g100,#f3f4f6)}
+.pm-card .e2ee-sec,.pm-card [class*="e2ee"]{margin-top:12px}
+
+/* Sent bubble shadow was clipped top/bottom by content-visibility's paint containment on the row. */
+#main .msgs .mw.me { content-visibility: visible; contain: none; }
+
+/* ── Details panel lives INSIDE the chat box, below the header ─────────────────
+   The header row (profile · search · call · video · more) keeps its full width and
+   never moves; only the area under it (banners, messages, composer) makes room.
+   The panel is pinned to the right under the header instead of being a flex
+   sibling that squeezed the whole column (header included). */
+#vc { --info-w: min(320px, 92vw); --ch-h: 64px; }
+#vc .info-panel {
+  position: absolute;
+  top: var(--ch-h);
+  right: 0;
+  bottom: 0;
+  height: auto;
+  z-index: 3;
+}
+#vc .cv-col > :not(.ch) {
+  transition: margin-right .22s cubic-bezier(.16, 1, .3, 1);
+}
+#vc:has(.info-panel.open) .cv-col > :not(.ch):not(.chat-jump-latest):not([class*="toast"]) {
+  margin-right: var(--info-w);
+}
+#vc:has(.info-panel.open) .chat-jump-latest { right: calc(var(--info-w) + 24px); }
+@media (max-width: 640px) {
+  #vc:has(.info-panel.open) .cv-col > :not(.ch) { margin-right: 0; }
+}
+@media (max-width: 640px) {
+  #vc .info-panel { --info-w: 100%; }
+}
+
+/* 1:1, group & channel details panel = search only (same as the personal chat search panel). */
+.info-panel.info-dm .info-body > :not(.ips) { display: none !important; }
+
+/* Header "Add people" button (people+ icon + member count) */
+.ch .ab.ab-people { width: auto; padding: 0 10px; gap: 5px; display: inline-flex; align-items: center; color: var(--nav-badge, #5e1087); }
+.ch .ab-people-n { font-size: 13px; font-weight: 700; line-height: 1; }
+
+/* People dropdown (Teams-style) */
+.pp-wrap { position: relative; display: inline-flex; }
+.ch .ab.ab-people.on { background: var(--nav-active-bg, #f5ebfd); }
+.pp-pop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: 300px; background: var(--sb, #fff); color: var(--g900, #111827); border: 1px solid var(--g200, #e5e7eb); border-radius: 14px; box-shadow: 0 14px 40px rgba(0,0,0,.16); padding: 10px 6px 6px; }
+.pp-h { padding: 4px 12px 8px; font-size: 12px; font-weight: 700; color: var(--g600, #4b5563); }
+.pp-list { max-height: 260px; overflow-y: auto; }
+.pp-row { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 10px; font-size: 14px; }
+.pp-row:hover { background: var(--g100, #f3f4f6); }
+.pp-nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-role { font-size: 11px; color: var(--g600, #4b5563); }
+.pp-empty { padding: 10px 12px; font-size: 13px; opacity: .6; }
+.pp-sep { height: 1px; background: var(--g200, #e5e7eb); margin: 6px 6px; }
+.pp-act { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 12px; border: 0; background: transparent; border-radius: 10px; font: inherit; font-size: 14px; color: inherit; cursor: pointer; text-align: left; }
+.pp-act:hover { background: var(--g100, #f3f4f6); }
+
+/* Profile modal — attachments */
+.pm-media { margin-top: 6px; }
+.pm-file { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 6px; border: 0; background: transparent; border-radius: 8px; font: inherit; font-size: 14px; color: inherit; cursor: pointer; text-align: left; }
+.pm-file:hover { background: var(--g100, #f3f4f6); }
+.pm-file-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-file-s { font-size: 12px; opacity: .6; }
+
+/* Larger module titles (Chats, Calls, Contacts, Calendar, Activity, ...) */
+body .gx-hdr-title{font-size:24px;font-weight:700;line-height:1.2;letter-spacing:-.01em}
+body .gx-hdr-sub{font-size:13.5px}
+body #sidebar .sb-hd h2{font-size:24px;font-weight:700;letter-spacing:-.01em}
+@media (max-width:560px){body .gx-hdr-title,body #sidebar .sb-hd h2{font-size:20px}}
+
+/* Selected chat row: clear accent highlight */
+body #sidebar .cv.active,body #sidebar .cv.active:hover,
+body #sidebar .you-item.active,body #sidebar .you-item.active:hover,
+body .sb-embedded .cv.active,body .sb-embedded .you-item.active{
+  background:var(--ax-bg2,#ede9fe) !important;
+  /* box-shadow:inset 0 0 0 1px var(--ax-line,rgba(109,40,217,.28)),inset 3px 0 0 var(--ax,#6d28d9) !important; */
+  position:relative}
+body #sidebar .cv.active .cn{color:var(--ax,#6d28d9) !important}
+body.dark #sidebar .cv.active,body.dark #sidebar .cv.active:hover{background:color-mix(in srgb,var(--ax,#8b5cf6) 22%,transparent) !important}
+body.dark #sidebar .cv.active .cn{color:#fff !important}
+.pp-row .ca{flex:none}
+.pp-row{gap:12px}
+.pp-x{flex:none;width:26px;height:26px;border:0;background:transparent;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;color:var(--g600,#4b5563);cursor:pointer;opacity:0;transition:opacity .12s,background .12s}
+.pp-row:hover .pp-x,.pp-x:focus-visible{opacity:1}
+.pp-x:hover{background:rgba(17,24,39,.08);color:#dc2626}
+@media (hover:none){.pp-x{opacity:1}}
+
+/* Chat list: a little more air between rows */
+body #sidebar .cv,body #sidebar .you-item,body .sb-embedded .cv,body .sb-embedded .you-item{margin:8px 10px;padding:13px 12px;border-radius:14px;contain-intrinsic-size:0 84px}
+
+/* Chat list hover highlight (subtle accent tint; active row keeps its stronger style) */
+body #sidebar .cv:not(.active):hover,body #sidebar .you-item:not(.active):hover,
+body .sb-embedded .cv:not(.active):hover,body .sb-embedded .you-item:not(.active):hover{
+  background:var(--ax-bg,#f5f3ff) !important;
+  /* box-shadow:inset 0 0 0 1px var(--ax-line,rgba(109,40,217,.14)) !important */
+}
+body #sidebar .cv,body #sidebar .you-item{transition:background-color .2s ease,box-shadow .2s ease}
+body.dark #sidebar .cv:not(.active):hover,body.dark #sidebar .you-item:not(.active):hover{background:color-mix(in srgb,var(--ax,#8b5cf6) 12%,transparent) !important}
+
+/* Active row: identical box/typography to inactive — only the colours differ */
+body #sidebar .cv.active,body #sidebar .cv.active:hover,body #sidebar .you-item.active,body #sidebar .you-item.active:hover,
+body .sb-embedded .cv.active,body .sb-embedded .you-item.active{
+  margin:8px 10px !important;padding:13px 12px !important;border-radius:10px !important;transform:none !important;
+  /* box-shadow:inset 0 0 0 1px var(--ax-line,rgba(109,40,217,.28)) !important */
+}
+body #sidebar .cv.active::before,body #sidebar .you-item.active::before{content:none !important}
+
+/* Normalize every row state (active / favourite / unread / You) to one box model */
+body #sidebar .cv,body #sidebar .cv.active,body #sidebar .cv.starred-conv,body #sidebar .cv.active.starred-conv,body #sidebar .cv.unread,
+body #sidebar .you-item,body #sidebar .you-item.active,
+body .sb-embedded .cv,body .sb-embedded .you-item{
+  margin-top:8px !important;margin-bottom:8px !important;padding-top:13px !important;padding-bottom:13px !important;
+  min-height:0;box-sizing:border-box}

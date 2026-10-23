@@ -1,0 +1,38 @@
+# LiveKit SFU — LIVE / production server (collab.resulticks.com).
+#
+# The box has a private NIC (10.200.3.17, corporate VPC) AND a 1:1-NAT public IP.
+# With use_external_ip:true, LiveKit advertises BOTH ICE candidates: the local
+# host candidate 10.200.3.17 — internal/VPN clients pair on this, they are NOT
+# forced to hairpin — AND the STUN-discovered public IP, which OFF-NETWORK clients
+# (home / 4G / other networks) pair on. This is the fix established by LIVE
+# debugging: with use_external_ip:false the SFU advertised ONLY 10.200.3.17, so
+# off-network clients had no reachable SFU candidate and calls hung
+# (turnUsed=false — the relay alone was not bridging the internal SFU). node_ip is
+# left UNSET so the local candidate is auto-gathered alongside the public one
+# (pinning node_ip would advertise a single IP).
+#
+# The dedicated coturn relay (turncollab.resulticks.com — a SEPARATE public box,
+# 34.74.165.103, already provisioned + port-verified) stays as the fallback for
+# the strictest NATs. coturn is intentionally NOT run from docker-compose.live.yml
+# (its coturn service stays profile-gated OFF) — it lives on its own box.
+#
+# REQUIRES on the SFU box (IT, one-time): GCP VPC ingress udp:7532 + tcp:7531 to
+# the public IP, a TRUE 1:1 NAT (inbound-capable, not egress-only Cloud NAT), then
+# restart the livekit container. Verify with:
+#   docker logs colab-livekit | grep -i candidate   # must show BOTH 10.200.3.17 AND the public IP
+port: 7534
+rtc:
+  udp_port: 7532
+  tcp_port: 7531
+  # Advertise BOTH the local 10.200.3.17 host candidate (internal/VPN) AND the
+  # STUN-discovered public IP (off-network) — see header. Established via live
+  # debugging: off-network failed when only the private candidate was advertised.
+  use_external_ip: true
+  # node_ip left unset so the local host candidate is auto-gathered ALONGSIDE the
+  # public IP. (Setting node_ip would pin a single advertised IP.)
+keys:
+  # Overridden at runtime by LIVEKIT_KEYS (LIVEKIT_API_KEY / _SECRET in .env).
+  colab-prod: devsecret-overridden-by-env-do-not-use-in-prod
+turn:
+  enabled: true
+  udp_port: 7533

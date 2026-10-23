@@ -1,0 +1,51 @@
+# --- VCS / tooling metadata ---
+.git
+.vcs-next
+.github
+.vscode
+.idea
+**/.DS_Store
+
+# --- dependencies & build output (rebuilt inside the image) ---
+**/node_modules
+**/.next
+**/dist
+**/build
+**/coverage
+**/.turbo
+**/.cache
+**/*.tsbuildinfo
+
+# --- secrets: injected at runtime, never baked into images ---
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+keys/
+**/*.pem
+**/*.p8
+**/*.key
+**/fcm-service-account.json
+**/GoogleService-Info.plist
+
+# --- runtime data, backups, dumps ---
+data/
+**/*.sql.gz
+*.sql
+*.zip
+*.tar
+*.tar.gz
+**/logs
+**/*.log
+
+# --- not part of the server images ---
+docker-compose*.yml
+e2e/
+playwright-report/
+test-results/
+docs/
+*.md
+*.html
+*.postman_collection.json
+!**/README.md

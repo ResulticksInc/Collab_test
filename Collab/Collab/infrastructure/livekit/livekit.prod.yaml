@@ -1,0 +1,16 @@
+# LiveKit SFU configuration — PRODUCTION (behind nginx on 7530).
+# Signalling (7534) is proxied by nginx at /livekit; media ports are direct.
+# All ports are within the 7530-7536 range IT freed.
+port: 7534
+rtc:
+  udp_port: 7532
+  tcp_port: 7531
+  # STUN-detect the server's public IP for ICE candidates. For a server behind
+  # NAT/load-balancer, replace with an explicit `node_ip: <public-ip>` instead.
+  use_external_ip: true
+keys:
+  # Overridden at runtime by LIVEKIT_KEYS (LIVEKIT_API_KEY / _SECRET in env).
+  colab-prod: devsecret-overridden-by-env-do-not-use-in-prod
+turn:
+  enabled: true
+  udp_port: 7533

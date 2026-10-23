@@ -1,0 +1,963 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHATS — Figma "Collab Screens" › frame "Calender-view" 116:2739 (the
+   Messages screen: conversation list + thread + composer).
+   Overrides the legacy rules in v1.css; colours come from tokens.css.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Conversation list ───────────────────────────────────────────────── */
+#sidebar {
+  --sbpx: 16px;
+  --cvav: 40px;
+  --cvpy: 13px;
+  border-right: 1px solid var(--rail-line);
+}
+
+#sidebar .sb-hd {
+  gap: 6px;
+  border-bottom-color: var(--rail-line);
+}
+
+/* Brand tile before the "Chats" title (36px gradient square, white glyph). */
+.sb-hd-ico {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--brand-cta-gradient);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+.sb-hd-ico svg {
+  width: 20px;
+  height: 20px;
+  stroke: #fff;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#sidebar .sb-hd h2 {
+  font-size: 16px;
+  font-weight: var(--fw-bold);
+  color: var(--fg-primary);
+}
+
+#sidebar .sb-hd .ib {
+  width: 25px;
+  height: 25px;
+  color: var(--fg-primary);
+}
+
+#sidebar .sb-hd .ib svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
+}
+
+/* Search: the shared dashboard search pill (search.css) at sidebar size —
+   44px, r12, 1.8px --search-line border, 20px icon, brand focus ring. */
+#sidebar .sb-search {
+  padding: 30px var(--sbpx) 6px;
+}
+
+#sidebar .sb-search .gsb-wrap input {
+  height: 44px;
+  padding-left: 42px;
+  border-radius: 12px;
+  background: var(--search-bg);
+  border: 1.8px solid var(--search-line);
+  font-size: 14px;
+  color: var(--fg-primary);
+  box-shadow: none;
+}
+
+#sidebar .sb-search .gsb-wrap input:focus {
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500) 22%, transparent);
+}
+
+#sidebar .sb-search .gsb-wrap input::placeholder {
+  color: var(--search-fg);
+}
+
+#sidebar .sb-search .gsb-wrap .si {
+  left: 14px;
+  color: var(--search-fg);
+  stroke: var(--search-fg);
+  stroke-width: 1.8;
+  width: 20px;
+  height: 20px;
+}
+
+#sidebar .sb-search-x {
+  color: var(--search-fg);
+}
+
+/* Filter chips: 30px, r6, hairline border; active = mint fill + green text. */
+#sidebar .fb {
+  gap: 10px;
+  padding: 15px var(--sbpx) 12px;
+  border-bottom: none;
+}
+
+#sidebar .ft {
+  height: 30px;
+  padding: 0 15px;
+  border-radius: 6px;
+  border: 1px solid var(--search-line);
+  font-size: 12px;
+  font-weight: var(--fw-medium);
+  color: var(--search-fg);
+}
+
+#sidebar .ft:hover {
+  border-color: var(--nav-active-line);
+  color: var(--nav-active-fg);
+}
+
+#sidebar .ft.active {
+  background: var(--nav-active-bg);
+  border-color: var(--nav-active-line);
+  color: var(--nav-active-fg);
+  font-weight: var(--fw-semibold);
+}
+
+/* ⋮ overflow trigger: a 30px square chip. `#sidebar .ft` above adds 15px side
+   padding, which out-ranks v1.css's `.ft-more { padding: 0 }` and squeezed the
+   16px icon out of the 26px box — so reset the padding here. */
+#sidebar .ft-more {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+  justify-content: center;
+  color: var(--fg-primary);
+}
+
+#sidebar .ft-more svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* With an overflow filter selected the chip also shows its name. */
+#sidebar .ft-more:has(.ft-more-lab) {
+  width: auto;
+  padding: 0 8px 0 12px;
+  gap: 4px;
+}
+
+/* Rows: 40px avatar (same as the "You" row), 14px presence dot, 14/600 name, 12.5 preview, r10
+   selected card. 3px vertical margin gives clean separation between adjacent active/hover cards. */
+#sidebar .cv,
+#sidebar .you-item,
+.sb-embedded .cv,
+.sb-embedded .you-item {
+  gap: 12px;
+  margin: 7px 8px;
+  padding: 13px 10px;
+  border-radius: 10px;
+  contain-intrinsic-size: 0 72px;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+#sidebar .cv:hover,
+#sidebar .you-item:hover,
+.sb-embedded .cv:hover,
+.sb-embedded .you-item:hover {
+  background: var(--surface-hover);
+}
+
+#sidebar .cv.active,
+#sidebar .you-item.active,
+.sb-embedded .cv.active,
+.sb-embedded .you-item.active {
+  background: var(--row-active-bg);
+  box-shadow: inset 0 0 0 1px var(--search-line);
+}
+
+#sidebar .cv.active:hover,
+#sidebar .you-item.active:hover,
+.sb-embedded .cv.active:hover,
+.sb-embedded .you-item.active:hover {
+  background: var(--row-active-bg);
+  box-shadow: inset 0 0 0 1px var(--search-line);
+}
+
+#sidebar .cv.active .cn {
+  color: var(--fg-primary);
+  font-weight: var(--fw-semibold);
+}
+
+#sidebar .sd {
+  width: 14px;
+  height: 14px;
+  right: -1px;
+  bottom: -1px;
+  border: 2px solid var(--side, var(--sb));
+}
+
+#sidebar .cn {
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-primary);
+}
+
+#sidebar .cp {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+}
+
+#sidebar .ct {
+  font-size: 12px;
+  color: var(--fg-primary);
+}
+
+#sidebar .cv.unread .ct {
+  color: var(--time-unread);
+  font-weight: var(--fw-medium);
+}
+
+#sidebar .ub {
+  background: var(--nav-badge);
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+
+/* ── Thread header ───────────────────────────────────────────────────── */
+.cv-col .ch {
+  padding: 0 20px;
+  gap: 16px;
+  border-bottom-color: var(--rail-line);
+}
+
+/* Collapsed conversation list: the "expand sidebar" handle (#sb-expand) is a
+   position:fixed pill parked at the rail's right edge (railw + 8px, 24px wide),
+   which is exactly where the chat header's avatar sits once the list is gone.
+   Push the header content right of the handle so it never covers the avatar /
+   title (the handle stays where it is so its position is stable while the
+   list animates). 8 + 24 + 16px gap = 48px. */
+body.sb-collapsed.mode-chats .cv-col .ch,
+body.sb-collapsed.mode-chats .ch {
+  padding-left: 48px;
+}
+
+.cv-col .ch-nm {
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+}
+
+.cv-col .ch-sb {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.cv-col .ch-acts {
+  gap: 10px;
+}
+
+.cv-col .ab {
+  color: var(--fg-primary);
+  border-radius: 8px;
+}
+
+.cv-col .ab svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.8;
+}
+
+/* Inline chat-header search: the shared dashboard search pill at 40px. */
+.cv-col .chsr-inline {
+  height: 40px;
+  min-height: 40px;
+  padding: 0 8px 0 14px;
+  gap: 10px;
+  background: var(--search-bg);
+  border: 1.8px solid var(--search-line);
+  border-radius: 12px;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.cv-col .chsr-inline:focus-within {
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500) 22%, transparent);
+}
+
+.cv-col .chsr-inline-ico {
+  width: 20px;
+  height: 20px;
+  color: var(--search-fg);
+  stroke: var(--search-fg);
+}
+
+.cv-col .chsr-inline-input {
+  font-size: 14px;
+  color: var(--fg-primary);
+}
+
+.cv-col .chsr-inline-input::placeholder {
+  color: var(--search-fg);
+}
+
+/* ── Messages ────────────────────────────────────────────────────────── */
+.msgs {
+  padding-inline: clamp(16px, 3vw, 44px);
+}
+
+.mw.gstart {
+  margin-top: 18px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.mw.gstart:first-child {
+  margin-top: 4px;
+}
+
+.mw.gcont {
+  margin-top: 2px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.date-div span,
+.msg-system-pill {
+  background: var(--chat-bar);
+  border: 0px solid var(--pill-line);
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+  color: var(--fg-primary);
+  box-shadow: none;
+}
+
+.mb {
+  max-width: min(478px, 78%);
+}
+
+.bub {
+  background: var(--bub-peer);
+  color: var(--fg-primary);
+  border-radius: 7px 7px 7px 0;
+  padding: 8px 9px;
+  font-size: var(--msgfs, 14px);
+  line-height: 1.65;
+  box-shadow: none;
+  font-weight: 500;
+}
+
+.mw.me .bub {
+  background: var(--me-bub, var(--bub-me));
+  color: #fff;
+  border-radius: 7px 7px 0 7px;
+  padding: 8px 9px;
+}
+
+/* Timestamps are always visible under a group (10px), not hover-only. */
+.mtm {
+  font-size: 10px;
+  color: var(--fg-primary);
+  opacity: 1;
+}
+
+.msg-ack.read {
+  color: var(--tick);
+}
+
+.msg-receipt {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--g400);
+  margin-top: 2px;
+  margin-bottom: 0;
+  line-height: 1;
+}
+
+/* ── Composer ────────────────────────────────────────────────────────── */
+/* 75px bar with a 42px field (Figma "Messages Send Field"). */
+.ci {
+  background: var(--chat-bar);
+  border-top: none;
+  padding: 16px 16px 17px;
+}
+
+.ci-box {
+  border: 1px solid var(--chat-field-line);
+  /* border-radius: 24px; */
+  background: var(--surface-raised);
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.ci-box:focus-within {
+  border-color: var(--brand-500);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500) 16%, transparent);
+}
+
+/* Adaptive composer row (Teams-style). DEFAULT = compact single line: the
+   editor and the action icons share one row, vertically centred, exactly as the
+   old UI. `.stacked` (toggled by useComposerLayout once the text wraps or a
+   long line reaches the icon cluster) moves the icons onto their own row
+   anchored to the bottom-right; the editor then spans the full width, grows
+   with the text up to a max-height and scrolls internally, so the icons never
+   move, never scroll with the text and are never vertically centred. */
+.ci-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 8px 20px;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+
+.ci-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+/* Single-line editor matches button height (32px) so placeholder and text
+   are vertically centered on the exact same baseline as the action buttons. */
+.ci-box .rich-editor-wrapper {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: text;
+}
+
+.ci-box .tiptap-editor {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 2px 0;
+  min-height: 24px;
+  overflow-y: hidden;
+}
+
+/* ── Stacked: text on top, icons pinned in a bottom bar ── */
+.ci-row.stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 12px 12px 8px 16px;
+}
+
+/* Shrink-to-fit and hug the right edge (not stretched across the row), so the
+   bar's width is the width of the icon cluster — useComposerLayout measures it
+   to decide when a single line has reached the icons. */
+.ci-row.stacked .ci-row-actions {
+  align-self: flex-end;
+  margin-top: 6px;
+}
+
+.ci-row.stacked .rich-editor-wrapper {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 24px;
+  max-height: none;
+  display: block;
+}
+
+.ci-row.stacked .tiptap-editor {
+  padding: 2px 8px 2px 0;
+  /* Grow to roughly the reference height, then scroll. */
+  max-height: min(340px, 45vh);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--g300) transparent;
+}
+
+/* Thin, always-visible scrollbar on the editor's right edge (macOS otherwise
+   hides overlay scrollbars until you scroll). */
+.ci-row.stacked .tiptap-editor::-webkit-scrollbar {
+  width: 8px;
+}
+
+.ci-row.stacked .tiptap-editor::-webkit-scrollbar-thumb {
+  background: var(--g300);
+  border-radius: 4px;
+}
+
+.ci-row.stacked .tiptap-editor::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ci-box .tiptap-editor p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ci-box .tiptap-editor p.is-editor-empty:first-child::before {
+  line-height: 1.5;
+}
+
+.ci-row-act,
+.ci-actions {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.ci-row .sb-btn {
+  color: var(--fg-primary);
+  width: 32px;
+  height: 32px;
+  margin-bottom: 0;
+  flex: 0 0 auto;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ci-row .sb-btn svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.5;
+}
+
+.ci-row .sb-btn:hover {
+  background: var(--surface-hover);
+  color: var(--brand-500);
+}
+
+/* Send keeps the brand gradient (v1.css) but rounds to the pill. */
+.ci-row .sb-btn[aria-label="Send message"] {
+  color: #fff;
+  border-radius: 16px;
+}
+
+/* Unread is signalled by the purple time + green badge, not a left bar. */
+#sidebar .cv.unread::before {
+  display: none;
+}
+
+/* ── File thumbnails (Files tab rows, Details media strip) ─────────────────
+   Image attachments show the real picture; everything else shows an extension
+   "avatar" chip (PDF, DOCX…) tinted per file family. */
+.file-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--g100);
+}
+
+.file-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.file-thumb-load {
+  background: linear-gradient(100deg, var(--g100) 30%, var(--g200) 50%, var(--g100) 70%);
+  background-size: 200% 100%;
+  animation: info-media-shimmer 1.2s ease-in-out infinite;
+}
+
+.file-ext-avatar {
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: inherit;
+  line-height: 1;
+  user-select: none;
+}
+
+/* ── Merged group avatar (call / meeting groups): 2–4 member faces in one disc ──
+   2 → two halves · 3 → left half + two right quarters · 4 → 2×2 grid. */
+.ca.ca-mosaic {
+  display: grid;
+  overflow: hidden;
+  background: var(--g200);
+  gap: 1.5px;
+  padding: 0;
+  /* .ca centres its content; a mosaic must STRETCH every cell to its track. */
+  align-items: stretch;
+  justify-items: stretch;
+  align-content: stretch;
+  justify-content: stretch;
+  grid-auto-rows: 1fr;
+}
+
+.ca.ca-mosaic-2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+
+.ca.ca-mosaic-3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.ca.ca-mosaic-3 .ca-cell:first-child {
+  grid-row: 1 / span 2;
+}
+
+.ca.ca-mosaic-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.ca-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ca-cell img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+/* ── Reply quote INSIDE the bubble (reference): light card, grey bar, then
+   "name  dd/mm/yy time" in grey, the quoted line in dark, reply text below. ── */
+.bub>.reply-quote {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  margin: 0 0 8px;
+  padding: 8px 12px 9px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  text-align: left;
+}
+
+.bub>.reply-quote:hover {
+  background: #fff;
+}
+
+.bub>.reply-quote .reply-quote-bar {
+  width: 3px;
+  flex: 0 0 3px;
+  border-radius: 2px;
+  background: var(--g400);
+}
+
+.bub>.reply-quote .reply-quote-c {
+  gap: 3px;
+}
+
+.bub>.reply-quote .reply-quote-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bub>.reply-quote .reply-quote-name,
+.bub>.reply-quote .reply-quote-time {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--g500);
+  white-space: nowrap;
+}
+
+.bub>.reply-quote .reply-quote-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bub>.reply-quote .reply-quote-text {
+  font-size: 14px;
+  color: var(--g900);
+}
+
+/* Peer (grey) bubble: same card, plain white. */
+.mw:not(.me) .bub>.reply-quote {
+  background: #fff;
+  border-color: var(--g200);
+}
+
+/* ── Activity feed icons: light-purple disc (#F5EBFD) + dark-purple glyph
+   (#5E1087) for every notification type; genuinely negative events (missed
+   call, concern, cancelled meeting) keep their red tint from v1.css. ── */
+.ibx-notif-icon {
+  background: #5E1087;
+  color: #fff;
+}
+
+.ibx-notif-icon svg {
+  stroke: currentColor;
+}
+
+.ibx-notif-icon.notif-call_missed,
+.ibx-notif-icon.notif-org_concern,
+.ibx-notif-icon.notif-concern_update,
+.ibx-notif-icon.notif-meeting_cancelled {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+body.dark .ibx-notif-icon {
+  background: rgba(94, 16, 135, 0.28);
+  color: #d8b4fe;
+}
+
+/* Activity row hover: the unread row hovers to solid dark purple (#5E1087),
+   so every label on it goes white — name, time, preview and the glyph disc. */
+.ibx-row.unread:hover,
+.ibx-row.unread:hover .ibx-row-name,
+.ibx-row.unread:hover .ibx-row-time,
+.ibx-row.unread:hover .ibx-row-prev,
+.ibx-row.unread:hover .ibx-row-body {
+  color: #fff;
+}
+
+.ibx-row.unread:hover .ibx-notif-icon {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.ibx-row.unread:hover .ibx-notif-del {
+  color: #fff;
+}
+
+/* Dark mode: the unread row's light-lavender fill (#f5ebfd) left white labels
+   unreadable on a pale card. Use a translucent purple that sits on the dark
+   surface; hover keeps the solid purple (declared after so it wins). */
+body.dark .ibx-row.unread {
+  background: rgba(94, 16, 135, 0.32);
+}
+body.dark .ibx-row.unread .ibx-row-name {
+  color: var(--tx, #f5f3f8);
+}
+body.dark .ibx-row.unread .ibx-row-prev {
+  color: rgba(245, 243, 248, 0.72);
+}
+body.dark .ibx-row.unread .ibx-row-time {
+  color: rgba(245, 243, 248, 0.6);
+}
+body.dark .ibx-row.unread:hover {
+  background: #5E1087;
+}
+body.dark .ibx-row.unread:hover .ibx-row-name,
+body.dark .ibx-row.unread:hover .ibx-row-prev,
+body.dark .ibx-row.unread:hover .ibx-row-time {
+  color: #fff;
+}
+
+/* Activity row time: anchored to the LAST line of the text block — on the
+   title when there is no subtitle, level with the subtitle when there is one. */
+.ibx-row-body {
+  position: relative;
+}
+
+.ibx-row-time {
+  position: absolute;
+  right: 17px;
+  bottom: 1px;
+  line-height: 1.4;
+}
+
+/* Keep the title and subtitle clear of the time's footprint. */
+.ibx-row-name,
+.ibx-row-prev {
+  padding-right: 60px;
+}
+
+.ibx-row-top {
+  justify-content: flex-start;
+}
+
+/* ── Activity tabs: same chip as the chat sidebar filters (#sidebar .ft) —
+   30px pill, 1px line, 12px medium; hover = purple line + text; active =
+   light-purple fill, purple line, semibold. Gap matches the sidebar (8px). ── */
+.ibx-tabs {
+  gap: 8px;
+}
+
+.ibx-tab {
+  height: 30px;
+  padding: 0 15px;
+  border-radius: 6px;
+  border: 1px solid var(--search-line, var(--g200));
+  background: transparent;
+  font-size: 12px;
+  font-weight: var(--fw-medium, 500);
+  color: var(--search-fg, var(--g700));
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.ibx-tab:hover {
+  background: transparent;
+  border-color: var(--nav-active-line);
+  color: var(--nav-active-fg);
+}
+
+.ibx-tab.active {
+  background: var(--nav-active-bg);
+  border-color: var(--nav-active-line);
+  color: var(--nav-active-fg);
+  font-weight: var(--fw-semibold, 600);
+}
+
+/* Count badge inside a tab: purple disc, white number; on the active tab it
+   inverts so it still reads against the light-purple fill. */
+.ibx-tab-c {
+  background: var(--nav-badge);
+  color: #fff;
+}
+
+.ibx-tab.active .ibx-tab-c {
+  background: var(--nav-active-fg);
+  color: #fff;
+}
+
+/* ── Delete-message dialog: compact card, buttons in two columns ─────────── */
+.msg-del-dlg {
+  width: 328px;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 16px 16px 14px;
+  border-radius: 12px;
+  background: var(--main, #fff);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.msg-del-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--g900);
+}
+
+.msg-del-text {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--g600);
+}
+
+.msg-del-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 30px;
+}
+
+.msg-del-btn {
+  height: 34px;
+  padding: 0 6px;
+  border: 1px solid var(--g200);
+  border-radius: 8px;
+  background: var(--g50, #f8fafc);
+  color: var(--g900);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.msg-del-btn:hover {
+  background: var(--g100);
+}
+
+.msg-del-btn.danger {
+  background: #fee2e2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.msg-del-btn.danger:hover {
+  background: #fecaca;
+}
+
+.msg-del-btn.ghost {
+  background: transparent;
+  color: var(--g600);
+}
+
+.msg-del-btn.span {
+  grid-column: 1 / -1;
+}
+
+/* Delete dialog: ✕ in the top-right instead of a Cancel button. */
+.msg-del-dlg {
+  position: relative;
+  padding-right: 40px;
+}
+
+.msg-del-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--g500);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.msg-del-close:hover {
+  background: var(--g100);
+  color: var(--g800);
+}
+
+.msg-del-dlg .msg-del-actions {
+  margin-right: -24px;
+}
+.file-type-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: transparent;
+  line-height: 0;
+}
+
+.file-type-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}

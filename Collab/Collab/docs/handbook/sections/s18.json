@@ -1,0 +1,250 @@
+[
+  {"t":"h","level":1,"text":"18. Current Project Status"},
+
+  {"t":"p","text":"This section is the honest, code-grounded status report for CoLab as it stands today. It is written to be the single source of truth for the next five years, so it deliberately separates what is *shipped and verified* from what *works but is incomplete*, from what is *not built at all*, and from the *technical debt, known issues, and production risks* that an operator or engineer inheriting this system must understand before they touch it. Every claim here was checked against the real repository state — the 47 ordered migrations under `database/migrations/`, the Express routes under `backend/app/src/`, the Next.js components under `frontend/app/src/`, and the deployment compose files at the repo root — not against marketing copy or aspiration. Where the codebase contradicts a previously-stated assumption (for example the session-token lifetime, or whether the AI assistant has a UI), this section corrects it."},
+
+  {"t":"p","text":"**Plain-language summary.** CoLab is a working, enterprise-styled team-collaboration application: people sign up, log in, chat in DMs / groups / channels with rich text, voice notes, reactions, threads, files and read receipts; they place 1:1 and group calls and schedule full video meetings over LiveKit; they manage tasks, reminders, contacts, a calendar and a notifications feed; and they do all of this through one polished single-page front end with six themes and deep accessibility/responsiveness controls. The pieces that are *not* finished are clearly fenced off: AI is wired but mostly hidden, the agent system is an empty scaffold, the MCP server is a standalone prototype, server-side recording needs infrastructure that is not provisioned, and end-to-end encryption is a real but Phase-1 (DM-only, no forward secrecy) feature that ships turned **off**."},
+
+  {"t":"callout","kind":"note","title":"How to read the maturity labels","text":"DONE = built and exercised (most are live-verified; calls/meetings media is code-complete but only fully verifiable on an HTTPS+TURN deployment). PARTIAL = the code path exists and runs but the feature is incomplete, hidden behind a default-off flag, or depends on infrastructure that is not turned on. ABSENT = there is no functioning implementation, only a scaffold or a static UI placeholder."},
+
+  {"t":"diagram","kind":"layered","title":"What is actually running, at a glance","layers":[
+    {"label":"Shipped & in daily use","items":["Auth","Messaging","Calls","Meetings","Tasks","Reminders","Files","Contacts","Calendar","Activity/Notifications","Presence"]},
+    {"label":"Built but gated / incomplete","items":["Global Search (flag off)","AI summarize (flag off)","AI ask (no UI)","E2EE DM (off, Phase 1)","Recording (client-side only)","Custom status (manual only)"]},
+    {"label":"Scaffold / not running","items":["Agents module (throws)","MCP server (standalone)"]}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"18.1 Completed — Shipped and Verified"},
+
+  {"t":"p","text":"The following capabilities are fully implemented end-to-end: a frontend surface, a backend route + service, a database table (or an explicit reason there is none), and realtime wiring where applicable. These are the load-bearing features of the product and they are exercised in normal use. The one honest caveat that applies across calls and meetings is the **media plane**: the application logic, signalling, token-minting and host controls are complete and verified, but cross-network media delivery can only be fully proven on a deployment that has HTTPS (a secure context is mandatory for `getUserMedia`) and a reachable TURN relay — see the Production Risks subsection (18.6)."},
+
+  {"t":"h","level":3,"text":"18.1.1 Completed feature catalog"},
+
+  {"t":"table","headers":["Feature","Status","Frontend","Backend","Storage"],"rows":[
+    ["Authentication","DONE","LoginScreen.tsx, lib/identity.ts","routes/auth.ts, authService.ts, credentialPolicy.ts, middleware/auth.ts, tokenBlocklist.ts","users (password_hash scrypt, role)"],
+    ["Dashboard","DONE","CoLabV1.tsx mode==='dashboard' (default landing, inline ~line 5477)","aggregates existing users/calls/meetings APIs","none (derived view)"],
+    ["Messaging (DM/group/channel)","DONE","ChatView.tsx, ConversationSidebar.tsx, RichTextEditor.tsx, lib/messageText.ts","routes/conversations.ts, messageService.ts, conversationService.ts","conversations, conversation_members, messages (FTS idx)"],
+    ["Calls (1:1 + group)","DONE*","1:1 UI inside CoLabV1.tsx, CallDebugPanel.tsx, lib/callDiagnostics.ts","routes/calls.ts, callService.ts, livekitService.ts, huddleStore.ts","calls"],
+    ["Meetings","DONE*","MeetingsView.tsx, MeetingStage.tsx, MeetingRoom.tsx, PreJoinMeeting.tsx","routes/meetings.ts, meetingService.ts, routes/livekit.ts","meetings, meeting_attendees, meeting_lobby, meeting_presence, meeting_messages, meeting_ejected"],
+    ["Contacts","DONE","ContactsView.tsx","routes/users.ts, blockService.ts","users, user_blocks, user_reports"],
+    ["Calendar","DONE","CalendarView.tsx (shares meetings render branch)","routes/meetings.ts","meetings (starts_at) + reminders (due_at)"],
+    ["Activity / Notifications","DONE","CoLabV1.tsx mode==='activity', Rail badge=notifUnread","routes/notifications.ts, notificationService.ts","notifications"],
+    ["Tasks","DONE","TasksView.tsx","routes/tasks.ts, taskService.ts","tasks, task_activity, task_deps, task_comments"],
+    ["Reminders","DONE","RemindersView.tsx","routes/reminders.ts, reminderService.ts","reminders, folders"],
+    ["Files","DONE","FilesView.tsx","routes/files.ts, fileService.ts, storageService.ts","files, file_shares (S3/MinIO + DB-blob fallback)"],
+    ["Reactions","DONE","ChatView.tsx, lib/emojiData.ts, who-reacted UI","messageService.ts toggleReaction + REST/socket","messages.reactions_json (no separate table)"],
+    ["Attachments","DONE","XHR upload w/ progress, same-origin proxy download","routes/files.ts + messages.file_json","files (MinIO) / messages.file_json"],
+    ["Voice messages","DONE","VoicePlayer.tsx + record UI in ChatView","messageService.ts voice field; voicemailService.ts","messages (type='voice'), voicemails"],
+    ["Screen sharing","DONE*","MeetingStage.tsx + CoLabV1.tsx setScreenShareEnabled","LiveKit track source (no table/route)","none (media)"],
+    ["Presence","DONE","Avatar.tsx / sidebar dots via socket","realtime/socket.ts presence fan-out","users.presence, users.last_seen"],
+    ["Settings","DONE","Settings.tsx, Onboarding.tsx","routes/settings.ts, settingsService.ts","user_settings (JSON blob)"]
+  ],"widths":[2100,900,2400,2400,1200]},
+
+  {"t":"p","text":"*Calls, meetings and screen-sharing carry the media-plane caveat described above: application logic verified; external media delivery is deployment-dependent (HTTPS secure context + TURN reachability)."},
+
+  {"t":"h","level":3,"text":"18.1.2 Authentication and session — verified behavior"},
+
+  {"t":"p","text":"Auth is complete and enforced server-side. Passwords are hashed with Node's built-in `scrypt` and stored as `saltHex:hashHex` (16-byte salt, 64-byte key); verification is constant-time via `crypto.timingSafeEqual`. The signup credential policy (`credentialPolicy.ts`) is the authority — it validates email shape, rejects ~70 disposable-email providers, and enforces a 9-character minimum password with lower+upper+digit+special and a ~60-entry common-password blocklist. The frontend `passwordPolicy.ts` is a non-authoritative UX mirror only. Every auth event (signup/login/logout/account-delete) is written to the append-only `audit_log`."},
+
+  {"t":"callout","kind":"warning","title":"Correction: session JWT lives 7 days, not 1 hour","text":"The API session JWT is HS256 with payload {sub, name} and a default TTL of **7d** (env AUTH_TOKEN_TTL, config/src/index.ts line 19) — verified against the source. The ~1h / 3600s lifetime that is sometimes attributed to 'the token' actually belongs to the SEPARATE short-lived LiveKit room token (LIVEKIT_TOKEN_TTL_SEC, default 3600). There is NO refresh-token or silent-remint flow: a single long-lived access JWT is issued at login and the user re-authenticates on expiry. Revocation is handled by a token blocklist (Redis-backed, in-memory fallback) keyed by the token's signature segment with TTL = token exp."},
+
+  {"t":"h","level":3,"text":"18.1.3 Messaging depth — what is actually shipped"},
+
+  {"t":"p","text":"Messaging is the most mature subsystem. The single `conversations` / `conversation_members` / `messages` schema serves DMs (`kind='dm'`/`'self'`), groups (`'group'`) and channels (`'channel'`) with the same code path — there is no separate channel or group table, only a discriminating `kind` column. Messages are stored as sanitized rich HTML in `messages.body`; every preview in the app (sidebar rows, notifications, reply quotes) MUST route through `lib/messageText.ts` so only the bubble itself renders HTML. Shipped and working: rich-text composer (TipTap), threads (`parent_message_id` self-FK), edits (`edited` flag), reactions (inline `reactions_json`), per-message bookmarks, pin/unpin, 'delete for me' (`message_deletions` side table) and 'delete for everyone' (tombstone via `messages.deleted`), forwarding with `forward_count`, scheduled messages (compose-now/deliver-later via a backend poller and `scheduled_messages`), keyset-paginated history (`?before&limit<=100`), WhatsApp-style reciprocal read receipts, voice notes (`type='voice'`), and a FULLTEXT search index (`idx_messages_fts`, BOOLEAN mode). Realtime delivery is the single `MESSAGE_NEW` room echo, which doubles as the send-ack (the optimistic render reconciles against it)."},
+
+  {"t":"h","level":3,"text":"18.1.4 Calls and meetings — verified application logic"},
+
+  {"t":"p","text":"Both 1:1/group calls (driven inside CoLabV1) and scheduled meetings (driven by MeetingStage) are built on LiveKit and share one CSS source (`.ms-*` classes). Verified application behavior includes: server-side LiveKit token minting gated by membership (an IDOR guard on `call_<id>`, conversation-member checks on `conv_<id>`, and `meetingService.enterRoom` enforcing eject→lock→lobby on `meeting_<id>`); 1:1→group promotion; group host controls (mute-all, per-participant mute, remove) gated to owner/admin; full meeting host/co-host controls (lobby admit/deny/admit-all, lock, eject that persists across token re-mint via `meeting_ejected`, promote/demote/readmit); persisted in-meeting chat (`meeting_messages`, last 100 replayed on join), hand-raise and reactions over Redis-backed `huddleStore`; join-by-meeting-ID/link (the meeting UUID *is* the access credential); structured Outlook-style recurrence (`recurrence_rule`, migration 0047); call-lifecycle system pills in chat; voicemail; and device hot-swap mid-call. A WebRTC diagnostics layer (`callDiagnostics.ts` + `CallDebugPanel.tsx`) polls `getStats()` and emits grep-able `[CALLDIAG]` traces distinguishing 'TURN advertised but not reachable' from 'no TURN advertised'."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"18.2 Partially Completed — Works but Incomplete"},
+
+  {"t":"p","text":"These features have real, running code but are either deliberately hidden behind a default-off feature flag, limited in scope (Phase 1), or dependent on infrastructure that is not turned on in current deployments. They are not bugs and not vaporware — they are genuinely partial, and this subsection states exactly where each one stops."},
+
+  {"t":"table","headers":["Feature","What works","What is missing / gated","Gate"],"rows":[
+    ["Global Search","SearchView.tsx, routes/search.ts (GET /?q), FULLTEXT idx_messages_fts","Nav entry hidden by default; component/route/API fully intact","config.features.globalSearch (NEXT_PUBLIC_FEATURE_GLOBAL_SEARCH=1), Rail HIDDEN_NAV"],
+    ["AI summarize ('Catch up')","ChatView.tsx api.summarizeConversation, routes/ai.ts POST /summarize, aiService.ts (OpenAI-compatible)","Surfaced only when flag on; needs LLM_BASE_URL set or returns AI_DISABLED 503","config.features.aiSummary (NEXT_PUBLIC_FEATURE_AI_SUMMARY=1)"],
+    ["AI ask assistant (Agen-X)","Backend POST /ai/ask + aiService.ask() with concise/detailed/balanced styles; api.askAgent defined","NEVER called from any component — endpoint exists, zero UI","none — simply unwired"],
+    ["E2EE (DM)","lib/e2ee/* native WebCrypto ECIES, routes/e2ee.ts, server-blind, fail-closed, TOFU pinning","DM/self only; NO forward secrecy; safety-number computed but NOT in any UI; groups/calls/meetings plaintext","OFF by default both sides (NEXT_PUBLIC_E2EE_ENABLED / E2EE_ENABLED)"],
+    ["Recording","recordingService.ts, meeting_recordings table, full meeting endpoints; client-side MediaRecorder path works","Server-side LiveKit Egress not provisioned (no egress container) → honest 503","EGRESS_ENABLED + egress worker container"],
+    ["Status","Manual presence (auto/away/busy/DND) via settings → users.manual_presence","NO free-text/emoji custom status (no status_text/statusEmoji column or code)","n/a — feature simply not built"]
+  ],"widths":[1500,2700,3300,1500]},
+
+  {"t":"h","level":3,"text":"18.2.1 E2EE Phase 1 — exact scope and honest limits"},
+
+  {"t":"p","text":"CoLab ships a real but deliberately conservative end-to-end-encryption implementation, and it is important not to overclaim it. **Plain language:** when turned on, direct messages between two people are scrambled on the sender's device and can only be unscrambled on the recipient's devices — the server stores only opaque ciphertext and public keys and cannot read the content. **Engineering:** it is custom native Web Crypto ECIES (P-256 ECDH + HKDF-SHA-256 + AES-GCM-256), NOT the Signal protocol despite the `SignalStore.ts` filename. The long-term device key is a non-extractable P-256 CryptoKey in IndexedDB; each message uses a fresh ephemeral keypair per recipient device; AES-GCM AAD binds version|sender|recipient|conversationId|nonce so the server cannot splice or replay envelopes. One sealed envelope is produced per recipient device plus the sender's own other devices."},
+
+  {"t":"callout","kind":"warning","title":"E2EE — do not overclaim","text":"Scope is DM and self-conversations ONLY. Groups, channels, calls and meetings are plaintext (LiveKit SFU media is not E2EE; distributeGroupSenderKey is a no-op placeholder). There is NO forward secrecy yet — per-message ephemerals protect against the server but not against theft of a device's long-term key (a ratchet is Phase 2). The 100 one-time prekeys generated per device are DORMANT in v1 (reserved for a future X3DH/Double-Ratchet). The safety-number is implemented in lib/e2ee/safety.ts but verified-by-grep to be referenced ONLY inside the e2ee lib — it is wired into NO UI component, so safety-number verification is genuinely pending. The whole feature is OFF by default and fail-closed when on (it throws rather than ever silently sending plaintext on an E2EE conversation)."},
+
+  {"t":"h","level":3,"text":"18.2.2 Recording — two paths, one not provisioned"},
+
+  {"t":"p","text":"Recording is PARTIAL because the backend is complete but one of its two paths depends on infrastructure that is off. Path (a) is **server-side LiveKit Egress**: gated by `EGRESS_ENABLED` and an egress worker container; when that container is not running the API returns an honest 503 rather than failing silently. Path (b) is **client-side MediaRecorder** (`uploadClientRecording`): it works without egress, stores the webm/mp4 to S3/MinIO, and plays back through the auth-gated, membership-checked `/api/meetings/:id/recordings/:rid/download` stream. In current deployments only path (b) is functional because the egress container is not provisioned."},
+
+  {"t":"h","level":3,"text":"18.2.3 Accessibility and brand-token contrast"},
+
+  {"t":"p","text":"The design system ships an extensive accessibility toolkit — high-contrast variants (`body.dark.high-contrast`, `body.oled.high-contrast`), reduce-motion, larger-text, dyslexia-font, blur-media, density modes and a six-theme palette — all toggled via body classes in `applySettings()`. This is real and works. The incomplete part is **brand-token contrast**: the default indigo accent (`--ac #5e6ad2`) and some derived token combinations do not universally meet WCAG AA contrast on every surface/theme pairing without the high-contrast toggle. This is tracked in the Technical Debt subsection rather than claimed as fully solved."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"18.3 Pending — Not Built"},
+
+  {"t":"p","text":"These are features that have NO functioning implementation. Some have a scaffold or a static UI placeholder; none of them do real work. They are documented here so that no one mistakes a reserved namespace or a marketing screen for a working capability."},
+
+  {"t":"table","headers":["Item","Current state","Evidence","Effort to ship"],"rows":[
+    ["Agent runtime","ABSENT — scaffold only","agents/app/src/index.ts: dailyBriefing/summarizeConversation/workspaceInsights all throw 'not implemented (Sprint 6)'; imported nowhere","Large — LLM wiring, planner, memory, tool dispatch all new"],
+    ["MCP server (live)","Standalone prototype, not wired","mcp/app/src exists (20 tools, 7 resources, gateway), but no compose service, no start script, no app caller; AgentsView 'MCP not configured'","Medium — containerize, auth handshake, spec-complete transport"],
+    ["Full AI assistant UI","Endpoint without UI","api.askAgent defined in lib/api.ts but no component calls it","Small-medium — build the ask UI surface"],
+    ["Signal-grade E2EE","Not built","No X3DH, no Double Ratchet, no sealed sender, no forward secrecy; signedPreKey is null","Large — full ratchet + key-transparency"],
+    ["E2EE for groups/calls","Not built","distributeGroupSenderKey is a no-op; SFU media is plaintext","Large"],
+    ["Custom status text/emoji","Not built","No status_text/statusEmoji column or code; only manual away/busy/DND","Small"],
+    ["Web push notifications","Not built","Notifications are in-app only; no web-push/service-worker push","Medium"],
+    ["Multi-region SFU (live)","Designed, not deployed","docker-compose.mumbai.yml + docs exist; not running; single us-east SFU today","Medium — provision asia-south1 box"]
+  ],"widths":[1700,1700,3400,2200]},
+
+  {"t":"h","level":3,"text":"18.3.1 Agents and MCP — reserved, not running"},
+
+  {"t":"p","text":"Both the `agents/` and `mcp/` modules participate in the monorepo build/lint graph (they are npm workspaces, linted by depcruise/madge) but ship no runtime behavior in the product. The repository's own `docs/ARCHITECTURE.md` labels them as scaffolds, and the in-app `AgentsView.tsx` is a static governance/marketing page that renders 'No agents connected' / 'No MCP server is configured in this deployment'. The MCP server is more built than the agents module — it has 20 real tool definitions and a working stdio JSON-RPC loop that proxies to the REST backend — but it has no `initialize` handshake, its SSE transport is discovery-only (cannot invoke tools), it is not containerized, and nothing in the product invokes it. The working in-product AI (the `Agen-X` summarize/ask in `aiService.ts`) is a completely separate implementation that does not use the `agents/` module despite a coincidental shared method name."},
+
+  {"t":"callout","kind":"note","title":"Do not confuse the three AI surfaces","text":"(1) aiService.ts — the REAL, working OpenAI-compatible summarize/ask backend (off when LLM_BASE_URL unset). (2) agents/ — an empty scaffold whose methods throw. (3) mcp/ — a standalone REST-proxy prototype not wired into any deployment. Only (1) does real work, and even (1) is mostly hidden behind feature flags / has no ask UI."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"18.4 Technical Debt"},
+
+  {"t":"p","text":"This is the accumulated debt that a future maintainer will pay interest on. None of it is a bug today, but each item raises the cost of change or the risk of regression, and each should be on the long-term roadmap."},
+
+  {"t":"h","level":3,"text":"18.4.1 The CoLabV1 god-component and re-render pattern"},
+
+  {"t":"p","text":"`CoLabV1.tsx` is ~9,039 lines and owns nearly all application state — `mode`, theme, conversations, active conversation, settings, modals, toasts, call state, plus several inline views (Activity ~line 5003, Dashboard ~line 5477). State is plain React `useState` with no Redux/Zustand/Jotai and effectively no app-level Context; props are drilled into child views. The mitigation already in place is a set of `useRef` mirrors (`tokenRef`, `messagesByConvRef`, `socketRef`, `settingsRef`, `meRef`, `usersRef`, `conversationsRef`) so callbacks read latest state without unstable dependencies, frozen `EMPTY_ARR`/`EMPTY_OBJ` constants for stable identities, and `React.memo` on heavy children (ChatView). **Debt:** because the god-component holds the socket-event sinks, a naive change can reintroduce a full-tree re-render on every socket event. The proven pattern for further work is memoized shells (ChatView/Rail) fed stable props via refs — but the structural debt of a 9k-line single component remains, and ChatView itself is ~6,296 lines."},
+
+  {"t":"table","headers":["Hotspot","Lines","Debt"],"rows":[
+    ["CoLabV1.tsx","9,039","God-component; owns all state, inline views, call/ring UI; re-render risk"],
+    ["ChatView.tsx","6,296","Message list + composer + reactions + threads in one file"],
+    ["MeetingStage.tsx","2,850","Full meeting UI; CSS shared with 1:1 call path (change-coupling)"],
+    ["styles/v1.css","16,672","Single stylesheet; all theming/responsive/accessibility in one file"],
+    ["Settings.tsx","1,822","All theme/accent/density/zoom/font controls in one surface"]
+  ],"widths":[3500,1500,4000]},
+
+  {"t":"h","level":3,"text":"18.4.2 Brand-token contrast debt"},
+
+  {"t":"p","text":"The default accent and a number of status/surface token combinations were chosen for brand look first; not all of them clear WCAG AA contrast on every theme without the high-contrast toggle. This is a design-token debt: it should be paid by re-deriving accent-on-surface tokens per theme so that contrast is correct by default, rather than relying on the user to enable high-contrast mode. It is enumerated in the enterprise UI audit work referenced in the design-system section of this handbook."},
+
+  {"t":"h","level":3,"text":"18.4.3 Dependency and supply-chain advisories"},
+
+  {"t":"p","text":"The repository carries security tooling config (`audit-ci.json`, `.dependency-cruiser.cjs`, `knip.json`, `.secretlintrc.json`). Transitive dependency advisories surface periodically through the deep React/Next/LiveKit/AWS-SDK dependency trees; these are largely transitive (not direct) and should be triaged on a schedule via `npm audit` / audit-ci rather than chased reactively. The native E2EE path deliberately avoids adding a heavy crypto dependency (it uses built-in Web Crypto), and `@signalapp/libsignal-client` is aliased OUT of the client bundle precisely so a native Rust NAPI dependency never ships to the browser — a deliberate debt-avoidance choice worth preserving."},
+
+  {"t":"h","level":3,"text":"18.4.4 Other tracked debt"},
+
+  {"t":"ul","items":[
+    {"text":"Silent DB-blob fallback on storage failure","items":["If MinIO is down, fileService.create silently writes file bytes into the MySQL `data` LONGBLOB with no operator alert (empty catch). Files are not lost, but the failure is invisible — add alerting."]},
+    {"text":"In-memory rate limiting and ephemeral call state","items":["The HTTP rate limiter is per-instance in-memory (not shared across instances); callTimers/sendBuckets/recentIncoming are intentionally per-process and not in Redis. Acceptable for single-instance, a gap for horizontal scale (durable huddle/hand state IS in Redis)."]},
+    {"text":"Socket handshake does not re-check the token blocklist","items":["Only HTTP middleware checks tokenBlocklist; a revoked token can still complete a socket handshake until it expires. Low severity (7d max), but worth closing."]},
+    {"text":"One API gateway is inert dead-weight","items":["oneApiClient.ts matches a structured contract but is verified INERT — all runtime SQL uses the direct mysql2 pool. It is a reserved-but-unused code path that must be kept from bit-rotting or removed."]},
+    {"text":"Manual inline validation, no schema library","items":["Routes validate by hand (destructure/slice/clamp); authority lives in services. Works, but a schema layer would reduce per-route drift."]}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"18.5 Known Issues"},
+
+  {"t":"p","text":"These are concrete, currently-true behaviors that an operator or support engineer will encounter. They are distinct from debt: each is a thing that can confuse or bite a user today, with a known cause and a known workaround."},
+
+  {"t":"table","headers":["Issue","Cause","Impact / workaround"],"rows":[
+    ["Search nav missing","globalSearch flag off by default; hidden in Rail HIDDEN_NAV","Set NEXT_PUBLIC_FEATURE_GLOBAL_SEARCH=1 and rebuild; code is intact"],
+    ["AI 'Catch up' / summarize absent or 503","aiSummary flag off, and/or LLM_BASE_URL unset (AI_DISABLED)","Set flag + LLM_BASE_URL/LLM_API_KEY; E2EE-encrypted rows are skipped from summaries by design"],
+    ["No AI ask UI despite working endpoint","api.askAgent never called from any component","Endpoint usable via API; UI is pending (see 18.3)"],
+    ["Recording start returns 503","Server-side egress container not provisioned","Use client-side recording, or provision egress + EGRESS_ENABLED"],
+    ["A new setting 'does nothing' after save","Frontend setting absent from backend DEFAULTS is silently dropped on save","Add the key to backend settings DEFAULTS whitelist"],
+    ["Calls fail with 'media server error' on a fresh deploy","Served over plain-HTTP bare IP (insecure context blocks getUserMedia) or ws://localhost LiveKit URL","Put a TLS front (Caddy/nginx+LB) and let wsUrl derive from request origin; ensure TURN reachable"],
+    ["Off-network call connects but no audio/video","Single-region SFU media ports / TURN not reachable across the remote network or firewall","Open SFU media ports + reachable TURN; check [CALLDIAG] relay/turnUsed flags"],
+    ["E2EE 'no safety number to verify'","Safety-number computed in lib but wired into no UI","Expected — verification UI is pending (Phase 1 limit)"]
+  ],"widths":[2400,3000,3600]},
+
+  {"t":"h","level":3,"text":"18.5.1 Troubleshooting the most common one: calls fail on a new deployment"},
+
+  {"t":"p","text":"By far the most frequent operational issue is 'calls don't work after we deployed'. It is almost never application code. The diagnostic order is: (1) confirm the page is served over HTTPS — a non-secure context silently blocks `getUserMedia`; (2) confirm the LiveKit signalling URL is being derived from the request origin (`wss://<host>/livekit`) and is not a stale `ws://localhost`; (3) confirm the SFU media ports are reachable from the client network (7532/udp, 7531/tcp); (4) confirm a TURN relay is advertised AND reachable (the `[CALLDIAG]` trace distinguishes 'advertised but not reachable — check 3478/5349/443' from 'no TURN advertised'); (5) if signalling is healthy but media fails, it is the ICE/DTLS media plane (TURN/firewall/region), not the `/livekit` proxy."},
+
+  {"t":"diagram","kind":"pipeline","title":"Call-failure triage order","steps":[
+    {"label":"Secure context?","detail":"HTTPS required or getUserMedia is blocked"},
+    {"label":"Signalling URL?","detail":"wss://host/livekit derived from origin, not ws://localhost"},
+    {"label":"SFU media ports?","detail":"7532/udp + 7531/tcp reachable from client network"},
+    {"label":"TURN advertised + reachable?","detail":"3478/5349/443; check [CALLDIAG] relay flags"},
+    {"label":"Region latency?","detail":"single-region SFU = high RTT for distant users"}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"18.6 Production Risks"},
+
+  {"t":"p","text":"These are the risks that can cause user-visible failure or a security exposure in production. Each is grounded in the real deployment configuration, and each has a concrete mitigation."},
+
+  {"t":"h","level":3,"text":"18.6.1 Cross-network media depends on TURN, firewall and region"},
+
+  {"t":"p","text":"**Risk.** Calls and meetings work perfectly on a LAN or VPN but can silently fail to deliver media when the two endpoints are on different networks (office Wi-Fi to home 4G, hotel/corporate NAT, etc.). The signalling plane stays healthy, so the app looks connected while no audio/video flows. **Cause.** Media is WebRTC ICE/DTLS over UDP/TCP and, for locked-down NATs, must fall back to a TURN relay; if the SFU media ports or the coturn relay are not reachable across the remote network, the candidate-pair never completes. **Mitigation.** Provision and verify a reachable TURN relay (coturn supports turns: over 443 — the only transport that reliably traverses locked-down mobile/corporate/hotel NAT), open the SFU media ports at the firewall, and use the `[CALLDIAG]` observability to confirm a relay candidate pair is selected. This is an infrastructure responsibility, not an app fix."},
+
+  {"t":"h","level":3,"text":"18.6.2 Single-region SFU latency"},
+
+  {"t":"p","text":"**Risk.** A LiveKit SFU is not peer-to-peer — every participant's media goes client→SFU→client. A single SFU in us-east means India-based users see ~200–300 ms RTT even in the same room, degrading call quality. **Mitigation (designed, not deployed).** `docker-compose.mumbai.yml` + `docs/DEPLOY_MUMBAI_REGION.md` relocate ONLY the media engine (SFU + coturn + a LiveKit-state Redis) to asia-south1 (~20–40 ms) with no application code change — signalling continues to flow through the existing nginx `/livekit` proxy, media goes direct to the regional box. Until that is provisioned, distant-user latency is an accepted risk."},
+
+  {"t":"h","level":3,"text":"18.6.3 Secrets shipped in deployment artifacts"},
+
+  {"t":"callout","kind":"risk","title":"Secrets travel in the deploy zip and committed config","text":"scripts/package-deploy-live.ps1 builds a CoLab-LIVE-deploy zip that ships FILLED .env.live / .env.teams / .env.local plus a database/dumps SQL snapshot. A real static coturn TURN password is hardcoded in the committed infrastructure/coturn/turnserver.conf and in deploy docs. Default MinIO root creds (colabminio/colabminio123 or colab/colab) are weak and unenforced. Treat every deploy artifact as secret-bearing: restrict who can receive the zip, rotate the TURN credential and MinIO creds, and never commit a real .env. The production boot guard refuses to start with bundled default AUTH_JWT_SECRET / LIVEKIT_API_SECRET, which is the backstop — but it does NOT cover the TURN or MinIO secrets."},
+
+  {"t":"h","level":3,"text":"18.6.4 Storage, encryption-at-rest and the silent fallback"},
+
+  {"t":"ul","items":[
+    "No encryption at rest by default — MinIO server-side encryption is not configured; objects sit plain on the volume unless app-level E2EE is on (off by default).",
+    "Internal backend→MinIO hop is plain http://minio:9000; external client transit security depends entirely on the deployment TLS front.",
+    "Silent DB-blob fallback — if MinIO is unreachable, uploads quietly land in MySQL with no alert. Monitor MinIO health explicitly.",
+    "Presigned-URL feature is wired but bypassed by the same-origin proxy delivery model, so it is not a production attack surface today."
+  ]},
+
+  {"t":"h","level":3,"text":"18.6.5 Data-loss and rollback discipline"},
+
+  {"t":"p","text":"**Risk.** `docker compose down -v` deletes the `colab_mysqldata` volume — total data loss. **Mitigation.** Migrations are additive/idempotent and tracked in `schema_migrations` with a statement-level idempotent runner that resumes from a failure point (no crash-loop), and the named volume persists across rebuilds; but the operational rule is firm: always `mysqldump` before any deploy, use `down` (never `down -v`), and rely on `migrate-local-to-prod.sh` taking a prod backup first as its own rollback. The live `collab.resulticks.com` deployment writes to its OWN bundled MySQL container volume by default — back THAT up, not the empty corporate DB."},
+
+  {"t":"h","level":3,"text":"18.6.6 Single-instance assumptions"},
+
+  {"t":"p","text":"The HTTP rate limiter and several ephemeral call structures are per-process in-memory. The system is correct on a single backend instance; running multiple instances behind a load balancer requires the Redis adapter (already supported and gated by `REDIS_URL`, with a 3 s readiness race and in-memory fallback) and would expose the per-instance rate-limit and ephemeral-state gaps. Plan for Redis-backed shared state before horizontal scale-out."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"18.7 Status Summary Matrix"},
+
+  {"t":"p","text":"The consolidated status of every product surface, for quick reference. This is the one table to scan when someone asks 'is X done?'."},
+
+  {"t":"table","headers":["Surface","Status","One-line reality"],"rows":[
+    ["Authentication","DONE","scrypt + 7d JWT + blocklist + audit; enterprise credential policy enforced server-side"],
+    ["Dashboard","DONE","Default landing; aggregates existing APIs; no own table"],
+    ["Messaging (DM/group/channel)","DONE","One schema by `kind`; threads, reactions, pins, forwards, scheduled, FTS"],
+    ["Calls (1:1 + group)","DONE*","LiveKit; host controls; *external media needs HTTPS+TURN"],
+    ["Meetings","DONE*","Lobby/lock/eject/recurrence/join-by-ID; *same media caveat"],
+    ["Contacts","DONE","Directory + block/report + profile fields"],
+    ["Calendar","DONE","View over meetings+reminders; no separate table"],
+    ["Activity / Notifications","DONE","In-app feed + Rail badge; NO web-push"],
+    ["Tasks","DONE","Kanban + deps + comments + activity log"],
+    ["Reminders","DONE","Folders + recurrence + due/status"],
+    ["Files / Attachments","DONE","S3/MinIO + DB-blob fallback + share links"],
+    ["Reactions","DONE","Inline reactions_json; who-reacted UI"],
+    ["Voice messages","DONE","type='voice' + voicemails; slide-to-cancel deferred"],
+    ["Screen sharing","DONE*","LiveKit track source incl. audio; *media caveat"],
+    ["Presence","DONE","Realtime on/off; manual away/busy/DND"],
+    ["Settings","DONE","6 themes, accents, density, zoom, fonts, a11y toggles"],
+    ["Global Search","PARTIAL","Built; nav hidden behind flag"],
+    ["AI summarize","PARTIAL","Works behind flag + LLM config"],
+    ["AI ask (Agen-X)","PARTIAL","Endpoint exists; no UI"],
+    ["E2EE (DM)","PARTIAL","Phase 1: DM-only, no FS, no safety-number UI, off by default"],
+    ["Recording","PARTIAL","Client-side works; server egress not provisioned"],
+    ["Status (custom text/emoji)","PARTIAL","Only manual presence; no custom status"],
+    ["Agents","ABSENT","Scaffold throws 'not implemented (Sprint 6)'"],
+    ["MCP server","ABSENT (live)","Real prototype, not wired into any deployment"],
+    ["Web push","ABSENT","In-app notifications only"],
+    ["Multi-region SFU","ABSENT (live)","Designed (Mumbai), not deployed"]
+  ],"widths":[2700,1200,5100]},
+
+  {"t":"p","text":"*Asterisked items carry the media-plane caveat: application logic is verified, external media delivery is deployment-dependent (HTTPS secure context + reachable TURN)."},
+
+  {"t":"callout","kind":"tip","title":"The honest one-sentence status","text":"CoLab is a fully working, enterprise-styled collaboration product across messaging, calls, meetings, tasks, reminders, files and notifications — with AI, agents, MCP, multi-region media and Signal-grade E2EE deliberately fenced off as flagged-off, scaffolded, or Phase-2 work, and with cross-network calling resting on correct TURN/firewall/region infrastructure rather than on application code."}
+]

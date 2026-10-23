@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "colab-edge",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  // Static SPA (frontend/app/out, built with CF_STATIC=1). Only API + realtime
+  // paths and the public meeting link (/join/<token>, served from the single
+  // exported /join/_ page — see src/index.ts) run the Worker; everything else is
+  // served straight from assets.
+  "assets": {
+    "directory": "../frontend/app/out",
+    "not_found_handling": "single-page-application",
+    "html_handling": "auto-trailing-slash",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*",
+      "/socket.io/*",
+      "/uploads/*",
+      "/join/*"
+    ]
+  },
+  // The secret COLAB_API_KEY (an External Data API key, docs/EXTERNAL_DATA_API.html) is managed in the
+  // Cloudflare dashboard / `wrangler secret put COLAB_API_KEY`, NOT here. keep_vars makes `wrangler deploy`
+  // preserve dashboard values; a var below overrides the dashboard value of the same name.
+  "keep_vars": true,
+  "vars": {
+    // Where the CoLab application API runs. /api/*, /socket.io/* and /uploads/* are reverse-proxied here
+    // and the Worker-side routes (/api/edge/*) read from <API_ORIGIN>/api/external/v1 with COLAB_API_KEY.
+    "API_ORIGIN": "https://collab-uat.resulticks.com"
+    // "COLAB_ORG_ID": "org_…"   // only for a PLATFORM key: pins /api/edge/* reads to one organization (X-Org-Id)
+  },
+  "routes": [{ "pattern": "collabedg.resulticks.com", "custom_domain": true }],
+  // v1 created the Durable Object that hosted the backend container; v2 deletes it (the Worker no longer
+  // runs a backend or any database connectivity — see README.md).
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["BackendContainer"] },
+    { "tag": "v2", "deleted_classes": ["BackendContainer"] }
+  ]
+}

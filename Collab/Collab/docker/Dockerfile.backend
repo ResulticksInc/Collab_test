@@ -1,0 +1,43 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+RUN apk add --no-cache tini && npm install -g tsx
+
+FROM base AS deps
+COPY package.json package-lock.json ./
+COPY config/package.json ./config/
+COPY shared/package.json ./shared/
+COPY database/package.json ./database/
+COPY backend/package.json ./backend/
+COPY mcp/package.json ./mcp/
+COPY agents/package.json ./agents/
+COPY frontend/app/package.json ./frontend/app/
+RUN npm ci --omit=dev --ignore-scripts --legacy-peer-deps
+
+FROM deps AS source
+COPY config/ ./config/
+COPY shared/ ./shared/
+COPY database/ ./database/
+COPY backend/ ./backend/
+
+FROM base AS runner
+ENV NODE_ENV=production
+ENV PORT=4000
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package.json ./
+COPY --from=deps /app/package-lock.json ./
+COPY --from=source /app/config ./config
+COPY --from=source /app/shared ./shared
+COPY --from=source /app/database ./database
+COPY --from=source /app/backend ./backend
+# Local file-storage tier root (docs/FILE_UPLOAD_STORAGE_CHAIN.md); a named volume
+# is mounted here by every compose profile. Created so a bare `docker run` works too.
+RUN mkdir -p /app/data/files
+EXPOSE 4000
+# AUDIT P2 (#42): container healthcheck so orchestration can gate on the backend
+# being READY (DB migrated + serving) instead of merely started — the boot-time
+# migration/import window is a defined not-ready state. Node is always present, so
+# no extra tool is needed. /api/health/ready 503s until the DB is reachable.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=6 \
+  CMD node -e "require('http').get('http://127.0.0.1:4000/api/health/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+ENTRYPOINT ["tini", "--"]
+CMD ["tsx", "backend/app/src/index.ts"]

@@ -1,0 +1,40 @@
+# Docker Compose OVERRIDE for server / production deployments.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.server.yml up -d
+#
+# For the nginx single-public-port deployment, run WITH the production profile:
+#   docker compose -f docker-compose.yml -f docker-compose.server.yml --profile production up -d
+#
+# REQUIRED in your .env before running:
+#   LIVEKIT_WS_URL=wss://YOUR_PUBLIC_HOST/livekit   (browser → nginx → SFU)
+#   AUTH_JWT_SECRET=<random 32+ char string>
+#   LIVEKIT_API_KEY=<key>
+#   LIVEKIT_API_SECRET=<secret>
+#
+# Open on firewall/security-group (all within the 7530-7536 range IT freed):
+#   7530/tcp  nginx — single entry: frontend, /api, /socket.io, /livekit, /minio
+#   7531/tcp  LiveKit ICE/TCP media fallback
+#   7532/udp  LiveKit ICE/UDP media
+#   7533/udp  LiveKit built-in TURN relay
+#   (7534 LiveKit signalling stays INTERNAL — nginx proxies it at /livekit)
+# Front nginx (7530) with TLS via your load-balancer / outer proxy so the page
+# and wss are HTTPS (browsers block camera/mic and ws:// from an https page).
+
+services:
+  livekit:
+    volumes:
+      # Production LiveKit config: 753x ports + use_external_ip for ICE candidates.
+      - ./infrastructure/livekit/livekit.prod.yaml:/etc/livekit.yaml:ro
+
+  # ── OPTIONAL: use a remote MySQL instead of the local 'db' container ──
+  # Uncomment this block and remove the 'db' service from docker-compose.yml
+  # depends_on list if you want the backend to hit an external database.
+  #
+  # backend:
+  #   environment:
+  #     DATABASE_URL: ${DATABASE_URL}
+  #     DEMO_DATABASE_URL: ${DEMO_DATABASE_URL}
+  #   depends_on:
+  #     db:
+  #       condition: service_started   # or remove entirely if skipping local db

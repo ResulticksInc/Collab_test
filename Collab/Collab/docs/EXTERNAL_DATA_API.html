@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{color-scheme:dark;}
+  html,body{margin:0;}
+  img{max-width:100%;}
+  [hidden]{display:none !important;}
+</style>
+<title>CoLab External Data API</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<style>
+  :root{
+    --bg:#090d16; --surface:#121826; --surface-2:#0d1220; --border:#1e293b; --border-soft:#182234;
+    --text:#f8fafc; --text-dim:#cbd5e1; --muted:#94a3b8; --faint:#64748b;
+    --accent:#6366f1; --accent-soft:rgba(99,102,241,.14); --accent-line:rgba(99,102,241,.4);
+    /* Keys are the credential (green); data is what flows back (blue). */
+    --key:#10b981;  --key-soft:rgba(16,185,129,.13);  --key-line:rgba(16,185,129,.38);
+    --data:#38bdf8; --data-soft:rgba(56,189,248,.13); --data-line:rgba(56,189,248,.38);
+    --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --r:14px; --r-sm:9px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:15px; line-height:1.65; -webkit-font-smoothing:antialiased; padding:0 22px 90px;}
+  .wrap{max-width:1080px; margin:0 auto;}
+  a{color:#a5b4fc; text-decoration:none; border-bottom:1px solid rgba(165,180,252,.3);}
+  a:hover{border-bottom-color:#a5b4fc;}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:4px;}
+  code{font-family:var(--mono);}
+  h1,h2,h3{text-wrap:balance; margin:0;}
+  header.top{padding:56px 0 34px; border-bottom:1px solid var(--border);}
+  .eyebrow{font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); margin-bottom:14px;}
+  h1{font-size:clamp(30px,4.6vw,42px); font-weight:800; letter-spacing:-.025em; line-height:1.1;}
+  .lede{margin-top:14px; max-width:64ch; color:var(--text-dim); font-size:17px; line-height:1.6;}
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin-top:22px;}
+  .chip{display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border:1px solid var(--border); border-radius:999px; background:var(--surface-2); font-family:var(--mono); font-size:11.5px; color:var(--muted);}
+  .chip b{color:var(--text-dim); font-weight:500;}
+  .dot{width:7px; height:7px; border-radius:50%; flex:none;}
+  .dot.key{background:var(--key);} .dot.data{background:var(--data);}
+  nav.toc{display:flex; flex-wrap:wrap; gap:6px; padding:18px 0 0;}
+  nav.toc a{font-family:var(--mono); font-size:11.5px; letter-spacing:.02em; padding:6px 11px; border-radius:999px; border:1px solid var(--border-soft); background:var(--surface-2); color:var(--muted);}
+  nav.toc a:hover{color:var(--text); border-color:var(--accent-line); background:var(--accent-soft);}
+  section{padding-top:52px;}
+  .sec-head{display:flex; align-items:baseline; gap:13px; margin-bottom:8px;}
+  .sec-num{font-family:var(--mono); font-size:12px; font-weight:700; color:var(--faint); letter-spacing:.08em; flex:none; padding-top:3px;}
+  h2{font-size:23px; font-weight:700; letter-spacing:-.015em;}
+  .sec-sub{color:var(--muted); max-width:68ch; margin:0 0 24px 33px; font-size:14.5px;}
+  @media (max-width:640px){ .sec-sub{margin-left:0;} }
+  h3{font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.09em; color:var(--text-dim); margin:34px 0 13px;}
+  h3 .tag{font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.08em; padding:2px 7px; border-radius:5px; margin-right:9px; vertical-align:1px;}
+  .tag.key{background:var(--key-soft); color:var(--key); border:1px solid var(--key-line);}
+  .tag.data{background:var(--data-soft); color:var(--data); border:1px solid var(--data-line);}
+  p{margin:0 0 14px; max-width:68ch; color:var(--text-dim);}
+  ul.plain{margin:0 0 14px; padding-left:20px; color:var(--text-dim); max-width:70ch;}
+  ul.plain li{margin-bottom:6px;}
+  .dirs{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  @media (max-width:780px){ .dirs{grid-template-columns:1fr;} }
+  .dir{background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:20px 22px 22px; border-top:2px solid var(--dir);}
+  .dir.is-key{--dir:var(--key);} .dir.is-data{--dir:var(--data);}
+  .dir h4{margin:0 0 4px; font-size:16px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:9px;}
+  .dir h4 .dot{width:8px; height:8px;}
+  .dir .who{font-family:var(--mono); font-size:11.5px; color:var(--dir); margin-bottom:12px;}
+  .dir p{margin:0 0 12px; font-size:14px; color:var(--muted);}
+  .dir dl{margin:0; display:grid; grid-template-columns:auto 1fr; gap:7px 14px; font-size:13px;}
+  .dir dt{font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); padding-top:2px;}
+  .dir dd{margin:0; color:var(--text-dim);}
+  .flow{margin:26px 0 0; padding:22px; background:var(--surface-2); border:1px solid var(--border); border-radius:var(--r); overflow-x:auto;}
+  .flow svg{display:block; min-width:640px; width:100%; height:auto;}
+  .pair{display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start; margin-bottom:16px;}
+  @media (max-width:900px){ .pair{grid-template-columns:1fr;} }
+  .pair.solo{grid-template-columns:1fr;}
+  .blk{background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); overflow:hidden; min-width:0;}
+  .blk .bar{display:flex; align-items:center; gap:9px; flex-wrap:wrap; padding:9px 13px; background:var(--surface-2); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:11.5px; color:var(--muted);}
+  .blk .bar .label{font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; color:var(--faint);}
+  .verb{font-weight:700; font-size:10.5px; letter-spacing:.06em; padding:2px 6px; border-radius:4px;}
+  .verb.post{background:rgba(52,211,153,.14); color:var(--ok);}
+  .verb.get{background:rgba(99,102,241,.16); color:#a5b4fc;}
+  .verb.del{background:rgba(248,113,113,.14); color:var(--bad);}
+  .path{color:var(--text-dim); word-break:break-all;}
+  .status{margin-left:auto; font-weight:700; font-size:11px;}
+  .status.s2{color:var(--ok);} .status.s4{color:var(--warn);} .status.s5{color:var(--bad);}
+  .blk pre{margin:0; padding:14px 15px; overflow-x:auto; font-family:var(--mono); font-size:12.4px; line-height:1.65; color:var(--text-dim); tab-size:2;}
+  .blk pre .k{color:#a5b4fc;} .blk pre .s{color:#6ee7b7;} .blk pre .n{color:#fbbf24;} .blk pre .c{color:var(--faint); font-style:italic;} .blk pre .hd{color:#c4b5fd;}
+  .note{display:flex; gap:11px; padding:13px 15px; margin:0 0 16px; background:var(--accent-soft); border:1px solid var(--accent-line); border-radius:var(--r-sm); font-size:13.5px; color:var(--text-dim); max-width:none;}
+  .note b{color:#c7d2fe; font-weight:600;}
+  .note .mark{font-family:var(--mono); font-size:10px; font-weight:700; letter-spacing:.09em; color:#a5b4fc; padding-top:3px; flex:none; text-transform:uppercase;}
+  .note.danger{background:rgba(248,113,113,.1); border-color:rgba(248,113,113,.32);}
+  .note.danger b, .note.danger .mark{color:#fca5a5;}
+  .tbl-wrap{overflow-x:auto; border:1px solid var(--border); border-radius:var(--r-sm); background:var(--surface); margin-bottom:16px;}
+  table{width:100%; border-collapse:collapse; font-size:13.5px; min-width:540px;}
+  th{text-align:left; padding:11px 15px; background:var(--surface-2); font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border); white-space:nowrap;}
+  td{padding:11px 15px; border-bottom:1px solid var(--border-soft); color:var(--text-dim); vertical-align:top;}
+  tr:last-child td{border-bottom:none;}
+  td code, th code, p code, li code{font-family:var(--mono); font-size:12.2px; color:#c7d2fe; background:var(--surface-2); padding:1.5px 5px; border-radius:4px; white-space:nowrap;}
+  .m{font-family:var(--mono); font-size:11px; font-weight:700; padding:2px 6px; border-radius:4px; letter-spacing:.05em;}
+  .m.get{background:rgba(99,102,241,.16); color:#a5b4fc;} .m.post{background:rgba(52,211,153,.14); color:var(--ok);} .m.del{background:rgba(248,113,113,.14); color:var(--bad);}
+  .pill{font-family:var(--mono); font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px; letter-spacing:.05em; white-space:nowrap;}
+  .pill.ok{background:rgba(52,211,153,.13); color:var(--ok); border:1px solid rgba(52,211,153,.32);}
+  .pill.warn{background:rgba(251,191,36,.13); color:var(--warn); border:1px solid rgba(251,191,36,.32);}
+  .pill.bad{background:rgba(248,113,113,.12); color:var(--bad); border:1px solid rgba(248,113,113,.32);}
+  .steps{counter-reset:s; margin:0 0 18px; padding:0; list-style:none; max-width:72ch;}
+  .steps li{position:relative; padding-left:38px; margin-bottom:12px; color:var(--text-dim);}
+  .steps li::before{counter-increment:s; content:counter(s); position:absolute; left:0; top:1px; width:24px; height:24px; border-radius:50%; background:var(--accent-soft); border:1px solid var(--accent-line); color:#c7d2fe; font-family:var(--mono); font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center;}
+  footer{margin-top:64px; padding-top:22px; border-top:1px solid var(--border); display:flex; flex-wrap:wrap; gap:14px 26px; align-items:baseline; font-family:var(--mono); font-size:11.5px; color:var(--faint);}
+  @media (prefers-reduced-motion:reduce){ *{animation:none !important; transition:none !important;} }
+</style>
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">CoLab · Integration guide</div>
+  <h1>External Data API</h1>
+  <p class="lede">
+    Connect another platform to CoLab. <strong>Read</strong> an organization&rsquo;s data &mdash; people,
+    conversations, messages, meetings, tasks, files, or any allow-listed table &mdash; and
+    <strong>act</strong> in it: send messages, receive them on your own URL, place and answer
+    calls, schedule meetings. One API key, plain HTTPS, JSON in and out.
+  </p>
+  <div class="chips">
+    <span class="chip"><span class="dot key"></span><b>Auth</b>&nbsp;X-API-Key: colab_&hellip;</span>
+    <span class="chip"><span class="dot data"></span><b>Read</b>&nbsp;GET · <b>Act</b>&nbsp;POST, as a user</span>
+    <span class="chip">Base: <b>/api/external/v1</b></span>
+    <span class="chip">Scoped to <b>one organization</b></span>
+    <span class="chip">OpenAPI: <b>/api/external/v1/openapi.json</b></span>
+  </div>
+  <nav class="toc">
+    <a href="#overview">What you get</a>
+    <a href="#key">Get an API key</a>
+    <a href="#call">Call the API</a>
+    <a href="#reference">Endpoint reference</a>
+    <a href="#tables">Read any table</a>
+    <a href="#send">Send a message</a>
+    <a href="#receive">Receive messages</a>
+    <a href="#calls">Calls</a>
+    <a href="#meetings">Meetings</a>
+    <a href="#tenant">Tenants, scopes &amp; actor</a>
+    <a href="#errors">Errors &amp; limits</a>
+    <a href="#manage">Manage keys</a>
+    <a href="#config">Configuration</a>
+    <a href="#checklist">Checklist</a>
+  </nav>
+</header>
+
+<!-- ══ 1 ══════════════════════════════════════════════════════ -->
+<section id="overview">
+  <div class="sec-head"><span class="sec-num">01</span><h2>What you get</h2></div>
+  <p class="sec-sub">
+    The API sits in front of CoLab&rsquo;s MySQL database and its messaging, calling and
+    meeting services. Every request carries an API key; the key decides <em>which
+    organization</em> you can see, <em>which scopes</em> you hold, and <em>which user</em> your
+    writes act as. Reads are server-built SQL pinned to that organization. Writes go through
+    the same services the CoLab app uses, so people see them live, get pushed, and your
+    outgoing webhooks fire &mdash; exactly as for an in-app action.
+  </p>
+
+  <div class="dirs">
+    <div class="dir is-data">
+      <h4><span class="dot data"></span>Typed endpoints</h4>
+      <div class="who">/users · /conversations · /messages · /meetings · /tasks · /files</div>
+      <p>Shaped JSON with camelCase fields, related counts (members, attendees) and the
+         filters an integration actually needs: <code>since</code>, <code>status</code>,
+         <code>assigneeId</code>, a date window, and so on.</p>
+      <dl>
+        <dt>Shape</dt><dd>Stable, documented objects.</dd>
+        <dt>Use for</dt><dd>CRM sync, dashboards, notifications, reporting.</dd>
+      </dl>
+    </div>
+    <div class="dir is-key">
+      <h4><span class="dot key"></span>Generic table reader</h4>
+      <div class="who">/tables · /tables/{name}</div>
+      <p>Row-level reads over an <em>allow-list</em> of tables and columns, with equality
+         filters, a time window and ordering. Snake_case columns exactly as they are in MySQL.</p>
+      <dl>
+        <dt>Shape</dt><dd>Raw rows, your choice of columns.</dd>
+        <dt>Use for</dt><dd>ETL into a warehouse, BI tools, ad-hoc exports.</dd>
+      </dl>
+    </div>
+    <div class="dir is-data">
+      <h4><span class="dot data"></span>Act in CoLab</h4>
+      <div class="who">POST /messages · /webhooks · /calls · /meetings</div>
+      <p>Send a message to a conversation or straight to a person, subscribe your URL to a
+         conversation&rsquo;s messages, ring someone and join the call&rsquo;s media room, or
+         schedule a meeting and invite people &mdash; all <em>as</em> a CoLab user of your choosing.</p>
+      <dl>
+        <dt>Identity</dt><dd>The key&rsquo;s actor, or <code>asUserId</code> per request.</dd>
+        <dt>Use for</dt><dd>CRM &ldquo;Message in CoLab&rdquo; buttons, alerting bots, click-to-call, calendar sync.</dd>
+      </dl>
+    </div>
+    <div class="dir is-key">
+      <h4><span class="dot key"></span>Realtime media</h4>
+      <div class="who">LiveKit join tokens</div>
+      <p>Calls and meetings run on LiveKit. The API returns the same kind of room token the
+         CoLab apps use, so your platform can join the audio/video with the LiveKit client SDK
+         for the web, iOS, Android, Flutter or React Native.</p>
+      <dl>
+        <dt>Shape</dt><dd><code>{ token, wsUrl, room }</code></dd>
+        <dt>Use for</dt><dd>Embedding a CoLab call in your own UI.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="flow">
+    <svg viewBox="0 0 760 150" role="img" aria-label="Your platform sends a request with an API key to the CoLab External Data API, which checks the key's organization and scope, runs an organization-scoped SELECT against MySQL, and returns JSON.">
+      <defs>
+        <marker id="ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#10b981"/></marker>
+        <marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#38bdf8"/></marker>
+      </defs>
+      <g font-family="JetBrains Mono, monospace" font-size="11">
+        <rect x="1" y="40" width="150" height="60" rx="8" fill="#0d1220" stroke="#1e293b"/>
+        <text x="76" y="64" fill="#cbd5e1" text-anchor="middle">Your platform</text>
+        <text x="76" y="80" fill="#64748b" text-anchor="middle" font-size="10">CRM · BI · script</text>
+
+        <rect x="250" y="22" width="250" height="96" rx="10" fill="#121826" stroke="#6366f1"/>
+        <text x="375" y="48" fill="#f8fafc" text-anchor="middle" font-size="12.5" font-family="Inter, sans-serif" font-weight="600">CoLab External Data API</text>
+        <text x="375" y="68" fill="#94a3b8" text-anchor="middle" font-size="10">1 · verify key (hash) &amp; expiry</text>
+        <text x="375" y="84" fill="#94a3b8" text-anchor="middle" font-size="10">2 · check scope for the route</text>
+        <text x="375" y="100" fill="#94a3b8" text-anchor="middle" font-size="10">3 · pin SQL to the key's organization</text>
+
+        <rect x="608" y="40" width="150" height="60" rx="8" fill="#0d1220" stroke="#1e293b"/>
+        <text x="683" y="64" fill="#cbd5e1" text-anchor="middle">MySQL</text>
+        <text x="683" y="80" fill="#64748b" text-anchor="middle" font-size="10">read-only SELECT</text>
+      </g>
+      <path d="M151 58 L244 58" stroke="#10b981" stroke-width="1.6" fill="none" marker-end="url(#ak)"/>
+      <path d="M500 58 L602 58" stroke="#10b981" stroke-width="1.6" fill="none" marker-end="url(#ak)"/>
+      <path d="M602 84 L506 84" stroke="#38bdf8" stroke-width="1.6" fill="none" marker-end="url(#ad)"/>
+      <path d="M250 84 L157 84" stroke="#38bdf8" stroke-width="1.6" fill="none" marker-end="url(#ad)"/>
+      <g font-family="JetBrains Mono, monospace" font-size="9.5" letter-spacing="1">
+        <text x="198" y="50" fill="#10b981" text-anchor="middle">X-API-Key</text>
+        <text x="198" y="100" fill="#38bdf8" text-anchor="middle">JSON</text>
+        <text x="552" y="50" fill="#10b981" text-anchor="middle">WHERE org=?</text>
+        <text x="552" y="100" fill="#38bdf8" text-anchor="middle">rows</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ══ 2 ══════════════════════════════════════════════════════ -->
+<section id="key">
+  <div class="sec-head"><span class="sec-num">02</span><h2>Get an API key</h2></div>
+  <p class="sec-sub">
+    A key is a string that starts with <code>colab_</code>. It is shown <strong>once</strong>,
+    when it is created; CoLab stores only a hash and the last six characters so you can
+    recognise it later. Three ways to get one, from least to most privileged.
+  </p>
+
+  <h3><span class="tag key">A</span>As an organization admin</h3>
+  <p>Sign in to CoLab normally and call the org API with your session token. The key is pinned
+     to your organization and can never read another tenant. You need the
+     <code>org:manage</code> permission (owners and admins have it). For write scopes, give the
+     key an <strong>actor</strong> (<code>userId</code>) &mdash; the member, or a dedicated bot
+     account, whose name your messages and calls will carry.</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/auth/login</span></div>
+<pre><span class="hd">Content-Type:</span> application/json
+
+{ <span class="k">"email"</span>: <span class="s">"you@company.com"</span>, <span class="k">"password"</span>: <span class="s">"…"</span> }</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">200</span></div>
+<pre>{ <span class="k">"ok"</span>: <span class="n">true</span>, <span class="k">"data"</span>: { <span class="k">"token"</span>: <span class="s">"eyJhbGciOi…"</span>, <span class="c">…</span> } }
+<span class="c">// SSO deployments: copy the token from the app instead —
+// localStorage.getItem("clb_token") in the browser console.</span></pre>
+    </div>
+  </div>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/orgs/current/api-keys</span></div>
+<pre><span class="hd">Authorization:</span> Bearer eyJhbGciOi…
+<span class="hd">Content-Type:</span> application/json
+
+{
+  <span class="k">"name"</span>: <span class="s">"Salesforce sync"</span>,
+  <span class="k">"scopes"</span>: [<span class="s">"users:read"</span>, <span class="s">"messages:read"</span>, <span class="s">"messages:write"</span>],
+                                           <span class="c">// "read" = all reads · "write" = all writes · "all"</span>
+  <span class="k">"userId"</span>: <span class="s">"u_crm_bot"</span>,                    <span class="c">// optional: default actor for writes</span>
+  <span class="k">"expiresAt"</span>: <span class="s">"2027-01-01T00:00:00Z"</span>          <span class="c">// optional</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">201</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"key"</span>: <span class="s">"colab_7Qk3…Zp9a"</span>,          <span class="c">// ← shown ONCE. Store it now.</span>
+    <span class="k">"apiKey"</span>: {
+      <span class="k">"id"</span>: <span class="s">"5f1e…"</span>, <span class="k">"name"</span>: <span class="s">"Salesforce sync"</span>,
+      <span class="k">"organizationId"</span>: <span class="s">"org_…"</span>, <span class="k">"platform"</span>: <span class="n">false</span>,
+      <span class="k">"userId"</span>: <span class="s">"u_crm_bot"</span>, <span class="k">"keyHint"</span>: <span class="s">"…Zp9a"</span>,
+      <span class="k">"scopes"</span>: [<span class="s">"users:read"</span>, <span class="s">"messages:read"</span>, <span class="s">"messages:write"</span>],
+      <span class="k">"expiresAt"</span>: <span class="s">"2027-01-01T00:00:00.000Z"</span>, <span class="k">"enabled"</span>: <span class="n">true</span>
+    }
+  }
+}</pre>
+    </div>
+  </div>
+
+  <h3><span class="tag key">B</span>From the admin portal (any organization, or platform-wide)</h3>
+  <p>The CoLab admin portal has its own login (<code>ADMIN_EMAIL</code> / <code>ADMIN_PASSWORD</code>).
+     Pass <code>organizationId</code> to mint a key for one tenant, or leave it out for a
+     <strong>platform key</strong> that sees every organization and can be narrowed per request
+     with the <code>X-Org-Id</code> header.</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/admin/auth/login</span></div>
+<pre>{ <span class="k">"email"</span>: <span class="s">"admin@collab.local"</span>, <span class="k">"password"</span>: <span class="s">"…"</span> }
+<span class="c">// → { "ok": true, "token": "eyJ…" }</span></pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Request</span><span class="verb post">POST</span><span class="path">/api/admin/api-keys</span></div>
+<pre><span class="hd">Authorization:</span> Bearer &lt;admin token&gt;
+
+{
+  <span class="k">"name"</span>: <span class="s">"Warehouse ETL"</span>,
+  <span class="k">"organizationId"</span>: <span class="s">"org_…"</span>,   <span class="c">// omit → platform key</span>
+  <span class="k">"scopes"</span>: <span class="s">"all"</span>,
+  <span class="k">"userId"</span>: <span class="s">"u_…"</span>              <span class="c">// optional default actor</span>
+}
+<span class="c">// → 201, same { key, apiKey } shape as above</span></pre>
+    </div>
+  </div>
+
+  <h3><span class="tag key">C</span>A static key in the environment</h3>
+  <p>For a deployment with nobody to mint keys yet, the operator can set
+     <code>EXTERNAL_API_KEYS=colab_…,colab_…</code> on the backend. These are platform keys with
+     every read scope and no expiry &mdash; treat them like a root password and prefer A or B.</p>
+
+  <div class="note danger">
+    <span class="mark">Keep it secret</span>
+    <div>The key is a bearer credential: anyone holding it can read everything it can.
+      Put it in your platform&rsquo;s secret store, never in a URL, a log line or a front-end
+      bundle. If it leaks, <a href="#manage">rotate or revoke it</a> &mdash; the old value stops
+      working immediately.</div>
+  </div>
+</section>
+
+<!-- ══ 3 ══════════════════════════════════════════════════════ -->
+<section id="call">
+  <div class="sec-head"><span class="sec-num">03</span><h2>Call the API</h2></div>
+  <p class="sec-sub">
+    Every call is a <code>GET</code> to <code>https://&lt;your-colab-host&gt;/api/external/v1/…</code>
+    with the key in a header. Responses are JSON in CoLab&rsquo;s standard envelope.
+  </p>
+
+  <h3>Headers</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Header</th><th>Value</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>X-API-Key</code></td><td><code>colab_…</code></td><td>Preferred. Alternatives: <code>Authorization: ApiKey colab_…</code> or <code>Authorization: Bearer colab_…</code>.</td></tr>
+      <tr><td><code>Accept</code></td><td><code>application/json</code></td><td>Optional; JSON is the only format.</td></tr>
+      <tr><td><code>X-Org-Id</code></td><td>organization id</td><td><strong>Platform keys only.</strong> Narrow the request to one organization. Ignored for org keys (they are already pinned).</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Your first call</h3>
+  <p><code>/ping</code> tells you who the key is, which organization it is pinned to and which
+     scopes it holds. Use it to validate configuration before anything else.</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">curl</span><span class="verb get">GET</span><span class="path">/api/external/v1/ping</span></div>
+<pre>curl -s <span class="s">"https://colab.example.com/api/external/v1/ping"</span> \
+  -H <span class="s">"X-API-Key: $COLAB_API_KEY"</span></pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">200</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"keyId"</span>: <span class="s">"5f1e…"</span>, <span class="k">"keyName"</span>: <span class="s">"Salesforce sync"</span>,
+    <span class="k">"platform"</span>: <span class="n">false</span>,
+    <span class="k">"organization"</span>: { <span class="k">"id"</span>: <span class="s">"org_…"</span>, <span class="k">"name"</span>: <span class="s">"Acme"</span>, <span class="k">"slug"</span>: <span class="s">"acme"</span>, <span class="k">"status"</span>: <span class="s">"active"</span> },
+    <span class="k">"scopes"</span>: [<span class="s">"users:read"</span>, <span class="s">"messages:read"</span>],
+    <span class="k">"serverTime"</span>: <span class="s">"2026-10-14T09:30:00.000Z"</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <h3>The response envelope</h3>
+  <p>Every success is <code>{ ok: true, data, meta? }</code>; every failure is
+     <code>{ ok: false, error: { code, message } }</code>. Lists return an array in
+     <code>data</code> and paging information in <code>meta</code>; single objects return the
+     object in <code>data</code>.</p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">List</span><span class="verb get">GET</span><span class="path">/users?limit=2</span><span class="status s2">200</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: [
+    { <span class="k">"id"</span>: <span class="s">"u_…"</span>, <span class="k">"email"</span>: <span class="s">"priya@acme.com"</span>, <span class="k">"name"</span>: <span class="s">"Priya N"</span>,
+      <span class="k">"title"</span>: <span class="s">"Account Manager"</span>, <span class="k">"timezone"</span>: <span class="s">"Asia/Kolkata"</span>,
+      <span class="k">"presence"</span>: <span class="s">"on"</span>, <span class="k">"orgRole"</span>: <span class="s">"admin"</span>, <span class="k">"createdAt"</span>: <span class="s">"2026-03-02T08:11:04.000Z"</span> },
+    { <span class="c">…</span> }
+  ],
+  <span class="k">"meta"</span>: { <span class="k">"limit"</span>: <span class="n">2</span>, <span class="k">"offset"</span>: <span class="n">0</span>, <span class="k">"count"</span>: <span class="n">2</span>, <span class="k">"hasMore"</span>: <span class="n">true</span>, <span class="k">"nextOffset"</span>: <span class="n">2</span> }
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Error</span><span class="verb get">GET</span><span class="path">/messages</span><span class="status s4">403</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">false</span>,
+  <span class="k">"error"</span>: {
+    <span class="k">"code"</span>: <span class="s">"FORBIDDEN_SCOPE"</span>,
+    <span class="k">"message"</span>: <span class="s">"This API key does not have the \"messages:read\" scope"</span>,
+    <span class="k">"details"</span>: { <span class="k">"required"</span>: <span class="s">"messages:read"</span> }
+  }
+}</pre>
+    </div>
+  </div>
+
+  <h3>Paging</h3>
+  <p>Lists take <code>limit</code> (default 100, max 500) and <code>offset</code>. Keep calling
+     with <code>offset = meta.nextOffset</code> until <code>meta.hasMore</code> is
+     <code>false</code>. There is no total count &mdash; it would cost a full scan on big tables.
+     For incremental sync, filter with <code>since</code> (or <code>updatedSince</code> for tasks)
+     and remember the newest timestamp you saw.</p>
+
+  <h3>Dates</h3>
+  <p>All timestamps are ISO-8601 in UTC (<code>2026-10-14T09:30:00.000Z</code>), both in
+     responses and in query filters. A filter that is not a valid date-time returns
+     <code>400</code>.</p>
+
+  <h3>Examples in code</h3>
+  <div class="pair solo">
+    <div class="blk">
+      <div class="bar"><span class="label">JavaScript / Node 18+</span><span class="path">page through every message since a timestamp</span></div>
+<pre><span class="k">const</span> BASE = <span class="s">"https://colab.example.com/api/external/v1"</span>;
+<span class="k">const</span> headers = { <span class="s">"X-API-Key"</span>: process.env.COLAB_API_KEY };
+
+<span class="k">async function</span> fetchAll(path, params = {}) {
+  <span class="k">const</span> out = [];
+  <span class="k">let</span> offset = <span class="n">0</span>;
+  <span class="k">for</span> (;;) {
+    <span class="k">const</span> qs = <span class="k">new</span> URLSearchParams({ ...params, limit: <span class="s">"500"</span>, offset: String(offset) });
+    <span class="k">const</span> res = <span class="k">await</span> fetch(<span class="s">`${BASE}${path}?${qs}`</span>, { headers });
+    <span class="k">const</span> body = <span class="k">await</span> res.json();
+    <span class="k">if</span> (!body.ok) <span class="k">throw new</span> Error(<span class="s">`${res.status} ${body.error.code}: ${body.error.message}`</span>);
+    out.push(...body.data);
+    <span class="k">if</span> (!body.meta.hasMore) <span class="k">break</span>;
+    offset = body.meta.nextOffset;
+  }
+  <span class="k">return</span> out;
+}
+
+<span class="k">const</span> messages = <span class="k">await</span> fetchAll(<span class="s">"/messages"</span>, { since: <span class="s">"2026-10-01T00:00:00Z"</span>, order: <span class="s">"asc"</span> });
+console.log(messages.length, <span class="s">"messages"</span>);</pre>
+    </div>
+  </div>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Python 3</span><span class="path">requests</span></div>
+<pre><span class="k">import</span> os, requests
+
+BASE = <span class="s">"https://colab.example.com/api/external/v1"</span>
+H = {<span class="s">"X-API-Key"</span>: os.environ[<span class="s">"COLAB_API_KEY"</span>]}
+
+<span class="k">def</span> fetch_all(path, **params):
+    offset, rows = <span class="n">0</span>, []
+    <span class="k">while</span> <span class="n">True</span>:
+        r = requests.get(BASE + path, headers=H,
+                         params={**params, <span class="s">"limit"</span>: <span class="n">500</span>, <span class="s">"offset"</span>: offset},
+                         timeout=<span class="n">30</span>)
+        body = r.json()
+        <span class="k">if not</span> body[<span class="s">"ok"</span>]:
+            <span class="k">raise</span> RuntimeError(f<span class="s">"{r.status_code} {body['error']}"</span>)
+        rows += body[<span class="s">"data"</span>]
+        <span class="k">if not</span> body[<span class="s">"meta"</span>][<span class="s">"hasMore"</span>]:
+            <span class="k">return</span> rows
+        offset = body[<span class="s">"meta"</span>][<span class="s">"nextOffset"</span>]
+
+tasks = fetch_all(<span class="s">"/tasks"</span>, status=<span class="s">"todo"</span>)
+users = fetch_all(<span class="s">"/tables/users"</span>, columns=<span class="s">"id,email,name"</span>)</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">C# / .NET 6+</span><span class="path">HttpClient</span></div>
+<pre><span class="k">using</span> System.Net.Http.Json;
+
+<span class="k">var</span> http = <span class="k">new</span> HttpClient { BaseAddress = <span class="k">new</span> Uri(<span class="s">"https://colab.example.com/api/external/v1/"</span>) };
+http.DefaultRequestHeaders.Add(<span class="s">"X-API-Key"</span>, Environment.GetEnvironmentVariable(<span class="s">"COLAB_API_KEY"</span>));
+
+<span class="k">var</span> res = <span class="k">await</span> http.GetFromJsonAsync&lt;JsonElement&gt;(
+    <span class="s">"meetings?from=2026-10-01T00:00:00Z&amp;to=2026-10-31T23:59:59Z"</span>);
+
+<span class="k">if</span> (!res.GetProperty(<span class="s">"ok"</span>).GetBoolean())
+    <span class="k">throw new</span> Exception(res.GetProperty(<span class="s">"error"</span>).ToString());
+
+<span class="k">foreach</span> (<span class="k">var</span> m <span class="k">in</span> res.GetProperty(<span class="s">"data"</span>).EnumerateArray())
+    Console.WriteLine($<span class="s">"{m.GetProperty("startsAt")} {m.GetProperty("title")}"</span>);</pre>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="mark">OpenAPI</span>
+    <div><code>GET /api/external/v1/openapi.json</code> is public and describes every endpoint,
+      parameter and response. Import it into Postman, Insomnia, Swagger UI or a code generator
+      to get a typed client for your language.</div>
+  </div>
+</section>
+
+<!-- ══ 4 ══════════════════════════════════════════════════════ -->
+<section id="reference">
+  <div class="sec-head"><span class="sec-num">04</span><h2>Endpoint reference</h2></div>
+  <p class="sec-sub">All paths are under <code>/api/external/v1</code>. Every list accepts
+     <code>limit</code> and <code>offset</code>; the extra filters are listed per route. Write
+     routes take a JSON body and are detailed in §06&ndash;§09.</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th></th><th>Path</th><th>Scope</th><th>Filters</th><th>Returns</th></tr></thead>
+    <tbody>
+      <tr><td><span class="m get">GET</span></td><td><code>/health</code></td><td>none</td><td>&mdash;</td><td>Liveness. No key needed.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/openapi.json</code></td><td>none</td><td>&mdash;</td><td>OpenAPI 3 description. No key needed.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/ping</code></td><td>any</td><td>&mdash;</td><td>Key id/name, organization, scopes, server time.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/users</code></td><td><code>users:read</code></td><td><code>q</code> (name/email contains), <code>since</code></td><td>Active members of the organization. Includes <code>orgRole</code>, <code>teamId</code>. Never password hashes or avatars.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/users/{id}</code></td><td><code>users:read</code></td><td>&mdash;</td><td>One user.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/conversations</code></td><td><code>conversations:read</code></td><td><code>kind</code> (dm, group, channel…), <code>since</code></td><td>Conversations with <code>memberCount</code> and <code>lastMessageAt</code>.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/conversations/{id}</code></td><td><code>conversations:read</code></td><td>&mdash;</td><td>One conversation.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/conversations/{id}/members</code></td><td><code>conversations:read</code></td><td>&mdash;</td><td>Members with role, name, email, <code>lastReadAt</code>.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/conversations/{id}/messages</code></td><td><code>messages:read</code></td><td><code>since</code>, <code>until</code>, <code>order</code> (asc|desc)</td><td>Messages, oldest first by default.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/messages</code></td><td><code>messages:read</code></td><td><code>conversationId</code>, <code>senderId</code>, <code>since</code>, <code>until</code>, <code>order</code></td><td>Organization-wide stream &mdash; the one to poll for sync.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/meetings</code></td><td><code>meetings:read</code></td><td><code>from</code>, <code>to</code> (on startsAt), <code>status</code></td><td>Meetings by start time with <code>attendeeCount</code>.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/meetings/{id}</code></td><td><code>meetings:read</code></td><td>&mdash;</td><td>One meeting with its <code>attendees[]</code>.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/tasks</code></td><td><code>tasks:read</code></td><td><code>status</code>, <code>priority</code>, <code>assigneeId</code>, <code>reporterId</code>, <code>projectId</code>, <code>parentTaskId</code>, <code>updatedSince</code>, <code>dueBefore</code></td><td>Tasks, most recently updated first, with <code>assigneeIds[]</code>.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/tasks/{id}</code></td><td><code>tasks:read</code></td><td>&mdash;</td><td>One task with <code>comments[]</code>.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/files</code></td><td><code>files:read</code></td><td><code>conversationId</code>, <code>uploaderId</code>, <code>since</code></td><td>File <em>metadata</em>: name, mime, size, where it lives. Never the bytes.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/files/{id}</code></td><td><code>files:read</code></td><td>&mdash;</td><td>One file&rsquo;s metadata.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/messages</code>, <code>/conversations/{id}/messages</code></td><td><code>messages:write</code></td><td>body</td><td>Send a message as the actor &mdash; §06.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/webhooks</code> (+ list / test / deliveries / delete)</td><td><code>webhooks:write</code></td><td>body</td><td>Receive messages on your URL &mdash; §07.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/calls</code>, <code>/calls/{id}/accept|decline|hangup|token</code></td><td><code>calls:write</code></td><td>body</td><td>Ring, answer, end, join &mdash; §08.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/meetings</code>, <code>/meetings/{id}/token</code></td><td><code>meetings:write</code></td><td>body</td><td>Schedule and join &mdash; §09.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/tables</code></td><td><code>tables:read</code></td><td>&mdash;</td><td>The readable tables and their columns.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/tables/{name}</code></td><td><code>tables:read</code></td><td><code>columns</code>, <code>filter[col]</code>, <code>since</code>, <code>until</code>, <code>orderBy</code>, <code>order</code></td><td>Raw rows from one allow-listed table. See <a href="#tables">§05</a>.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Message object</h3>
+  <div class="pair solo">
+    <div class="blk">
+      <div class="bar"><span class="label">one element of data[]</span><span class="verb get">GET</span><span class="path">/conversations/{id}/messages</span></div>
+<pre>{
+  <span class="k">"id"</span>: <span class="s">"m_…"</span>, <span class="k">"conversationId"</span>: <span class="s">"c_…"</span>, <span class="k">"senderId"</span>: <span class="s">"u_…"</span>,
+  <span class="k">"type"</span>: <span class="s">"text"</span>,                       <span class="c">// text | file | voice | system …</span>
+  <span class="k">"body"</span>: <span class="s">"Shipping the Q4 deck today."</span>,
+  <span class="k">"encrypted"</span>: <span class="n">false</span>,                   <span class="c">// true → body/file/voice are null (E2EE)</span>
+  <span class="k">"file"</span>: <span class="n">null</span>, <span class="k">"voice"</span>: <span class="n">null</span>,
+  <span class="k">"reactions"</span>: { <span class="s">"👍"</span>: [<span class="s">"u_…"</span>] },
+  <span class="k">"forwarded"</span>: <span class="n">false</span>, <span class="k">"edited"</span>: <span class="n">false</span>, <span class="k">"pinned"</span>: <span class="n">false</span>,
+  <span class="k">"parentMessageId"</span>: <span class="n">null</span>,              <span class="c">// set on thread replies</span>
+  <span class="k">"createdAt"</span>: <span class="s">"2026-10-14T09:12:41.000Z"</span>
+}</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 5 ══════════════════════════════════════════════════════ -->
+<section id="tables">
+  <div class="sec-head"><span class="sec-num">05</span><h2>Read any table</h2></div>
+  <p class="sec-sub">
+    When the typed endpoints are not enough &mdash; a warehouse load, a BI tool that wants raw
+    columns &mdash; read rows directly from an allow-listed table. Column names are exactly
+    the MySQL ones. Secrets (password hashes, ciphertext, tokens, file bytes) are not in
+    the allow-list, so they cannot be selected, filtered or sorted on.
+  </p>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Discover</span><span class="verb get">GET</span><span class="path">/tables</span><span class="status s2">200</span></div>
+<pre>{ <span class="k">"ok"</span>: <span class="n">true</span>, <span class="k">"data"</span>: [
+  { <span class="k">"name"</span>: <span class="s">"users"</span>, <span class="k">"description"</span>: <span class="s">"People. No password hashes or avatars."</span>,
+    <span class="k">"columns"</span>: [<span class="s">"id"</span>,<span class="s">"email"</span>,<span class="s">"name"</span>,<span class="s">"initials"</span>,<span class="s">"title"</span>,<span class="s">"pronouns"</span>,<span class="s">"phone"</span>,<span class="s">"timezone"</span>,
+                <span class="s">"role"</span>,<span class="s">"presence"</span>,<span class="s">"last_seen"</span>,<span class="s">"sso_enabled"</span>,<span class="s">"created_at"</span>],
+    <span class="k">"timeColumn"</span>: <span class="s">"created_at"</span>, <span class="k">"scoped"</span>: <span class="n">true</span> },
+  { <span class="k">"name"</span>: <span class="s">"messages"</span>, <span class="c">…</span> },
+  <span class="c">…</span>
+] }</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Read</span><span class="verb get">GET</span><span class="path">/tables/tasks?columns=id,title,status,due_at&amp;filter[status]=todo&amp;orderBy=due_at&amp;limit=2</span><span class="status s2">200</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: [
+    { <span class="k">"id"</span>: <span class="s">"t_…"</span>, <span class="k">"title"</span>: <span class="s">"Renew contract"</span>, <span class="k">"status"</span>: <span class="s">"todo"</span>, <span class="k">"due_at"</span>: <span class="s">"2026-10-20T00:00:00.000Z"</span> },
+    { <span class="k">"id"</span>: <span class="s">"t_…"</span>, <span class="k">"title"</span>: <span class="s">"Send deck"</span>,      <span class="k">"status"</span>: <span class="s">"todo"</span>, <span class="k">"due_at"</span>: <span class="n">null</span> }
+  ],
+  <span class="k">"meta"</span>: { <span class="k">"limit"</span>: <span class="n">2</span>, <span class="k">"offset"</span>: <span class="n">0</span>, <span class="k">"count"</span>: <span class="n">2</span>, <span class="k">"hasMore"</span>: <span class="n">true</span>, <span class="k">"nextOffset"</span>: <span class="n">2</span>,
+            <span class="k">"table"</span>: <span class="s">"tasks"</span>, <span class="k">"columns"</span>: [<span class="s">"id"</span>,<span class="s">"title"</span>,<span class="s">"status"</span>,<span class="s">"due_at"</span>] }
+}</pre>
+    </div>
+  </div>
+
+  <h3>Parameters</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Param</th><th>Example</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>columns</code></td><td><code>id,email,name</code></td><td>Subset of the table&rsquo;s readable columns. Default: all of them.</td></tr>
+      <tr><td><code>filter[col]</code></td><td><code>filter[status]=done&amp;filter[project_id]=null</code></td><td>Equality on a readable column. <code>null</code> matches <code>IS NULL</code>. Repeat for AND.</td></tr>
+      <tr><td><code>since</code> / <code>until</code></td><td><code>since=2026-10-01T00:00:00Z</code></td><td>Window on the table&rsquo;s <code>timeColumn</code> (inclusive).</td></tr>
+      <tr><td><code>orderBy</code>, <code>order</code></td><td><code>orderBy=updated_at&amp;order=desc</code></td><td>Any readable column; <code>asc</code> (default) or <code>desc</code>.</td></tr>
+      <tr><td><code>limit</code>, <code>offset</code></td><td><code>limit=500&amp;offset=1000</code></td><td>Paging, as everywhere else.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Readable tables</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Table</th><th>What it is</th><th>Time column</th></tr></thead>
+    <tbody>
+      <tr><td><code>organizations</code></td><td>Tenants. An org key sees only its own row.</td><td>created_at</td></tr>
+      <tr><td><code>organization_members</code></td><td>Who belongs to which organization, with org role and status.</td><td>created_at</td></tr>
+      <tr><td><code>teams</code>, <code>team_members</code></td><td>Teams / departments and their members.</td><td>created_at</td></tr>
+      <tr><td><code>users</code></td><td>People (active members of the organization).</td><td>created_at</td></tr>
+      <tr><td><code>conversations</code>, <code>conversation_members</code></td><td>DMs, groups, channels and who is in them.</td><td>created_at / last_read_at</td></tr>
+      <tr><td><code>messages</code></td><td>Chat messages. <code>body</code> is <code>null</code> when <code>encryption_version &gt; 0</code>.</td><td>created_at</td></tr>
+      <tr><td><code>meetings</code>, <code>meeting_attendees</code></td><td>Meetings and RSVPs.</td><td>starts_at</td></tr>
+      <tr><td><code>tasks</code>, <code>task_projects</code>, <code>task_assignees</code>, <code>task_comments</code></td><td>Task tracking.</td><td>updated_at / created_at</td></tr>
+      <tr><td><code>files</code></td><td>File metadata only.</td><td>created_at</td></tr>
+      <tr><td><code>reminders</code></td><td>Personal reminders.</td><td>updated_at</td></tr>
+      <tr><td><code>calls</code></td><td>Call history (kind, direction, duration).</td><td>started_at</td></tr>
+    </tbody>
+  </table></div>
+  <p>Soft-deleted rows (<code>deleted = 1</code>) are never returned from any table. Ask for a
+     table that is not listed and you get <code>404</code>; a column that is not listed gets
+     <code>400 INVALID_COLUMN</code>.</p>
+</section>
+
+
+<!-- ══ 6 ══════════════════════════════════════════════════════ -->
+<section id="send">
+  <div class="sec-head"><span class="sec-num">06</span><h2>Send a message</h2></div>
+  <p class="sec-sub">
+    Post into any conversation the actor is a member of, or straight to a person &mdash; the
+    actor&rsquo;s direct message with them is opened on first use and reused after that. The
+    message is stored, shown live in everyone&rsquo;s app, pushed to closed tabs and phones, and
+    dispatched to the conversation&rsquo;s outgoing webhooks and connector bridges, exactly like a
+    message typed in CoLab. Needs <code>messages:write</code>.
+  </p>
+
+  <h3>Who sends it</h3>
+  <p>Every write runs <em>as</em> a CoLab user. In order of precedence: <code>asUserId</code> or
+     <code>asUserEmail</code> in the body, else the key&rsquo;s default actor (<code>userId</code> at
+     mint). The user must be a live, active member of the key&rsquo;s organization &mdash; a key can
+     never impersonate someone outside its tenant. With no actor at all you get
+     <code>400 ACTOR_REQUIRED</code>. A dedicated bot account (&ldquo;CRM Bot&rdquo;) keeps
+     integration traffic clearly attributed.</p>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">To a person</span><span class="verb post">POST</span><span class="path">/api/external/v1/messages</span></div>
+<pre><span class="hd">X-API-Key:</span> colab_…
+<span class="hd">Content-Type:</span> application/json
+
+{
+  <span class="k">"email"</span>: <span class="s">"priya@acme.com"</span>,        <span class="c">// or "userId": "u_…", or "conversationId": "c_…"</span>
+  <span class="k">"text"</span>: <span class="s">"Hi Priya — the Q4 contract is ready to sign."</span>,
+  <span class="k">"asUserEmail"</span>: <span class="s">"crm-bot@acme.com"</span>   <span class="c">// optional when the key has a default actor</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">201</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"posted"</span>: <span class="n">true</span>,
+    <span class="k">"messageId"</span>: <span class="s">"m_…"</span>,
+    <span class="k">"conversationId"</span>: <span class="s">"c_…"</span>,      <span class="c">// the DM — keep it to post again faster</span>
+    <span class="k">"senderId"</span>: <span class="s">"u_crm_bot"</span>,
+    <span class="k">"message"</span>: { <span class="c">… the full message object …</span> }
+  }
+}</pre>
+    </div>
+  </div>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Into a conversation</span><span class="verb post">POST</span><span class="path">/api/external/v1/conversations/{id}/messages</span></div>
+<pre>{
+  <span class="k">"text"</span>: <span class="s">"Deploy finished ✅ build 4821"</span>,
+  <span class="k">"parentMessageId"</span>: <span class="s">"m_…"</span>,     <span class="c">// optional: reply in a thread</span>
+  <span class="k">"important"</span>: <span class="n">true</span>               <span class="c">// optional: Teams-style "important" flag</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">curl</span></div>
+<pre>curl -X POST <span class="s">"$COLAB/api/external/v1/messages"</span> \
+  -H <span class="s">"X-API-Key: $COLAB_API_KEY"</span> -H <span class="s">"Content-Type: application/json"</span> \
+  -d <span class="s">'{"userId":"u_priya","text":"Your demo is confirmed for 3pm."}'</span></pre>
+    </div>
+  </div>
+
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Field</th><th>Required</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>conversationId</code> / <code>userId</code> / <code>email</code></td><td>one of</td><td>Where it goes. A person target resolves to the actor&rsquo;s DM with them (created if needed).</td></tr>
+      <tr><td><code>text</code></td><td>yes</td><td>Up to 20&nbsp;000 characters. Plain text; CoLab renders links and mentions as usual.</td></tr>
+      <tr><td><code>parentMessageId</code></td><td>no</td><td>Reply inside a thread.</td></tr>
+      <tr><td><code>important</code></td><td>no</td><td>Flag the message as important.</td></tr>
+      <tr><td><code>asUserId</code> / <code>asUserEmail</code></td><td>no</td><td>Send as this member instead of the key&rsquo;s default actor.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Errors you will meet: <code>403 BLOCKED</code> when one party has blocked the other in a DM,
+     <code>403 FORBIDDEN</code> when the actor is not a member of the conversation,
+     <code>404</code> for a conversation outside your organization.</p>
+</section>
+
+<!-- ══ 7 ══════════════════════════════════════════════════════ -->
+<section id="receive">
+  <div class="sec-head"><span class="sec-num">07</span><h2>Receive messages</h2></div>
+  <p class="sec-sub">
+    Two ways. <strong>Pull</strong>: poll <code>GET /messages?since=…</code> (§04) on a schedule.
+    <strong>Push</strong>: subscribe a URL to a conversation &mdash; or to the actor&rsquo;s DM with
+    one person &mdash; and CoLab POSTs every new, edited or deleted message to it, HMAC-signed,
+    queued and retried. Needs <code>webhooks:write</code>.
+  </p>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Subscribe</span><span class="verb post">POST</span><span class="path">/api/external/v1/webhooks</span></div>
+<pre>{
+  <span class="k">"conversationId"</span>: <span class="s">"c_…"</span>,            <span class="c">// or "userId" / "email" → that person's DM with the actor</span>
+  <span class="k">"targetUrl"</span>: <span class="s">"https://crm.example.com/colab/inbound"</span>,
+  <span class="k">"events"</span>: [<span class="s">"message.created"</span>],       <span class="c">// optional; also message.updated, message.deleted</span>
+  <span class="k">"name"</span>: <span class="s">"CRM inbox"</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">201</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"webhook"</span>: { <span class="k">"id"</span>: <span class="s">"wh_…"</span>, <span class="k">"direction"</span>: <span class="s">"out"</span>, <span class="k">"conversationId"</span>: <span class="s">"c_…"</span>,
+                 <span class="k">"events"</span>: <span class="s">"message.created"</span>, <span class="k">"enabled"</span>: <span class="n">true</span>, <span class="c">…</span> },
+    <span class="k">"secret"</span>: <span class="s">"whsec_…"</span>              <span class="c">// ← shown once. Verify every delivery with it.</span>
+  }
+}</pre>
+    </div>
+  </div>
+
+  <h3>What arrives at your URL</h3>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Delivery</span><span class="verb post">POST</span><span class="path">https://crm.example.com/colab/inbound</span></div>
+<pre><span class="hd">Content-Type:</span> application/json
+<span class="hd">User-Agent:</span> CoLab-Webhooks/1.0
+<span class="hd">X-CoLab-Event:</span> message.created
+<span class="hd">X-CoLab-Delivery:</span> d_…                   <span class="c">// unique per delivery — de-dupe on it</span>
+<span class="hd">X-CoLab-Webhook-Id:</span> wh_…
+<span class="hd">X-CoLab-Signature:</span> t=1760434200,v1=5f1e…  <span class="c">// HMAC-SHA256(secret, t + "." + rawBody)</span>
+
+{
+  <span class="k">"event"</span>: <span class="s">"message.created"</span>,
+  <span class="k">"timestamp"</span>: <span class="s">"2026-10-14T10:10:00.000Z"</span>,
+  <span class="k">"webhook"</span>: { <span class="k">"id"</span>: <span class="s">"wh_…"</span>, <span class="k">"name"</span>: <span class="s">"CRM inbox"</span> },
+  <span class="k">"conversation"</span>: { <span class="k">"id"</span>: <span class="s">"c_…"</span>, <span class="k">"kind"</span>: <span class="s">"dm"</span>, <span class="k">"title"</span>: <span class="n">null</span> },
+  <span class="k">"message"</span>: { <span class="k">"id"</span>: <span class="s">"m_…"</span>, <span class="k">"text"</span>: <span class="s">"Signed — thanks!"</span>, <span class="k">"type"</span>: <span class="s">"text"</span>,
+               <span class="k">"createdAt"</span>: <span class="s">"2026-10-14T10:10:00.000Z"</span>, <span class="k">"encrypted"</span>: <span class="n">false</span>,
+               <span class="k">"sender"</span>: { <span class="k">"id"</span>: <span class="s">"u_priya"</span>, <span class="k">"name"</span>: <span class="s">"Priya N"</span> },
+               <span class="k">"parentMessageId"</span>: <span class="n">null</span>, <span class="k">"file"</span>: <span class="n">null</span> }
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Verify (Node)</span></div>
+<pre><span class="k">import</span> { createHmac, timingSafeEqual } <span class="k">from</span> <span class="s">"crypto"</span>;
+
+<span class="k">function</span> verify(req, rawBody, secret) {
+  <span class="c">// header: "t=<unix seconds>,v1=<hex hmac>"</span>
+  <span class="k">const</span> parts = Object.fromEntries(String(req.headers[<span class="s">"x-colab-signature"</span>] || <span class="s">""</span>).split(<span class="s">","</span>).map(p =&gt; p.split(<span class="s">"="</span>)));
+  <span class="k">if</span> (Math.abs(Date.now() / <span class="n">1000</span> - Number(parts.t)) &gt; <span class="n">300</span>) <span class="k">return false</span>;   <span class="c">// 5-minute replay window</span>
+  <span class="k">const</span> mac = createHmac(<span class="s">"sha256"</span>, secret).update(parts.t + <span class="s">"."</span> + rawBody).digest(<span class="s">"hex"</span>);
+  <span class="k">return</span> mac.length === String(parts.v1).length &amp;&amp; timingSafeEqual(Buffer.from(mac), Buffer.from(String(parts.v1)));
+}
+<span class="c">// Answer 2xx fast; do the work after. Non-2xx → retried with backoff.</span></pre>
+    </div>
+  </div>
+  <p>Deliveries, retries (about 30&nbsp;s, 2&nbsp;m, 8&nbsp;m, 32&nbsp;m), the full payload per event and
+     the exact signature scheme are specified in <a href="CHAT_WEBHOOKS.html">Chat webhooks</a>
+     &mdash; this API creates the same subscriptions, owned by the actor. Messages the actor sends
+     through this API are delivered too, so de-duplicate on <code>message.id</code> if you echo.</p>
+
+  <div class="tbl-wrap"><table>
+    <thead><tr><th></th><th>Path</th><th>Does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="m get">GET</span></td><td><code>/webhooks</code></td><td>The actor&rsquo;s subscriptions (no secrets).</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/webhooks</code></td><td>Create; returns the secret once.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/webhooks/{id}/test</code></td><td>Send a test delivery now.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/webhooks/{id}/deliveries</code></td><td>Recent delivery log with status and attempts.</td></tr>
+      <tr><td><span class="m del">DEL</span></td><td><code>/webhooks/{id}</code></td><td>Remove the subscription.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ══ 8 ══════════════════════════════════════════════════════ -->
+<section id="calls">
+  <div class="sec-head"><span class="sec-num">08</span><h2>Calls</h2></div>
+  <p class="sec-sub">
+    Ring a person from your platform and, if you want, join the audio/video yourself. Signalling
+    is CoLab&rsquo;s real call flow &mdash; the callee&rsquo;s desktop and phone ring, show the caller,
+    and can accept or decline as usual. Media runs on LiveKit; the API hands you the same join
+    token the CoLab apps use. Needs <code>calls:write</code>.
+  </p>
+
+  <div class="flow">
+    <svg viewBox="0 0 760 170" role="img" aria-label="Your platform POSTs /calls; CoLab rings the callee's app and returns a LiveKit join token; both sides connect to the LiveKit media room; hangup via POST or from the app ends it for everyone.">
+      <defs>
+        <marker id="ak2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#10b981"/></marker>
+        <marker id="ad2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#38bdf8"/></marker>
+      </defs>
+      <g font-family="JetBrains Mono, monospace" font-size="11">
+        <rect x="1" y="20" width="150" height="52" rx="8" fill="#0d1220" stroke="#1e293b"/>
+        <text x="76" y="42" fill="#cbd5e1" text-anchor="middle">Your platform</text>
+        <text x="76" y="58" fill="#64748b" text-anchor="middle" font-size="10">POST /calls</text>
+        <rect x="270" y="10" width="220" height="72" rx="10" fill="#121826" stroke="#6366f1"/>
+        <text x="380" y="36" fill="#f8fafc" text-anchor="middle" font-size="12.5" font-family="Inter, sans-serif" font-weight="600">CoLab</text>
+        <text x="380" y="54" fill="#94a3b8" text-anchor="middle" font-size="10">creates call · rings callee · push</text>
+        <text x="380" y="70" fill="#94a3b8" text-anchor="middle" font-size="10">missed after ~35 s if unanswered</text>
+        <rect x="608" y="20" width="150" height="52" rx="8" fill="#0d1220" stroke="#1e293b"/>
+        <text x="683" y="42" fill="#cbd5e1" text-anchor="middle">Callee's CoLab app</text>
+        <text x="683" y="58" fill="#64748b" text-anchor="middle" font-size="10">accept / decline</text>
+        <rect x="270" y="110" width="220" height="50" rx="10" fill="#0d1220" stroke="rgba(56,189,248,.38)"/>
+        <text x="380" y="131" fill="#38bdf8" text-anchor="middle">LiveKit room call_&lt;id&gt;</text>
+        <text x="380" y="148" fill="#64748b" text-anchor="middle" font-size="10">join with { wsUrl, token }</text>
+      </g>
+      <path d="M151 40 L264 40" stroke="#10b981" stroke-width="1.6" fill="none" marker-end="url(#ak2)"/>
+      <path d="M490 40 L602 40" stroke="#10b981" stroke-width="1.6" fill="none" marker-end="url(#ak2)"/>
+      <path d="M76 72 L76 135 L264 135" stroke="#38bdf8" stroke-width="1.6" fill="none" marker-end="url(#ad2)"/>
+      <path d="M683 72 L683 135 L496 135" stroke="#38bdf8" stroke-width="1.6" fill="none" marker-end="url(#ad2)"/>
+      <g font-family="JetBrains Mono, monospace" font-size="9.5" letter-spacing="1">
+        <text x="207" y="32" fill="#10b981" text-anchor="middle">userId, kind</text>
+        <text x="546" y="32" fill="#10b981" text-anchor="middle">call:incoming</text>
+        <text x="170" y="127" fill="#38bdf8" text-anchor="middle">join.token</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Place a call</span><span class="verb post">POST</span><span class="path">/api/external/v1/calls</span></div>
+<pre>{
+  <span class="k">"userId"</span>: <span class="s">"u_priya"</span>,     <span class="c">// or "email", or "peerId"</span>
+  <span class="k">"kind"</span>: <span class="s">"video"</span>,         <span class="c">// audio (default) | video</span>
+  <span class="k">"asUserId"</span>: <span class="s">"u_sales_rep"</span>   <span class="c">// who is calling (optional with a default actor)</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">201</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"ringing"</span>: <span class="n">true</span>,
+    <span class="k">"call"</span>: { <span class="k">"id"</span>: <span class="s">"call_…"</span>, <span class="k">"status"</span>: <span class="s">"ringing"</span>, <span class="k">"kind"</span>: <span class="s">"video"</span>,
+              <span class="k">"initiatorId"</span>: <span class="s">"u_sales_rep"</span>, <span class="k">"peerId"</span>: <span class="s">"u_priya"</span>, <span class="k">"room"</span>: <span class="s">"call_…"</span> },
+    <span class="k">"join"</span>: { <span class="k">"token"</span>: <span class="s">"eyJ…"</span>, <span class="k">"wsUrl"</span>: <span class="s">"wss://colab.example.com/livekit"</span>, <span class="k">"room"</span>: <span class="s">"call_…"</span> }
+  }
+}
+<span class="c">// 409 BUSY when the person is already on a call.</span></pre>
+    </div>
+  </div>
+
+  <h3>Joining the media</h3>
+  <div class="pair solo">
+    <div class="blk">
+      <div class="bar"><span class="label">Browser · livekit-client</span></div>
+<pre><span class="k">import</span> { Room } <span class="k">from</span> <span class="s">"livekit-client"</span>;
+
+<span class="k">const</span> { data } = <span class="k">await</span> (<span class="k">await</span> fetch(<span class="s">"/my-backend/colab/call"</span>, { method: <span class="s">"POST"</span>, body: JSON.stringify({ userId }) })).json();
+<span class="c">// ↑ your backend calls POST /calls with the API key; never ship the key to a browser.</span>
+<span class="k">const</span> room = <span class="k">new</span> Room();
+<span class="k">await</span> room.connect(data.join.wsUrl, data.join.token);
+<span class="k">await</span> room.localParticipant.enableCameraAndMicrophone();
+<span class="c">// Poll GET /calls/{id} (status: ringing → connected → ended) or just listen for the peer joining.</span></pre>
+    </div>
+  </div>
+
+  <div class="tbl-wrap"><table>
+    <thead><tr><th></th><th>Path</th><th>Does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="m post">POST</span></td><td><code>/calls</code></td><td>Ring a person as the actor. Opens the DM if there is none. Returns the call and the caller&rsquo;s join token.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/calls/{id}</code></td><td>Status: <code>ringing</code>, <code>connected</code>, <code>ended</code>, <code>declined</code>, <code>cancelled</code>, <code>missed</code>, <code>busy</code>.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/calls/{id}/accept</code></td><td>Answer as the callee (default actor for this route). Returns the callee&rsquo;s join token.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/calls/{id}/decline</code></td><td>Decline as the callee; optional <code>reason</code>.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/calls/{id}/hangup</code></td><td>End it for everyone (as the caller by default; pass <code>asUserId</code> for the callee). While still ringing, this cancels. Optional <code>durationSec</code> for the call log.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/calls/{id}/token</code></td><td>Re-mint a join token for either participant of a live call.</td></tr>
+      <tr><td><span class="m post">POST</span></td><td><code>/conversations/{id}/call-token</code></td><td>Join token for a group&rsquo;s call room (<code>conv_&lt;id&gt;</code>) as the actor.</td></tr>
+      <tr><td><span class="m get">GET</span></td><td><code>/calls</code></td><td>The actor&rsquo;s recent call history.</td></tr>
+    </tbody>
+  </table></div>
+  <p>A call that nobody answers is marked <code>missed</code> after the server&rsquo;s ring timeout and
+     a missed-call notification goes to the callee. Call logs (&ldquo;📞 Call ended · 4:12&rdquo;)
+     are posted into the DM like in-app calls.</p>
+</section>
+
+<!-- ══ 9 ══════════════════════════════════════════════════════ -->
+<section id="meetings">
+  <div class="sec-head"><span class="sec-num">09</span><h2>Meetings</h2></div>
+  <p class="sec-sub">
+    Schedule a CoLab meeting from your platform and invite people by id or email. Invitees get
+    the invite card in their DM, the meeting appears in their calendar, reminders fire, and the
+    host&rsquo;s join token comes back in the response. Needs <code>meetings:write</code>.
+  </p>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">Schedule</span><span class="verb post">POST</span><span class="path">/api/external/v1/meetings</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"Contract review — Acme"</span>,
+  <span class="k">"startsAt"</span>: <span class="s">"2026-10-20T09:30:00Z"</span>,     <span class="c">// must be in the future</span>
+  <span class="k">"durationMin"</span>: <span class="n">45</span>,
+  <span class="k">"attendees"</span>: [<span class="s">"priya@acme.com"</span>, <span class="s">"u_…"</span>],  <span class="c">// ids or emails, at least one</span>
+  <span class="k">"description"</span>: <span class="s">"Walk through clauses 4–7"</span>,
+  <span class="k">"location"</span>: <span class="s">"CoLab"</span>,
+  <span class="k">"conversationId"</span>: <span class="s">"c_…"</span>,               <span class="c">// optional: also post the invite card there</span>
+  <span class="k">"timeZone"</span>: <span class="s">"Asia/Kolkata"</span>              <span class="c">// optional; defaults to the actor's profile zone</span>
+}</pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Response</span><span class="status s2">201</span></div>
+<pre>{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"data"</span>: {
+    <span class="k">"meeting"</span>: { <span class="k">"id"</span>: <span class="s">"mt_…"</span>, <span class="k">"title"</span>: <span class="s">"Contract review — Acme"</span>,
+                 <span class="k">"startsAt"</span>: <span class="s">"2026-10-20T09:30:00.000Z"</span>, <span class="k">"durationMin"</span>: <span class="n">45</span>, <span class="c">…</span> },
+    <span class="k">"room"</span>: <span class="s">"meeting_mt_…"</span>,
+    <span class="k">"join"</span>: { <span class="k">"token"</span>: <span class="s">"eyJ…"</span>, <span class="k">"wsUrl"</span>: <span class="s">"wss://…/livekit"</span> }
+  }
+}</pre>
+    </div>
+  </div>
+  <p><code>POST /meetings/{id}/token</code> mints a join token for any actor, through the meeting&rsquo;s
+     real admission rules: the host gets <code>host</code>, invitees <code>participant</code>
+     (or <code>co-host</code>), and a locked meeting, an ejected user or a lobby that has not
+     admitted them yet return <code>403</code> with <code>MEETING_LOCKED</code>,
+     <code>MEETING_EJECTED</code> or <code>MEETING_LOBBY</code>. Read meetings back with the
+     endpoints in §04.</p>
+</section>
+
+<!-- ══ 10 ═════════════════════════════════════════════════════ -->
+<section id="tenant">
+  <div class="sec-head"><span class="sec-num">10</span><h2>Tenants, scopes &amp; actor</h2></div>
+  <p class="sec-sub">Three things on the key decide what a request can do: the organization it is
+     pinned to, its scopes, and the user its writes act as.</p>
+
+  <div class="dirs">
+    <div class="dir is-key">
+      <h4><span class="dot key"></span>Organization key</h4>
+      <div class="who">minted by an org admin, or by the admin portal with organizationId</div>
+      <p>Pinned to one organization for life. Every query carries
+         <code>organization_id = &lt;that org&gt;</code>. Another tenant&rsquo;s ids return
+         <code>404</code>, exactly as if they did not exist. <code>X-Org-Id</code> is ignored.</p>
+    </div>
+    <div class="dir is-data">
+      <h4><span class="dot data"></span>Platform key</h4>
+      <div class="who">admin portal without organizationId, or EXTERNAL_API_KEYS</div>
+      <p>Sees every organization, plus rows that pre-date organizations (NULL tenant).
+         Send <code>X-Org-Id: org_…</code> (or <code>?orgId=</code>) to narrow one request to one
+         organization; an unknown id returns <code>404</code>. <strong>Always send it on writes</strong>:
+         a DM, meeting or subscription created without it is stamped with no organization and is
+         then invisible to that organization&rsquo;s own keys and admins.</p>
+    </div>
+  </div>
+
+  <h3>Scopes</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Scope</th><th>Unlocks</th></tr></thead>
+    <tbody>
+      <tr><td><code>read</code></td><td>Shorthand for every scope below. The default when none is given.</td></tr>
+      <tr><td><code>users:read</code></td><td><code>/users</code>, <code>/users/{id}</code></td></tr>
+      <tr><td><code>conversations:read</code></td><td><code>/conversations</code>, <code>/conversations/{id}</code>, <code>/conversations/{id}/members</code></td></tr>
+      <tr><td><code>messages:read</code></td><td><code>/messages</code>, <code>/conversations/{id}/messages</code></td></tr>
+      <tr><td><code>meetings:read</code></td><td><code>/meetings</code>, <code>/meetings/{id}</code></td></tr>
+      <tr><td><code>tasks:read</code></td><td><code>/tasks</code>, <code>/tasks/{id}</code></td></tr>
+      <tr><td><code>files:read</code></td><td><code>/files</code>, <code>/files/{id}</code></td></tr>
+      <tr><td><code>tables:read</code></td><td><code>/tables</code>, <code>/tables/{name}</code> &mdash; grant this one deliberately; it reads raw rows from every listed table.</td></tr>
+      <tr><td><code>write</code></td><td>Shorthand for every write scope below. <code>all</code> = read + write.</td></tr>
+      <tr><td><code>messages:write</code></td><td><code>POST /messages</code>, <code>POST /conversations/{id}/messages</code></td></tr>
+      <tr><td><code>webhooks:write</code></td><td><code>/webhooks</code> &mdash; subscribe your URL to messages.</td></tr>
+      <tr><td><code>calls:write</code></td><td><code>/calls</code>, <code>/calls/{id}/…</code>, <code>/conversations/{id}/call-token</code></td></tr>
+      <tr><td><code>meetings:write</code></td><td><code>POST /meetings</code>, <code>POST /meetings/{id}/token</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>The actor</h3>
+  <p>Writes land in tables whose author is a CoLab user, so each write runs as one: the key&rsquo;s
+     default actor (<code>userId</code> at mint), overridden per request by <code>asUserId</code> or
+     <code>asUserEmail</code>. The user must be live and, for an org-pinned request, an active member
+     of that organization &mdash; otherwise <code>403 ACTOR_NOT_IN_ORG</code>. The actor also needs the
+     ordinary in-app rights for the action (be a member of the conversation, not be blocked by the
+     callee, and so on); CoLab enforces those exactly as for the app.</p>
+
+  <h3>What is never returned</h3>
+  <ul class="plain">
+    <li>Password hashes, MFA secrets, session or refresh tokens, webhook tokens, connector credentials, other API keys.</li>
+    <li>The body, attachment or voice note of an end-to-end-encrypted message (you get <code>encrypted: true</code> and <code>null</code>). The ciphertext is never exposed either.</li>
+    <li>File bytes. The API returns metadata; download still goes through CoLab&rsquo;s own authenticated file routes.</li>
+    <li>Avatars (large base64 blobs) and anything soft-deleted.</li>
+  </ul>
+  <p>Writes are limited to what is documented in §06&ndash;§09: messages, webhook subscriptions, calls
+     and meetings. Nothing else in the database can be changed through this API.</p>
+</section>
+
+<!-- ══ 11 ══════════════════════════════════════════════════════ -->
+<section id="errors">
+  <div class="sec-head"><span class="sec-num">11</span><h2>Errors &amp; limits</h2></div>
+  <p class="sec-sub">Failures use the standard envelope with a stable <code>error.code</code>.
+     Branch on the code, show the message to a human.</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>HTTP</th><th>code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill warn">400</span></td><td><code>BAD_REQUEST</code></td><td>A filter is malformed: non-integer <code>limit</code>, a date that is not ISO-8601, a value too long.</td></tr>
+      <tr><td><span class="pill warn">400</span></td><td><code>INVALID_COLUMN</code> / <code>INVALID_FILTER</code> / <code>INVALID_ORDER</code></td><td>The generic table reader was asked for a column that is not readable.</td></tr>
+      <tr><td><span class="pill warn">401</span></td><td><code>UNAUTHORIZED</code></td><td>No key, or a key that is unknown, revoked, rotated away or expired. The four are deliberately indistinguishable.</td></tr>
+      <tr><td><span class="pill warn">400</span></td><td><code>ACTOR_REQUIRED</code> / <code>ACTOR_NOT_FOUND</code></td><td>A write with no actor, or an <code>asUserId</code> that does not exist.</td></tr>
+      <tr><td><span class="pill warn">403</span></td><td><code>FORBIDDEN_SCOPE</code></td><td>The key lacks the route&rsquo;s scope; <code>error.details.required</code> names it.</td></tr>
+      <tr><td><span class="pill warn">403</span></td><td><code>ACTOR_NOT_IN_ORG</code> / <code>BLOCKED</code> / <code>FORBIDDEN</code></td><td>The actor is outside the organization, blocked by the other party, or not a member of the conversation.</td></tr>
+      <tr><td><span class="pill warn">409</span></td><td><code>BUSY</code></td><td>The person you are calling is already on a call.</td></tr>
+      <tr><td><span class="pill warn">404</span></td><td><code>NOT_FOUND</code></td><td>No such row <em>in this key&rsquo;s organization</em>, an unknown table, an unknown <code>X-Org-Id</code>, or the API is disabled.</td></tr>
+      <tr><td><span class="pill warn">429</span></td><td><code>RATE_LIMITED</code></td><td>Per-key limit exceeded. Wait <code>Retry-After</code> seconds.</td></tr>
+      <tr><td><span class="pill bad">503</span></td><td><code>UNAVAILABLE</code></td><td>The database is not reachable, or the backend runs the JSON dev driver (no MySQL).</td></tr>
+      <tr><td><span class="pill bad">500</span></td><td><code>INTERNAL</code></td><td>Unexpected. The <code>X-Request-Id</code> response header identifies it in CoLab&rsquo;s server logs.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Rate limits</h3>
+  <p>Each key gets <code>EXTERNAL_API_RATE_MAX</code> requests per minute (default 300), on top of
+     the deployment&rsquo;s global API throttle. Every response carries
+     <code>X-RateLimit-Limit</code> and <code>X-RateLimit-Remaining</code>; a <code>429</code> adds
+     <code>Retry-After</code>. Page with <code>limit=500</code> rather than many small calls.</p>
+</section>
+
+<!-- ══ 12 ══════════════════════════════════════════════════════ -->
+<section id="manage">
+  <div class="sec-head"><span class="sec-num">12</span><h2>Manage keys</h2></div>
+  <p class="sec-sub">List, rotate and revoke. Rotation keeps the id, name, scopes and organization
+     and issues a new secret; the previous secret stops working the moment the call returns.
+     Revocation is permanent &mdash; create a new key instead.</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th></th><th>Org admin (session token, <code>org:manage</code>)</th><th>Admin portal (admin token)</th></tr></thead>
+    <tbody>
+      <tr><td>List</td><td><span class="m get">GET</span> <code>/api/orgs/current/api-keys</code></td><td><span class="m get">GET</span> <code>/api/admin/api-keys</code> &nbsp;<small>(<code>?organizationId=…</code> or <code>?platform=true</code>)</small></td></tr>
+      <tr><td>Create</td><td><span class="m post">POST</span> <code>/api/orgs/current/api-keys</code></td><td><span class="m post">POST</span> <code>/api/admin/api-keys</code></td></tr>
+      <tr><td>Rotate</td><td><span class="m post">POST</span> <code>/api/orgs/current/api-keys/{id}/rotate</code></td><td><span class="m post">POST</span> <code>/api/admin/api-keys/{id}/rotate</code></td></tr>
+      <tr><td>Revoke</td><td><span class="m del">DELETE</span> <code>/api/orgs/current/api-keys/{id}</code></td><td><span class="m del">DELETE</span> <code>/api/admin/api-keys/{id}</code></td></tr>
+    </tbody>
+  </table></div>
+  <div class="pair">
+    <div class="blk">
+      <div class="bar"><span class="label">List</span><span class="verb get">GET</span><span class="path">/api/orgs/current/api-keys</span><span class="status s2">200</span></div>
+<pre>{ <span class="k">"ok"</span>: <span class="n">true</span>, <span class="k">"data"</span>: [
+  { <span class="k">"id"</span>: <span class="s">"5f1e…"</span>, <span class="k">"name"</span>: <span class="s">"Salesforce sync"</span>, <span class="k">"keyHint"</span>: <span class="s">"…Zp9a"</span>,
+    <span class="k">"scopes"</span>: [<span class="s">"users:read"</span>,<span class="s">"messages:read"</span>], <span class="k">"enabled"</span>: <span class="n">true</span>,
+    <span class="k">"createdAt"</span>: <span class="s">"…"</span>, <span class="k">"expiresAt"</span>: <span class="s">"…"</span>,
+    <span class="k">"lastUsedAt"</span>: <span class="s">"2026-10-14T09:30:00.000Z"</span>, <span class="k">"useCount"</span>: <span class="n">18422</span> }
+] }
+<span class="c">// The raw key is never listed — only keyHint.</span></pre>
+    </div>
+    <div class="blk">
+      <div class="bar"><span class="label">Rotate</span><span class="verb post">POST</span><span class="path">/api/orgs/current/api-keys/5f1e…/rotate</span><span class="status s2">200</span></div>
+<pre>{ <span class="k">"ok"</span>: <span class="n">true</span>, <span class="k">"data"</span>: {
+  <span class="k">"key"</span>: <span class="s">"colab_Nw4r…Hx2c"</span>,      <span class="c">// the NEW secret, shown once</span>
+  <span class="k">"apiKey"</span>: { <span class="k">"id"</span>: <span class="s">"5f1e…"</span>, <span class="k">"keyHint"</span>: <span class="s">"…Hx2c"</span>, <span class="c">…</span> }
+} }</pre>
+    </div>
+  </div>
+  <p>Every create, rotate and revoke by an org admin is written to the organization&rsquo;s audit
+     log (<code>org.api_key.create</code> / <code>.rotate</code> / <code>.revoke</code>).
+     <code>lastUsedAt</code> and <code>useCount</code> tell you whether a key is still in use before
+     you revoke it.</p>
+</section>
+
+<!-- ══ 13 ══════════════════════════════════════════════════════ -->
+<section id="config">
+  <div class="sec-head"><span class="sec-num">13</span><h2>Configuration</h2></div>
+  <p class="sec-sub">Backend environment variables (see <code>.env.example</code>). The feature is on
+     by default and needs no setup beyond minting a key.</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>EXTERNAL_API_ENABLED</code></td><td><code>true</code></td><td>Master switch. <code>false</code> makes every <code>/api/external</code> route return <code>404</code>.</td></tr>
+      <tr><td><code>EXTERNAL_API_KEYS</code></td><td>empty</td><td>Comma-separated static platform keys. Full read access to every organization.</td></tr>
+      <tr><td><code>EXTERNAL_API_RATE_MAX</code></td><td><code>300</code></td><td>Requests per minute per key.</td></tr>
+      <tr><td><code>EXTERNAL_API_PAGE_SIZE</code></td><td><code>100</code></td><td>Default <code>limit</code>.</td></tr>
+      <tr><td><code>EXTERNAL_API_MAX_PAGE_SIZE</code></td><td><code>500</code></td><td>Largest <code>limit</code> accepted; bigger values are clamped.</td></tr>
+      <tr><td><code>PUBLIC_API_URL</code></td><td>empty</td><td>Absolute base URL of the API, used as the <code>servers[0].url</code> in <code>openapi.json</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The key table (<code>external_api_keys</code>) is created by migrations
+     <code>0130_external_api_keys.sql</code> and <code>0131_external_api_keys_actor.sql</code>, which run
+     automatically at backend boot. Reads only ever issue <code>SELECT</code>s; writes go through
+     CoLab&rsquo;s own messaging, webhook, call and meeting services. Calls and meetings additionally
+     need the deployment&rsquo;s LiveKit (<code>LIVEKIT_*</code>) and webhooks need
+     <code>WEBHOOKS_ENABLED=true</code>, both already required by the app itself.</p>
+</section>
+
+<!-- ══ 14 ═════════════════════════════════════════════════════ -->
+<section id="checklist">
+  <div class="sec-head"><span class="sec-num">14</span><h2>Integration checklist</h2></div>
+  <ol class="steps">
+    <li>Mint a key with <strong>only the scopes you need</strong> and an <code>expiresAt</code>; name it after the system that will hold it. For writes, give it a dedicated bot account as <code>userId</code> so integration traffic is clearly attributed.</li>
+    <li>Store the key in your platform&rsquo;s secret manager. Send it as <code>X-API-Key</code> over HTTPS only.</li>
+    <li>Call <code>/ping</code> once at start-up and fail loudly if it is not <code>200</code> or the organization is not the one you expect.</li>
+    <li>Page with <code>limit=500</code> and <code>meta.nextOffset</code>; sync incrementally with <code>since</code> / <code>updatedSince</code> and remember the newest timestamp you processed.</li>
+    <li>Treat <code>encrypted: true</code> messages as present-but-unreadable; do not retry them.</li>
+    <li>Prefer a webhook subscription over tight polling to receive messages; verify the signature and answer 2xx within a few seconds.</li>
+    <li>Never ship the API key to a browser or mobile app. Your backend calls <code>/calls</code> or <code>/meetings/{id}/token</code> and hands only the short-lived LiveKit <code>join</code> token to the client.</li>
+    <li>Back off on <code>429</code> using <code>Retry-After</code>; log the <code>X-Request-Id</code> header on any <code>5xx</code> so CoLab&rsquo;s team can find it.</li>
+    <li>Rotate the key on a schedule and whenever a person who saw it leaves. Revoke it when the integration is retired.</li>
+  </ol>
+</section>
+
+<footer>
+  <span>CoLab External Data API · v1 · read + act</span>
+  <span>Source: backend/app/src/routes/external.ts · services/externalApiService.ts</span>
+  <span>Related: <a href="CHAT_WEBHOOKS.html">Chat webhooks</a> (write into CoLab)</span>
+  <span>Postman: docs/colab-external-api.postman_collection.json</span>
+</footer>
+
+</div>
+</body>
+</html>

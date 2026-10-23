@@ -1,0 +1,6 @@
+{
+  "_comment": "Update manifest for the Collab desktop client. Host the REAL copy of this file at <webUrl>/desktop/latest.json (override with COLLAB_UPDATE_URL or collab.config.json 'updateUrl'). When you ship a new build, bump 'version', upload the installer, and point 'url' at it. The desktop app checks this on launch + via Help → Check for Updates, and offers to open 'url' in the browser when 'version' is newer than the installed app.",
+  "version": "1.0.0",
+  "url": "https://collab.resulticks.com/desktop/Collab%20Setup%201.0.0.exe",
+  "notes": "Initial 1.0 release."
+}

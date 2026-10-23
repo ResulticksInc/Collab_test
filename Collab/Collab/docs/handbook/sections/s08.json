@@ -1,0 +1,351 @@
+[
+  {"t":"h","level":1,"text":"8. Real-Time Architecture"},
+
+  {"t":"p","text":"CoLab is, at its heart, a real-time collaboration product: messages appear the instant they are sent, typing indicators flicker, presence dots turn green and grey, calls ring, and group huddles update live. All of this lives on a *single, dedicated real-time plane* built on **Socket.IO** — a long-lived, bidirectional WebSocket (with HTTP long-poll fallback) connection between every signed-in browser tab and the CoLab backend. This section documents that plane *exhaustively and as it actually exists in the code*: the client wrapper at `frontend/app/src/lib/socket.ts`, the server at `backend/app/src/realtime/socket.ts`, the canonical event contract in `shared/src/events.ts`, and the dozens of HTTP routes and services that also push events through the same `io` instance."},
+
+  {"t":"callout","kind":"note","title":"Scope: this is the SIGNALLING plane, not the MEDIA plane","text":"Everything here travels as small JSON events over Socket.IO: chat, presence, typing, read receipts, notifications, and the call/huddle/meeting *signalling* (ring, accept, decline, join, leave, state). The actual audio/video bytes of a call NEVER touch Socket.IO — they flow peer-to-SFU over the LiveKit WebRTC media plane, which is documented separately in Section 9. When you see `HUDDLE_JOIN` or `CALL_INCOMING` here, think 'the doorbell and the handshake', not 'the voice'."},
+
+  {"t":"h","level":2,"text":"8.1 Overview of the Real-Time Plane"},
+
+  {"t":"p","text":"In plain language: every CoLab tab opens one persistent phone line to the server the moment you log in. Through that line the server can whisper updates to you at any time without you asking, and you can shout small commands back (send a message, start typing, ring a call). The line authenticates itself once at connect time using your login token, then stays open, automatically redialling if the network blips."},
+
+  {"t":"p","text":"In engineering language: `connectSocket(token)` opens a single Socket.IO connection per browser tab. The server's `io.use(...)` middleware verifies the JWT on the handshake, attaches the resulting `userId` to the socket, and the connection handler immediately joins the socket to a **personal room** (`user:<id>`). From then on the server addresses a user by emitting to that room — which fans out across all of that user's open tabs *and*, when the Redis adapter is active, across all backend replicas. Conversation-scoped events use a second room family (`conv:<id>`), and meetings use `meeting:<id>`. Producers are both the socket event handlers *and* ordinary HTTP route handlers, which reach the shared `io` instance via `app.get(\"io\")`."},
+
+  {"t":"diagram","kind":"layered","title":"The real-time plane (browser ↔ Socket.IO ↔ backend ↔ stores)","layers":[
+    {"label":"Browser tab","items":["CoLabV1.tsx React tree","lib/socket.ts wrapper","socket.io-client"]},
+    {"label":"Transport","items":["Next.js same-origin proxy (/socket.io)","Engine.IO: polling → upgrade to WebSocket"]},
+    {"label":"Socket.IO server","items":["io.use handshake (JWT verify)","rooms: user:<id> / conv:<id> / meeting:<id>","event handlers + HTTP routes via app.get(io)"]},
+    {"label":"Backend services","items":["messageService / conversationService","callService / huddleStore / notificationService"]},
+    {"label":"State stores","items":["MySQL (durable: messages, calls, reads)","Redis (adapter fan-out + ephemeral huddle/hand state)","in-process Maps (timers, throttle buckets)"]}
+  ]},
+
+  {"t":"p","text":"The plane sits *alongside but entirely separate from* the LiveKit media plane. The two only meet conceptually: a `CALL_ACCEPTED` signalling event over Socket.IO is the trigger that tells both clients 'now go fetch a LiveKit room token over HTTP and connect your media'. If Socket.IO is down, you cannot ring or be rung; if LiveKit is down, the ring works but the audio never connects. Keeping them separate is deliberate — it means a flaky media network never takes down chat and presence, and a Socket.IO hiccup never drops an in-progress call's audio."},
+
+  {"t":"table","headers":["Property","Real-time plane (this section)","Media plane (Section 9)"],"rows":[
+    ["Transport","Socket.IO over WebSocket / HTTP long-poll","WebRTC (UDP/TCP/TLS) to LiveKit SFU"],
+    ["Carries","JSON events: chat, presence, typing, signalling","Audio/video/screen-share RTP streams"],
+    ["Auth","App JWT on socket handshake (`io.use`)","Short-lived LiveKit room token (HTTP-minted)"],
+    ["Server","CoLab Node backend (`realtime/socket.ts`)","LiveKit SFU container(s)"],
+    ["Failure impact","No live updates / no ring; chat falls back to REST refetch","Ring works, but call audio/video never connects"]
+  ]},
+
+  {"t":"h","level":2,"text":"8.2 Connection Lifecycle"},
+
+  {"t":"p","text":"A socket's life has five phases: **connect → authenticate → join rooms → exchange events → disconnect**, with an automatic **reconnect-and-resync** loop wrapped around the whole thing. Understanding each phase is the key to debugging 'why isn't this updating live?' — the most common support question for any real-time app."},
+
+  {"t":"diagram","kind":"pipeline","title":"Connection lifecycle (client → server)","steps":[
+    {"label":"1. Connect","detail":"io(config.socketUrl || undefined) with transports ['polling','websocket']; same-origin via Next proxy"},
+    {"label":"2. Handshake auth","detail":"auth:{token} sent; server io.use awaits Redis adapter, then jwt.verify; sets socket.userId or rejects 'unauthorized'"},
+    {"label":"3. Join personal room","detail":"connection handler runs socket.join('user:<id>'); all listeners registered synchronously"},
+    {"label":"4. READY + room joins","detail":"server emits READY; client emits CONVERSATION_JOIN for the active conversation → joins 'conv:<id>'"},
+    {"label":"5. Presence announced","detail":"setPresence ONLINE in DB; PRESENCE_UPDATE fanned to conversation peers + own tabs"},
+    {"label":"6. Disconnect / reconnect","detail":"on drop: cleanup ghost calls/huddles + presence OFFLINE; on reconnect: rejoin room + refetch (resync)"}
+  ]},
+
+  {"t":"h","level":3,"text":"8.2.1 Initial connect and transport negotiation"},
+
+  {"t":"p","text":"The client wrapper `connectSocket(token)` in `frontend/app/src/lib/socket.ts` calls `io(config.socketUrl || undefined, {...})`. An empty `socketUrl` means **same-origin**: `io(undefined)` connects to the page's own origin and the Next.js dev/prod server reverse-proxies `/socket.io` to the backend. The code deliberately falls back to `undefined`, *not* the empty string, because socket.io treats `\"\"` inconsistently."},
+
+  {"t":"p","text":"The transport order is the single most load-bearing client detail, and the comment in the file explains why: it is **`transports: [\"polling\", \"websocket\"]`** — *polling first*, then opportunistic upgrade to WebSocket. In the same-origin setup the socket is proxied through the Next server, whose dev rewrites can carry HTTP long-poll but **cannot proxy a raw WebSocket upgrade**. A websocket-first client therefore failed to connect at all and timed out — which is exactly why *call recipients received nothing* in that configuration. Connecting via polling guarantees the socket comes up; Engine.IO then silently upgrades to WebSocket where the proxy supports it (nginx in prod) and stays on polling where it doesn't (Next dev). `tryAllTransports: true` and `reconnection: true` round out the resilient defaults."},
+
+  {"t":"code","lines":[
+    "const socket = io(config.socketUrl || undefined, {",
+    "  auth: { token },",
+    "  transports: [\"polling\", \"websocket\"],",
+    "  tryAllTransports: true,",
+    "  reconnection: true,",
+    "});"
+  ]},
+
+  {"t":"callout","kind":"warning","title":"The trailing-slash proxy gotcha","text":"The server is created with `addTrailingSlash: false`. The Next reverse proxy forwards the client's `/socket.io/?...` as `/socket.io?...` (the trailing slash is dropped when the rewrite's `:path*` capture is empty). The default socket.io server only matches `/socket.io/` and would 404 the proxied handshake. `addTrailingSlash:false` makes it match both — without it, the same-origin proxied long-poll silently fails to connect."},
+
+  {"t":"h","level":3,"text":"8.2.2 The authentication handshake"},
+
+  {"t":"p","text":"The token is passed in the Socket.IO **handshake `auth` payload** (`auth: { token }`), not a cookie and not a query string. On the server, `io.use(async (socket, next) => {...})` is the handshake middleware that runs once per connection *before* the connection handler. It does two things in order:"},
+
+  {"t":"ol","items":[
+    "**Awaits the Redis adapter readiness gate** (`await adapterReady`). This is critical: swapping the adapter replaces the namespace's room registry with a fresh empty one, so any socket that joined `user:<id>` on the old in-memory adapter would silently stop receiving room emits. By awaiting in the middleware — which always runs before the connection handler's `socket.join()` — every socket joins its room on the FINAL adapter.",
+    "**Verifies the JWT**: `const t = socket.handshake.auth && socket.handshake.auth.token; const p = verify(t); (socket as any).userId = p.sub;`. On success it calls `next()`; on any throw it calls `next(new Error(\"unauthorized\"))`, which the client surfaces as a `connect_error`."
+  ]},
+
+  {"t":"p","text":"The `verify(token)` function (in `backend/app/src/services/authService.ts`) is a thin wrapper over `jwt.verify(token, config.auth.jwtSecret)`. This is a *real* cryptographic verification — it checks the HMAC signature against the server secret and enforces the token's `exp` expiry. The `sub` claim becomes the socket's `userId`, and *every* downstream authorization decision keys off that server-trusted `userId`, never off any client-supplied id. The session JWT TTL is `config.auth.tokenTtl`, which defaults to **`7d`** (env `AUTH_TOKEN_TTL`) — do not confuse this with the separate 1-hour LiveKit room token."},
+
+  {"t":"callout","kind":"tip","title":"Debugging a refused handshake","text":"If the client logs `Realtime connect failed: unauthorized`, the JWT is missing, malformed, expired, or signed with a different `AUTH_JWT_SECRET` than the server runs. If it logs a transport/CORS error instead, the handshake never reached the auth middleware — check the same-origin proxy and `corsOrigin`. The client raises ONE visible toast only on the 4th consecutive `connect_error` to avoid a per-retry storm."},
+
+  {"t":"h","level":3,"text":"8.2.3 Room joins and namespace model"},
+
+  {"t":"p","text":"CoLab uses the default Socket.IO namespace (`/`) and partitions delivery purely through **rooms**. There are three room families, all defined as simple string prefixes:"},
+
+  {"t":"table","headers":["Room","Helper","Joined when","Used to address"],"rows":[
+    ["`user:<id>`","`userRoom(uid)`","Immediately on connect, in the connection handler","A specific user across ALL their tabs + replicas (presence, calls, notifications, conversation-list updates)"],
+    ["`conv:<id>`","`room(cid)`","On `CONVERSATION_JOIN`, and lazily on send/huddle","Everyone currently viewing a conversation (live messages, typing, reactions, read receipts)"],
+    ["`meeting:<id>`","`meetingRoom(mid)`","On `MEETING_JOIN` (and lazily on hand/reaction/chat)","Participants of one meeting (hand state, reactions, in-meeting chat)"]
+  ]},
+
+  {"t":"p","text":"The `user:<id>` room is the backbone. Because a user can have many tabs open and (in production) be served by any of several backend replicas, addressing 'the user' by their personal room — rather than a specific socket — is what makes multi-tab and horizontal scaling work transparently. A message reply notification, an incoming call, a presence change: all are `io.to(userRoom(targetId)).emit(...)`."},
+
+  {"t":"p","text":"A subtle but important detail: *all `socket.on(...)` listeners are registered synchronously in the connection handler before any `await`*. This guarantees that an event a client emits immediately on connect (e.g. placing a call the instant the socket comes up) is never dropped because a listener wasn't attached yet. Presence and the `READY` signal are announced *afterwards*, in a deferred async IIFE."},
+
+  {"t":"h","level":3,"text":"8.2.4 Heartbeat, ping, and disconnect detection"},
+
+  {"t":"p","text":"Liveness is handled by Engine.IO's built-in **ping/pong heartbeat** at the transport layer — CoLab does not implement its own application-level heartbeat. The server periodically pings; if a client misses the pong window (default ~20s ping interval / ~25s timeout in Engine.IO v4), the server fires `disconnect` with a `ping timeout` reason. This is how an *ungraceful* drop (closed laptop, dead Wi-Fi, killed tab) is eventually detected, versus a graceful `socket.disconnect()` which fires immediately."},
+
+  {"t":"p","text":"On the server side, two distinct teardown events fire in sequence, and the distinction matters:"},
+
+  {"t":"ul","items":[
+    {"text":"**`disconnecting`** — fires while `socket.rooms` is still populated. CoLab uses this to clean up huddle membership, because socket.io empties `socket.rooms` during pre-disconnect cleanup, so by the time `disconnect` fires the rooms are already gone. The handler walks the socket's `conv:*` rooms and removes the user from any huddle they were in — preventing 'ghost participants' on a closed tab or network loss.","items":[]},
+    {"text":"**`disconnect`** — fires after. CoLab uses it to (1) sweep the user's stuck 1:1 calls: a `ringing` call is marked missed, a `connected` call is hung up, and both parties are notified; and (2) set DB presence to OFFLINE and fan out a `PRESENCE_UPDATE`.","items":[]}
+  ]},
+
+  {"t":"callout","kind":"note","title":"Why ghost-call cleanup lives on disconnect","text":"Without the disconnect sweep, a socket drop would leave calls stuck in 'ringing' or 'connected' in the database forever — the call history would show a call that never ended. The handler queries `db.calls.listActiveForUser(uid)` and transitions each one terminally, emitting `CALL_MISSED` or `CALL_ENDED` to both parties and posting the WhatsApp-style call-log message into the conversation."},
+
+  {"t":"h","level":3,"text":"8.2.5 Reconnect and resync — how missed state is reconciled"},
+
+  {"t":"p","text":"This is the behaviour that turns 'real-time only after a page refresh' (a real defect this code fixes) into 'always live'. socket.io reconnects automatically (`reconnection: true`), but reconnecting the *transport* is not enough — during the gap the user may have missed messages, presence changes, or a notification read on another device. So the client runs an explicit **resync** on every reconnect (but not the very first connect, which the initial load + `READY` already cover)."},
+
+  {"t":"p","text":"In `CoLabV1.tsx`, a `hadConnection` flag distinguishes first connect from reconnect. On reconnect the client:"},
+
+  {"t":"ol","items":[
+    "Re-emits `CONVERSATION_JOIN` for the *currently active* conversation (from a ref, so it's always correct) — re-subscribing to its `conv:<id>` room, which a fresh socket is not in.",
+    "Refetches the messages of that active conversation over REST (`api.getMessages`) and replaces them — so any message sent during the gap is recovered.",
+    "Calls `refetchConversations()` to rebuild the whole conversation list (previews, unread counts, presence).",
+    "Refetches the unread notification count, because it may have been read/cleared on another device — a gap a conversation refetch alone would miss."
+  ]},
+
+  {"t":"p","text":"The `READY` event is the server's 'I've finished setting you up' signal, emitted right after the connection handler attaches listeners and announces presence. The client listens for `READY` and (re)emits `CONVERSATION_JOIN` for the active conversation, ensuring the room subscription is correct even if the active conversation changed between mount and connect."},
+
+  {"t":"diagram","kind":"flow","title":"Reconnect-and-resync","nodes":[
+    {"label":"Network blip","sub":"socket drops"},
+    {"label":"Auto reconnect","sub":"socket.io retries"},
+    {"label":"hadConnection?","sub":"yes → resync"},
+    {"label":"Rejoin + refetch","sub":"CONVERSATION_JOIN + getMessages + refetchConversations + notif count"}
+  ]},
+
+  {"t":"h","level":3,"text":"8.2.6 Presence scoping — who sees whom"},
+
+  {"t":"p","text":"Presence is *scoped*, not global. When a user connects or disconnects, the server does **not** `io.emit` to every socket in the system — that would be O(N) per event and O(N²) reconnect storms at scale. Instead `emitPresence(presence)` resolves the user's conversation peers via `db.conversations.listPeerIds(uid)` (everyone they share a DM or group with), builds a target set including the user's own id, and emits `PRESENCE_UPDATE` only to those `user:<id>` rooms."},
+
+  {"t":"p","text":"This is behaviour-preserving for the green dot: the frontend only reacts to `PRESENCE_UPDATE` for users it shares a DM with, so non-peers ignored the global emit anyway. Including the user's own room updates their *other tabs*. If the peer lookup fails, it degrades to emitting only to the user's own room (so at least their own tabs stay consistent). Because every target is a `user:<id>` room, the Redis adapter routes it cross-instance automatically — same as every other targeted emit."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"8.3 Event Catalog"},
+
+  {"t":"p","text":"All event names are defined once in `shared/src/events.ts` and re-exported on both sides (the frontend mirrors them in `EVENTS` in `lib/socket.ts`; the backend imports `shared.EVENTS`). This is the single source of truth for the realtime contract — *these are the real names, verified against the code*. The catalog is grouped by domain. Direction conventions: **C→S** = client emits, server handles; **S→C** = server emits, client handles."},
+
+  {"t":"h","level":3,"text":"8.3.1 Messaging events"},
+
+  {"t":"table","headers":["Event","Producer","Consumer","Payload","Purpose"],"widths":[1900,1500,1500,2100,2000],"rows":[
+    ["`message:send` (C→S)","Client on send","`socket.on` handler","`{conversationId,text,file,type,voice,encrypted,forwarded,forwardCount,parentMessageId}`","Submit a new message; server persists via `send()` then echoes `message:new`"],
+    ["`message:new` (S→C)","Server (socket + many HTTP routes)","All clients in `conv:<id>`","Full serialized message object","Live-deliver a new/echoed message to everyone viewing the conversation"],
+    ["`message:updated` (S→C)","Server (edit, reaction, pin, etc.)","`conv:<id>`","Full updated message","Live-replace a message (edits, reaction changes, flags)"],
+    ["`message:deleted` (S→C)","Server","`conv:<id>`","`{id, conversationId}`","Remove a (soft-deleted) message from open views"],
+    ["`message:reply` (S→C)","Server","`conv:<id>`","Message object","Deliver a threaded reply"],
+    ["`message:react` (C→S)","Client on emoji tap","`socket.on` handler","`{conversationId, messageId, emoji}`","Toggle a reaction; server emits `message:updated` + reaction notification"],
+    ["`message:read` (S→C)","HTTP `/:id/read` route","`conv:<id>`","`{conversationId, userId, lastReadAt}`","Broadcast that `userId` read up to `lastReadAt` (read receipt)"],
+    ["`message:rate_limited` (S→C)","Server token bucket","The sender socket only","`{conversationId}`","Advisory: send was throttled (flood protection)"],
+    ["`message:send_failed` (S→C)","Server on send rejection","The sender socket only","`{conversationId, code, message}`","Send rejected (e.g. BLOCKED DM); client drops the optimistic bubble"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Two ways `message:new` is produced","text":"Most live messages are produced by the `message:send` socket handler echoing back. But MANY are produced by HTTP routes reaching the shared `io` via `app.get(\"io\")`: system messages on conversation create, meeting-invite cards, scheduled-message delivery, call-log lines, and forwarded messages all emit `message:new` to `conv:<id>` from `routes/conversations.ts`, `routes/meetings.ts`, and `index.ts`. The client treats them uniformly."},
+
+  {"t":"h","level":3,"text":"8.3.2 Typing and presence events"},
+
+  {"t":"table","headers":["Event","Producer","Consumer","Payload","Purpose"],"widths":[1900,1600,1600,2000,1900],"rows":[
+    ["`typing:start` (C→S)","Client on keypress","`socket.on` handler","`{conversationId}`","Tell server the user started typing"],
+    ["`typing:stop` (C→S)","Client on idle/send","`socket.on` handler","`{conversationId}`","Tell server the user stopped typing"],
+    ["`typing` (S→C)","Server","Others in `conv:<id>` (`socket.to`, excludes sender)","`{conversationId, userId, typing}`","Show/hide the 'X is typing…' indicator"],
+    ["`presence:update` (S→C)","Server on connect/disconnect","Conversation peers + own tabs","`{userId, presence}`","Update the green/away/busy/offline dot (scoped, not global)"]
+  ]},
+
+  {"t":"p","text":"Presence values come from `shared.PRESENCE`: `on` (ONLINE), `away`, `busy`, `off` (OFFLINE). The server writes presence to the DB (`db.users.setPresence`) on connect/disconnect and broadcasts the change; the frontend stamps the value onto the matching DM conversation."},
+
+  {"t":"h","level":3,"text":"8.3.3 Conversation, notification and ancillary events"},
+
+  {"t":"table","headers":["Event","Producer","Consumer","Payload","Purpose"],"widths":[2000,1600,1500,1900,2000],"rows":[
+    ["`conversation:join` (C→S)","Client on open/reconnect","`socket.on` handler","`{conversationId}`","Subscribe the socket to that conversation's `conv:<id>` room"],
+    ["`conversation:new` (S→C)","Server","`user:<id>`","`{conversationId}` or conv object","A new conversation appeared (created, DM auto-created on call-decline reply, meeting conv)"],
+    ["`conversation:updated` (S→C)","Server","`conv:<id>`","Conversation object","Title/icon/members changed"],
+    ["`conversation:deleted` (S→C)","Server","`user:<id>` / `conv:<id>`","`{conversationId}`","Conversation removed for the user"],
+    ["`user:updated` (S→C)","Server","Broadcast","Public user object","Avatar/name/about changed — refresh that person everywhere"],
+    ["`notification:new` (S→C)","Server (mention/reply/reaction/missed-call/meeting)","`user:<id>`","Notification object","Push a new activity notification"],
+    ["`notification:read` (S→C)","HTTP notifications route","`user:<id>`","`{id}` or `{all:true}`","A notification (or all) was marked read"],
+    ["`notification:count` (S→C)","Server","`user:<id>`","Number","Authoritative unread-notification badge count"],
+    ["`scheduled:changed` (S→C)","Server","`user:<id>`","`{conversationId}`","The sender's scheduled-message list changed"],
+    ["`task:changed` / `reminder:changed` (S→C)","Server","`user:<id>`","(trigger)","Refetch tasks/reminders"],
+    ["`meeting:new` / `meeting:updated` (S→C)","Server","`user:<id>`","`{meetingId}`","Refetch meetings (invite, edit, lobby, end)"],
+    ["`invite:new` / `invite:updated` (S→C)","Server","`user:<id>`","Invite payload","Connection-request lifecycle"],
+    ["`ready` (S→C)","Server on connect","The connecting socket","`{userId}`","'Setup complete' — client (re)joins active conversation"]
+  ]},
+
+  {"t":"h","level":3,"text":"8.3.4 Call (1:1) signalling events"},
+
+  {"t":"p","text":"1:1 calls are pure signalling over Socket.IO — *no media here*. The flow is doorbell-style: the caller emits `call:request`, the server rings the recipient with `call:incoming` and gives the caller a `call:ringing` ringback, and the recipient must explicitly accept. A no-answer timer (`MISSED_MS`, in-process `setTimeout`) auto-transitions to missed."},
+
+  {"t":"table","headers":["Event","Dir","Payload","Purpose"],"widths":[2000,900,2900,3200],"rows":[
+    ["`call:request`","C→S","`{peerId, kind, conversationId}`","Place a call; server creates the call record and rings"],
+    ["`call:incoming`","S→C","`{call, caller, peer}`","Ring the recipient (their `user:<id>` room)"],
+    ["`call:ringing`","S→C","`{call, caller, peer}`","Ringback to the caller"],
+    ["`call:busy`","S→C","`{call, caller, peer}`","Recipient already in a call — caller only, written to history, no ring"],
+    ["`call:accept`","C→S","`{callId}`","Recipient accepts → server emits `call:accepted` to both"],
+    ["`call:accepted`","S→C","`{call}`","Both parties: proceed to mint LiveKit token + connect media"],
+    ["`call:decline`","C→S","`{callId, reason?}`","Recipient declines; optional reason becomes a real DM message"],
+    ["`call:declined`","S→C","`{call, reason}`","Both parties notified; call-log posted"],
+    ["`call:cancel` / `call:cancelled`","C→S / S→C","`{callId}` / `{call}`","Caller hangs up before answer"],
+    ["`call:hangup` / `call:ended`","C→S / S→C","`{callId, durationSec}` / `{call}`","End an answered call; logs with real duration"],
+    ["`call:missed`","S→C","`{call}`","No-answer timeout fired; missed-call notification + log"],
+    ["`call:new`","S→C","(trigger)","Both parties refetch call history"],
+    ["`call:upgraded`","S→C","`{...}`","A 1:1 call was promoted to a group call (other party migrates rooms)"],
+    ["`call:error`","S→C","`{message, code}`","Signalling error to the emitting socket"]
+  ]},
+
+  {"t":"h","level":3,"text":"8.3.5 Huddle (group call) signalling events"},
+
+  {"t":"p","text":"'Huddles' are group calls. Their membership and raised-hand state live in `huddleStore` — Redis-backed when `REDIS_URL` is set (correct across replicas), with an in-process Map fallback otherwise. `huddleAdd` returns `wasFirst` atomically (the first joiner 'starts' the call and posts a log line); `huddleRemove` returns `becameEmpty` atomically (the last leaver ends it). Atomicity prevents two simultaneous final leaves from both logging an 'ended' line."},
+
+  {"t":"table","headers":["Event","Dir","Payload","Purpose"],"widths":[1900,900,3000,3200],"rows":[
+    ["`huddle:join`","C→S","`{conversationId, kind}`","Join the group call (member-gated); broadcasts new state"],
+    ["`huddle:leave`","C→S","`{conversationId}`","Leave; last leaver posts 'Group call ended'"],
+    ["`huddle:sync`","C→S","`{conversationId}`","Request current state (member-gated) → replies `huddle:state` to caller only"],
+    ["`huddle:state`","S→C","`{conversationId, kind, participants}`","Authoritative participant list, fanned to all conversation members' `user:<id>` rooms"],
+    ["`huddle:ring`","C→S","`{conversationId, userIds}`","A participant pulls more members into the live call"],
+    ["`huddle:rung`","S→C","`{conversationId, kind, from}`","Each invitee is rung with an active join prompt"]
+  ]},
+
+  {"t":"h","level":3,"text":"8.3.6 Meeting interaction events"},
+
+  {"t":"p","text":"Meetings (scheduled, LiveKit-backed rooms) carry extra interaction events over the `meeting:<id>` room. Every meeting socket event is gated by `canAccessMeeting(uid, mid)` — only the host or an invited attendee may join the room or inject chat/reactions/hand state."},
+
+  {"t":"table","headers":["Event","Dir","Payload","Purpose"],"widths":[2100,900,2900,3100],"rows":[
+    ["`meeting:join`","C→S","`{meetingId}`","Explicitly join the room AND replay the last 100 persisted chat lines to the joiner"],
+    ["`meeting:hand:raise` / `:lower`","C→S","`{meetingId, userId?}`","Raise/lower a hand (host can lower others)"],
+    ["`meeting:hand:state`","S→C","`{meetingId, hands, names}`","Current raised hands with resolved display names"],
+    ["`meeting:reaction`","C→S","`{meetingId, emoji}`","Send an in-meeting emoji reaction"],
+    ["`meeting:reaction:broadcast`","S→C","`{meetingId, userId, name, emoji, ts}`","Fan the reaction to the room"],
+    ["`meeting:chat:send` / `:new`","C→S / S→C","`{meetingId, text, file}` / persisted line","In-meeting chat (persisted for rejoin/audit; degrades to ephemeral on DB failure)"],
+    ["`meeting:presence` / `meeting:lobby:update`","S→C","meeting payload","Lobby/presence updates from HTTP meeting routes"]
+  ]},
+
+  {"t":"callout","kind":"warning","title":"Why explicit meeting:join exists","text":"Originally the meeting room was joined lazily — only when a user first raised a hand, reacted, or sent chat. A 'listener-only' attendee who just watched never joined the room and therefore never received meeting chat, making the chat panel look broken until their first send. `meeting:join` fixes this AND replays recent persisted chat so late-joiners and rejoiners see history."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"8.4 The Four Key Event Flows in Depth"},
+
+  {"t":"p","text":"Four flows carry the bulk of CoLab's real-time value. Each is examined here with a producer→server→consumer diagram, the exact payload, and the failure/troubleshooting story — including the all-important question: *what happens when the socket is down?*"},
+
+  {"t":"h","level":3,"text":"8.4.1 Message delivery"},
+
+  {"t":"diagram","kind":"flow","title":"Message delivery","nodes":[
+    {"label":"Sender","sub":"emit message:send + optimistic bubble"},
+    {"label":"Socket.IO server","sub":"send() persists to MySQL"},
+    {"label":"io.to(conv:<id>)","sub":"emit message:new"},
+    {"label":"All viewers","sub":"render / reconcile optimistic"}
+  ]},
+
+  {"t":"p","text":"**Plain language:** you type and hit send; your message appears instantly (optimistically) while the server quietly files it and tells everyone in the chat, including you. **Engineering:** the client renders an optimistic bubble with `_status: \"sending\"` and a `_clientId`, then emits `message:send`. The server applies a per-user token-bucket throttle (`allowSend`: capacity 20, refill 5/s), persists through `send()`, joins the sender to `conv:<id>`, and `io.to(room).emit(message:new, msg)`. The sender's own client matches the echo to its optimistic bubble by replacing the first in-flight optimistic message; other clients append by id. The server also fires mention/reply notifications fire-and-forget — and explicitly never reads plaintext for E2EE-encrypted messages."},
+
+  {"t":"p","text":"**Failure / fallback — yes, it falls back to REST.** The send path checks `if (socketRef.current && connected)`: if the socket is *up*, it emits over the socket (and after 3s flips the optimistic status from 'sending' to 'sent' as a watchdog). If the socket is *down*, it calls `api.sendMessage` / `api.sendPayload` over REST, then reconciles the optimistic bubble with the HTTP response. So a message is *never lost* to a dead socket — it persists via HTTP, and other users pick it up on their next refetch or reconnect-resync. The advisory `message:rate_limited` and `message:send_failed` events let the client show a 'slow down' hint or drop a bubble that the server rejected (e.g. a blocked DM)."},
+
+  {"t":"h","level":3,"text":"8.4.2 Typing indicator"},
+
+  {"t":"diagram","kind":"flow","title":"Typing indicator","nodes":[
+    {"label":"Typer","sub":"emit typing:start"},
+    {"label":"Socket.IO server","sub":"socket.to(conv:<id>)"},
+    {"label":"Others (not typer)","sub":"emit typing"},
+    {"label":"Viewers","sub":"show 'X is typing…'"}
+  ]},
+
+  {"t":"p","text":"**Plain language:** as you type, the others in the chat see a little 'typing…' note; it disappears when you stop or send. **Engineering:** the client's `onTyping(isTyping)` emits `typing:start` or `typing:stop` with `{conversationId}` — but only `if (socketRef.current && connected && activeId)`. The server re-broadcasts with `socket.to(room(conversationId))` (note `socket.to`, not `io.to`: it *excludes the sender*) as `typing` with `{conversationId, userId, typing}`. The client stores `typingBy[conversationId] = typing ? userId : null`."},
+
+  {"t":"p","text":"**Failure / fallback — none, and correctly so.** Typing is *purely ephemeral*: it is never persisted and has no REST fallback. If the socket is down, no typing indicator shows — which is the right behaviour, because a stale 'typing…' is worse than none. There is no 'missed typing event' to resync; the indicator simply resumes when the socket reconnects. Troubleshooting a stuck indicator usually means a missed `typing:stop` (e.g. the typer's tab closed mid-keystroke); presence/disconnect handling clears the user, and the next message replaces the indicator anyway."},
+
+  {"t":"h","level":3,"text":"8.4.3 Presence"},
+
+  {"t":"diagram","kind":"flow","title":"Presence","nodes":[
+    {"label":"Connect/Disconnect","sub":"setPresence in DB"},
+    {"label":"emitPresence","sub":"listPeerIds(uid)"},
+    {"label":"io.to(user:<peer>)","sub":"emit presence:update"},
+    {"label":"Peers' tabs","sub":"update the dot"}
+  ]},
+
+  {"t":"p","text":"**Plain language:** when you come online or go offline, the people you chat with see your dot change colour. **Engineering:** on connect the server writes `setPresence(uid, ONLINE)` and calls `emitPresence(ONLINE)`, which resolves `listPeerIds(uid)` and emits `presence:update` to each peer's `user:<id>` room (plus the user's own). On disconnect it writes OFFLINE and fans the same. The client maps the value onto matching DM conversations."},
+
+  {"t":"p","text":"**Failure / fallback — DB is the source of truth, refetch is the fallback.** Presence is also persisted to the DB on every transition, so even if a `presence:update` event is missed (socket down, missed reconnect), the *next* `refetchConversations()` (which runs on reconnect-resync, module entry, and many user actions) reads the current presence from the DB and corrects the dot. So the live event is the fast path; the persisted value + refetch is the self-healing slow path. Troubleshooting a stuck-online dot usually means an ungraceful drop whose `disconnect` handler hasn't fired yet (waiting on the ping timeout) — it self-corrects within the heartbeat window."},
+
+  {"t":"h","level":3,"text":"8.4.4 Read receipts"},
+
+  {"t":"diagram","kind":"flow","title":"Read receipts","nodes":[
+    {"label":"Reader","sub":"POST /:id/read over HTTP"},
+    {"label":"markRead + io","sub":"app.get(io)"},
+    {"label":"io.to(conv:<id>)","sub":"emit message:read"},
+    {"label":"Other party","sub":"update lastReadAt"}
+  ]},
+
+  {"t":"p","text":"**Plain language:** when you open a chat, the other person can see you've read up to a certain point — unless either of you turned receipts off. **Engineering:** read receipts are unusual in that they are produced by an *HTTP route*, not a socket handler. `POST /conversations/:id/read` calls `markRead`, then reaches the shared `io` via `req.app.get(\"io\")` and emits `message:read` with `{conversationId, userId, lastReadAt}` to `conv:<id>`. The client merges it into `readState[conversationId][userId] = Date.parse(lastReadAt)` to render the 'seen' tick. Crucially, the route honours `receipts !== false`: if the reader has receipts OFF, their own unread still clears but the *other party is never told* — WhatsApp-style reciprocal privacy."},
+
+  {"t":"p","text":"**Failure / fallback — eventual via the receipts endpoint.** Because the read action itself is an HTTP call that always persists `lastReadAt`, a socket-down reader still records their read state server-side. The *other* party may miss the live `message:read` event, but the receipt is reconciled the next time they fetch the conversation/receipts (`GET /:id/receipts`) or reconnect-resync. So receipts degrade to 'eventually consistent' rather than lost. Troubleshooting 'no blue tick' first checks whether the reader (or sender) has receipts disabled before suspecting the socket."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"8.5 Scaling and Reliability"},
+
+  {"t":"h","level":3,"text":"8.5.1 Horizontal scaling with the Redis adapter"},
+
+  {"t":"p","text":"CoLab is built to run as multiple backend replicas behind a load balancer, and Socket.IO's per-process room registry would otherwise mean a user connected to replica A never receives an `io.to(userRoom)` emit issued on replica B. The **`@socket.io/redis-adapter`** solves this: when `config.redis.url` is set, `attachRealtime` connects a pub/sub Redis client pair and calls `io.adapter(createAdapter(pubClient, subClient))`, so every targeted emit is published to Redis and delivered on whichever replica holds the target socket. When `REDIS_URL` is empty, the adapter stays in-memory and the app runs perfectly as a single instance — the gate resolves immediately and the await is a no-op."},
+
+  {"t":"callout","kind":"risk","title":"The adapter-swap ordering bug (fixed, but understand it)","text":"`io.adapter(...)` REPLACES the namespace adapter with a fresh, EMPTY-rooms instance. Any socket that already joined `user:<id>` on the OLD in-memory adapter is NOT migrated and silently stops receiving `io.to(userRoom)` emits — this is exactly what dropped `CALL_INCOMING`, notifications, huddle state, and scheduled-message delivery in production where `REDIS_URL` is set. The fix: the swap completes BEHIND a readiness promise that the `io.use` handshake middleware awaits, so every `socket.join()` runs against the FINAL adapter. The gate is hard-capped at 3s — if Redis is slow/unreachable, it falls back to the in-memory adapter so handshakes never block indefinitely (single-instance still works perfectly)."},
+
+  {"t":"p","text":"Two redundancy notes on the Redis dependency: (1) the pub/sub clients use `reconnectStrategy: false` and a bounded `connectTimeout`, so a down Redis fails fast instead of wedging every handshake; (2) `huddleStore` independently uses Redis for huddle/hand state with the same fail-fast pattern, falling back to in-process Maps. A down Redis therefore degrades CoLab to *single-instance-correct* behaviour rather than breaking it."},
+
+  {"t":"h","level":3,"text":"8.5.2 Delivery guarantees, ordering, and what is persisted"},
+
+  {"t":"p","text":"**Delivery is best-effort, not at-least-once.** Socket.IO does not durably queue events for an offline socket; an `io.to(room).emit(...)` reaches only the sockets currently in that room. CoLab does *not* implement per-event acks or a replay log for general events. This is acceptable precisely because the *durable state lives in MySQL* and the client *resyncs from the DB* on reconnect — the live event is an optimization over polling, not the system of record."},
+
+  {"t":"table","headers":["Concern","CoLab's approach"],"widths":[3000,6000],"rows":[
+    ["Delivery semantics","Best-effort live + durable DB + reconnect-resync = effectively at-least-once *for persisted data* (messages, reads, calls, notifications)"],
+    ["Ephemeral data","Typing, presence-events, meeting reactions, ringback — best-effort only; safe to miss (presence/huddle state also self-heal from DB/Redis)"],
+    ["Ordering","Per-socket, per-room ordering is preserved by Socket.IO's single connection; cross-event global ordering is not guaranteed — the DB's authoritative timestamps order history on refetch"],
+    ["Flood control","Per-user token bucket on `message:send` (cap 20, refill 5/s); huddle no-answer timers are per-process `setTimeout`"]
+  ]},
+
+  {"t":"table","headers":["Persisted to DB (durable)","Ephemeral (lost on restart, by design)"],"widths":[4500,4500],"rows":[
+    ["Messages, reactions, edits, deletes (soft)","Typing indicators"],
+    ["Read state / lastReadAt","`recentIncoming` payload map (5-min TTL)"],
+    ["Calls + status + duration + call logs","Per-user send-throttle buckets"],
+    ["Notifications + counts","No-answer call timers (`setTimeout` handles)"],
+    ["Meeting chat (best-effort, degrades to ephemeral)","Live presence *events* (current value IS persisted)"],
+    ["Presence value, scheduled messages","Huddle membership + raised hands (Redis-backed if configured; else in-process)"]
+  ]},
+
+  {"t":"callout","kind":"tip","title":"The recentIncoming diagnostic map","text":"The server keeps a bounded `recentIncoming` Map (TTL 5 min, max 500 entries) recording the exact client payload that produced each `message:new`, keyed by the produced message id. It is a *diagnostic aid* for reconciling 'what the client sent' vs 'what was stored' — not a delivery queue or replay log. It is pruned both by TTL and by a hard size cap."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"8.6 Security of the Real-Time Plane"},
+
+  {"t":"h","level":3,"text":"8.6.1 Handshake authentication"},
+
+  {"t":"p","text":"Authentication is enforced once, at the handshake, by `io.use`. The client passes the app JWT in `auth.token`; the server runs `verify(token)` → `jwt.verify(token, config.auth.jwtSecret)`, which validates the HMAC signature and `exp`. On success the verified `sub` becomes `socket.userId`; on failure the connection is rejected with `unauthorized` and never reaches the connection handler. There is no anonymous socket path — every connected socket has a server-trusted identity. CORS is restricted via `corsOrigin(config.backend.corsOrigins)` with `credentials: true`."},
+
+  {"t":"h","level":3,"text":"8.6.2 Authorization on joins and emits"},
+
+  {"t":"p","text":"Beyond the handshake, individual events apply per-action authorization keyed off the trusted `socket.userId` — never off any client-supplied id:"},
+
+  {"t":"ul","items":[
+    "**Huddle events** (`huddle:join`, `huddle:sync`, `huddle:ring`) check `db.conversations.isMember(conversationId, uid)` / `huddleStore.huddleHas` — a non-member cannot join a group call or pull people in.",
+    "**Meeting events** (every `meeting:*`) are gated by `canAccessMeeting(uid, mid)`, which loads the meeting and requires the user to be the creator or an attendee — mirroring the `/calls/token` HTTP check, so a random authenticated user cannot emit meeting chat/reactions/hand state for an arbitrary meeting id.",
+    "**Message send** keys the sender as `uid` server-side (`senderId: uid`), so a client cannot forge messages as another user. The send service additionally enforces conversation-level rules (e.g. BLOCKED DMs → `message:send_failed`).",
+    "**Notifications** are emitted only to the resolved recipient's `user:<id>` room, never broadcast."
+  ]},
+
+  {"t":"h","level":3,"text":"8.6.3 Honest assessment of gaps and risks"},
+
+  {"t":"callout","kind":"risk","title":"Security gaps to track (honest)","text":"(1) **No per-emit re-validation of conversation membership on `conversation:join` itself** — the `conversation:join` handler joins `conv:<id>` for ANY conversationId the socket asks for, without checking membership at join time. An authenticated user who learns/guesses a conversation id could join its room and receive its live `message:new`/`typing` events (they still cannot fetch history without HTTP authorization, and message *sending* is separately gated, but live read-exposure is real). Huddle and meeting joins ARE membership-gated; plain conversation room-join is not. (2) **Long-lived JWT, no socket-side revocation** — the session JWT TTL defaults to 7 days and the socket verifies it only at handshake; a token revoked mid-session keeps an already-open socket alive until it disconnects. (3) **Default dev secret** — `AUTH_JWT_SECRET` defaults to `dev-only-change-me`; a startup guard rejects this in production, but it MUST be set to a strong value or socket auth is trivially forgeable. (4) **No input schema validation** on socket payloads beyond presence/null checks — handlers defensively destructure with defaults, but a malformed payload relies on downstream service validation rather than a strict schema at the boundary."},
+
+  {"t":"callout","kind":"warning","title":"Operational reminder","text":"Because the real-time plane is same-origin-proxied through Next.js, a misconfigured proxy (missing `/socket.io` rewrite, dropped trailing slash, or a WebSocket-incapable hop) presents as 'realtime only works after refresh' or 'call recipients hear nothing' — NOT as an obvious error. Always verify the handshake reaches the backend (look for `[socket] connect uid=...` in server logs and `Realtime connected` client-side) before suspecting application logic."},
+
+  {"t":"h","level":2,"text":"8.7 Summary"},
+
+  {"t":"p","text":"CoLab's real-time architecture is a single Socket.IO plane that authenticates once via JWT on the handshake, addresses users through `user:<id>` rooms and conversations through `conv:<id>` rooms, and fans out across replicas via a Redis adapter (with graceful single-instance fallback). It carries messaging, presence, typing, read receipts, notifications, and all call/huddle/meeting *signalling* — while the audio/video media flows entirely separately over LiveKit (Section 9). Delivery is best-effort but made reliable in practice by durable MySQL state plus an explicit reconnect-and-resync loop, so the live channel is a fast path over a self-healing source of truth rather than the source of truth itself. The known risks — unguarded conversation room-join, long-lived non-revocable session tokens, the dev-default secret, and the absence of strict payload schemas — are documented here so they can be tracked and closed."}
+]

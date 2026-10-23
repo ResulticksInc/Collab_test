@@ -1,0 +1,346 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS — foundation layer for the Figma-driven redesign.
+
+   This file is the single place to retarget the product's visual language.
+   Every value here is a DEFAULT that mirrors what the app renders today, so
+   adding this file changes nothing on screen. When the Figma "Collab-UI"
+   values are confirmed, update the numbers here and the shared primitives in
+   ui.css / components/ui pick them up without per-screen edits.
+
+   Naming: --sp-* spacing · --fs-* / --lh-* type · --r-* radius ·
+           --dur-* / --ease-* motion · --surface-* / --fg-* / --line-* semantic.
+   The legacy tokens in v1.css (--g*, --ac, --r, --sh, --fs-body …) stay valid;
+   semantic tokens below alias onto them so both vocabularies resolve to the
+   same colour until the redesign retires the legacy names.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Spacing scale (4px base) ─────────────────────────────────────────── */
+  --sp-0: 0px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+
+  /* ── Type scale ────────────────────────────────────────────────────────── */
+  /* --fs-title / --fs-section / --fs-body / --fs-meta already exist in v1.css
+     (26 / 19 / 14 / 12). These fill the gaps and add line-heights. */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-base: 14px;
+  --fs-lg: 15px;
+  --fs-xl: 17px;
+  --fs-2xl: 19px;
+  --fs-3xl: 22px;
+  --fs-4xl: 26px;
+  --lh-tight: 1.2;
+  --lh-snug: 1.35;
+  --lh-normal: 1.5;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* ── Radius ────────────────────────────────────────────────────────────── */
+  --r-xs: 5px;
+  /* = --rxs */
+  --r-sm: 8px;
+  /* = --rsm */
+  --r-md: 10px;
+  --r-lg: 12px;
+  /* = --r */
+  --r-xl: 14px;
+  /* modals */
+  --r-2xl: 20px;
+  --r-full: 999px;
+
+  /* ── Motion ────────────────────────────────────────────────────────────── */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Layout ────────────────────────────────────────────────────────────── */
+  --rail-w: 212px;
+  --list-w: 320px;
+  /* Breakpoint reference (CSS custom properties cannot drive @media, so these
+     are documentation + a JS source of truth via lib/breakpoints.ts):
+       --bp-sm 640px   phone → list/detail pane switch, call dock collapses
+       --bp-md 980px   tablet → meeting dock collapses
+       --bp-lg 1180px  desktop → side panels may collapse
+  */
+}
+
+/* Semantic colour aliases live on <body>, NOT :root. A custom property that
+   references another (--fg-primary: var(--g900)) is resolved on the element
+   that declares it; the theme classes (body.dark / body.accent-*) override the
+   palette on <body>, so declaring the aliases here is what lets them follow the
+   active theme. Declaring them on :root would freeze them to the light values. */
+body {
+  --surface-app: var(--bg);
+  --surface-base: var(--main);
+  --surface-raised: var(--card);
+  --surface-chrome: var(--side, var(--sb));
+  --surface-hover: var(--sbah);
+  --surface-selected: var(--sbaa);
+  --surface-accent-soft: var(--acb);
+  --surface-accent-muted: var(--ac100);
+  --fg-primary: var(--g900);
+  --fg-secondary: var(--g700);
+  --fg-muted: var(--g500);
+  --fg-faint: var(--g400);
+  --fg-on-accent: #ffffff;
+  --fg-accent: var(--ac);
+  --fg-danger: var(--danger-fg);
+  --line-subtle: var(--g200);
+  --line-strong: var(--g300);
+  --accent: var(--ac);
+  --accent-hover: var(--acl);
+  --accent-gradient: linear-gradient(45deg, var(--ac), color-mix(in srgb, var(--ac) 40%, #000));
+  --success: var(--grn);
+  --success-soft: var(--grn-bg);
+  --warning: var(--amb);
+  --warning-soft: var(--amb-bg);
+  --danger: var(--red);
+  --danger-soft: var(--red-bg);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--ac) 35%, transparent);
+
+}
+
+/* Dark-theme adjustments for the accent-gradient endpoint so primary CTAs keep
+   contrast on --main #09090b. */
+body.dark {
+  --accent-gradient: linear-gradient(45deg, var(--ac), color-mix(in srgb, var(--ac) 58%, #000));
+}
+
+/* ── Accent × dark fix (ENTERPRISE_UI_AUDIT S4) ─────────────────────────────
+   body.accent-* hard-codes LIGHT accent surfaces (--acb / --ac100) and, having
+   equal specificity to body.dark but appearing later in v1.css, wins in dark
+   mode — so accent surfaces turned near-white. The compound selectors below
+   out-rank both and restore neutral dark elevated surfaces, plus a lighter
+   accent hue that passes AA as text on the dark canvas. */
+body.dark.accent-blue {
+  --ac: #3b82f6;
+  --acl: #60a5fa;
+  --acb: #27272a;
+  --ac100: #3f3f46;
+}
+
+body.dark.accent-emerald {
+  --ac: #10b981;
+  --acl: #34d399;
+  --acb: #27272a;
+  --ac100: #3f3f46;
+}
+
+body.dark.accent-graphite {
+  --ac: #9ca3af;
+  --acl: #d1d5db;
+  --acb: #27272a;
+  --ac100: #3f3f46;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BRAND + SHELL TOKENS — lifted from Figma "Collab Screens"
+   (file JMfREMVEp8glMzjKLAPDUb › canvas "Collab Web" 116:2238 › Dashboard
+   116:2627 / 116:3120). Values are the exact fills/strokes in the design.
+   Light values sit on <body> so body.dark can retarget them below.
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --brand-500: #8b29be;
+  --brand-700: #5a0d81;
+  --brand-900: #381354;
+  /* Logo tile / search CTA sweep (Frame 62, Collab Logo 1). */
+  --brand-gradient: linear-gradient(135deg, #8b29be 0%, #5a0d81 50%, #381354 100%);
+  /* "Join Meeting" CTA sweep (Frame 2147207397). */
+  --brand-cta-gradient: linear-gradient(90deg, #481768 0%, #7a24a7 100%);
+  /* Rail is 230px in the design (Rectangle 6279). */
+  --rail-w: 230px;
+}
+
+body {
+  --brand-ink: #521d6d;
+  /* card icons, title accent bar, "+N" text */
+  --brand-name: #8928bb;
+  /* greeting first name */
+  --brand-text: #5e1087;
+  /* quick-reply chip text */
+  --brand-soft: #ede6f3;
+  /* quick-reply chip fill */
+  --brand-soft-2: #dcd2e2;
+  /* "+N" avatar bubble (#521d6d under 80% white) */
+  --nav-active-bg: #f5ebfd;
+  /* rail active row fill */
+  --nav-active-fg: #5e1087;
+  /* rail active row text/icon + 1px border */
+  --nav-badge: #5e1087;
+  /* rail unread badge */
+  --rail-line: #e5e6ea;
+  /* rail dividers */
+  --group-hdr: #74746b;
+  /* WORKSPACE header */
+  --search-bg: #f9fafc;
+  --search-line: #e1e8f1;
+  --search-fg: #60768d;
+  /* search icon + placeholder */
+  --dash-card-bg: rgba(255, 255, 255, 0.7);
+  --dash-card-solid: #ffffff;
+  /* avatar ring colour on the card */
+  --dash-chip-bg: #ededed;
+  /* time pill (#000 under 93% white) */
+}
+
+body.dark {
+  --brand-ink: #c084fc;
+  --brand-name: #c084fc;
+  --brand-text: #e9d5ff;
+  --brand-soft: rgba(139, 41, 190, 0.22);
+  --brand-soft-2: rgba(192, 132, 252, 0.28);
+  --nav-active-bg: rgba(94, 16, 135, 0.22);
+  --nav-active-fg: #d8b4fe;
+  --nav-badge: #7c3aed;
+  --rail-line: var(--sbb);
+  --group-hdr: var(--g400);
+  --search-bg: var(--sb);
+  --search-line: var(--sbb);
+  --search-fg: var(--g400);
+  --dash-card-bg: rgba(23, 27, 41, 0.82);
+  --dash-card-solid: #171b29;
+  --dash-chip-bg: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Chats screen (Figma "Collab Screens" › Calender-view 116:2739, which is
+   the Messages screen) ───────────────────────────────────────────────────── */
+body {
+  --row-active-bg: #f9fafc;
+  /* selected conversation row (Frame 123) */
+  --nav-active-line: #5e1087;
+  /* active filter chip border */
+  --time-unread: #571181;
+  /* unread row timestamp */
+  --bub-me: #5e1087;
+  /* sent bubble (Frame 22) */
+  --bub-peer: #eef0fb;
+  /* received bubble (Frame 27) */
+  --pill-bg: #ffffff;
+  /* date / system pill */
+  --pill-line: #e1e8f1;
+  --tick: #5f6ad1;
+  /* read receipt double tick */
+  --chat-bar: #f2f2f2;
+  /* composer bar */
+  --chat-field-line: #c9c4bb;
+  /* composer pill border */
+}
+
+body.dark {
+  --row-active-bg: var(--sbaa);
+  --nav-active-line: #c084fc;
+  --time-unread: #c084fc;
+  --bub-me: #5e1087;
+  --bub-peer: var(--sbah);
+  --pill-bg: var(--sb);
+  --pill-line: var(--sbb);
+  --tick: #818cf8;
+  --chat-bar: var(--sb);
+  --chat-field-line: var(--sbb);
+}
+
+/* ── Calendar (Figma "Collab Screens" › Calender-view 116:3227) ────────── */
+body {
+  --cal-line: #d9d9d9;
+  /* toolbar control borders */
+  --cal-grid-line: #e5e6ea;
+  /* month grid hairlines (0.3px black in Figma) */
+  --cal-dow: #626262;
+  /* Sun … Sat header */
+  --cal-date: #421161;
+  /* in-month day number */
+  --cal-date-muted: #acacac;
+  /* past / other-month day number */
+  --cal-ev-bg: #f7f7f7;
+  /* event card fill */
+  --cal-ev-line: rgba(7, 151, 118, 0.35);
+  /* event card hairline */
+  --cal-green: #079776;
+  /* live / starting-soon event accent */
+  --cal-more: #3d7de0;
+  /* "+ N Meetings" link */
+  --cal-card-bg: #f9f9f9;
+  /* upcoming meeting card */
+  --cal-card-line: #e2e2e2;
+}
+
+body.dark {
+  --cal-line: var(--sbb);
+  --cal-grid-line: var(--sbb);
+  --cal-dow: var(--g400);
+  --cal-date: #d8b4fe;
+  --cal-date-muted: var(--g600);
+  --cal-ev-bg: var(--sbah);
+  --cal-ev-line: rgba(52, 211, 153, 0.35);
+  --cal-green: #34d399;
+  --cal-more: #60a5fa;
+  --cal-card-bg: var(--sbah);
+  --cal-card-line: var(--sbb);
+}
+
+/* ── In-call / meeting (Figma "Collab Screens" › Video-call-* 116:4044 …) ── */
+body {
+  --call-blue: #8B29BE;
+  /* primary: media pill, view button, tabs, send */
+  --call-btn-bg: #8b29be1c;
+  /* dock button disc */
+  --call-on-bg: #ffc8c8;
+  /* dock button disc when active / muted / recording */
+  --call-on-fg: #eb5757;
+  --call-red: #f64439;
+  /* leave */
+  --call-overlay: rgba(0, 0, 0, 0.30);
+  /* tile name pill + tile controls */
+  --call-panel-bg: #f5f7fb;
+  /* chat / participants panel */
+  --call-panel-line: #e1e8f1;
+  --call-bub-peer: #e9f8ff;
+  --call-bub-me: #0060ff;
+  --call-row-bg: rgba(255, 255, 255, 0.8);
+  --call-row-fg: #25293b;
+  --call-rec-bg: rgba(15, 14, 14, 0.6);
+  --call-sub: #2d2d2d;
+  --call-surface: #ffffff;
+}
+
+body.dark {
+  --call-blue: #8B29BE;
+  --call-btn-bg: rgba(59, 130, 246, 0.18);
+  --call-on-bg: rgba(235, 87, 87, 0.22);
+  --call-on-fg: #f87171;
+  --call-red: #ef4444;
+  --call-overlay: rgba(0, 0, 0, 0.45);
+  --call-panel-bg: #171b29;
+  --call-panel-line: rgba(255, 255, 255, 0.1);
+  --call-bub-peer: rgba(59, 130, 246, 0.14);
+  --call-bub-me: #2563eb;
+  --call-row-bg: rgba(255, 255, 255, 0.06);
+  --call-row-fg: #e9edf5;
+  --call-rec-bg: rgba(0, 0, 0, 0.6);
+  --call-sub: #9aa6bd;
+  --call-surface: #0f1117;
+}
+
+/* ── Figma geometry (measured 2026-09-16 against Collab Screens) ─────────
+   Every column header in the design is 96px tall: rail brand row, chat-list
+   header, thread header and the module top bar all end at y=96. v1.css
+   defines --hdr-h: 66px on :root; this later declaration wins. */
+:root {
+  --hdr-h: 75px;
+  --list-w: 348px;
+}

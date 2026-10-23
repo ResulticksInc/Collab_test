@@ -1,0 +1,78 @@
+# =============================================================================
+# docker-compose.mumbai.yml — SELF-CONTAINED REGIONAL MEDIA SERVER
+#
+# ONE clean media node near the users (e.g. asia-south1 / Mumbai):
+#     LiveKit (SFU)  +  coturn (TURN)  +  Redis (LiveKit room state)
+# and NOTHING else. The app, backend, database, messaging, files, and the app's
+# OWN Redis all STAY on the US-East (17) server, untouched. This deliberately
+# avoids running duplicate LiveKit/TURN copies across regions ("enterprise
+# spaghetti") — there is exactly ONE LiveKit and ONE TURN, here.
+#
+#   docker compose --env-file .env.mumbai -f docker-compose.mumbai.yml up -d
+#
+# NOTE: the Redis here is the MEDIA node's own (LiveKit room state + future
+# multi-node SFU scaling). It is NOT the app's huddleStore Redis — that stays on
+# US-East with the backend. Do not point the backend at this one.
+#
+# Open these at the GCP firewall (see docs/DEPLOY_MUMBAI_REGION.md):
+#   • SFU media  : udp:7532, tcp:7531   (source 0.0.0.0/0 — browsers connect here)
+#   • SFU signal : tcp:7534             (source = the 17 server's IP ONLY)
+#   • TURN       : udp/tcp:3478, tcp:5349, tcp:443, udp:49152-49251 (0.0.0.0/0)
+# Redis is internal-only (not published). No app/DB/web ports — media only.
+# =============================================================================
+services:
+  # ── LiveKit SFU (call media) ───────────────────────────────────────────────
+  livekit:
+    image: livekit/livekit-server:v1.9
+    container_name: colab-livekit
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      # MUST match the 17 server's backend (.env.live) so the JWT tokens it mints
+      # validate here. Copy LIVEKIT_API_KEY / LIVEKIT_API_SECRET verbatim.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    ports:
+      - "7531:7531"     # ICE/TCP media fallback   (public)
+      - "7532:7532/udp" # ICE/UDP media            (public)
+      - "7533:7533/udp" # built-in TURN relay      (public)
+      # Signalling — published so the 17 server's nginx can proxy /livekit here.
+      # Lock this down at the firewall to the 17 server's IP only (not 0.0.0.0/0).
+      - "7534:7534"
+    volumes:
+      # use_external_ip:true auto-discovers THIS box's public IP via STUN. The
+      # mumbai config is the live one + a redis: block (room state on this node).
+      - ${LIVEKIT_CONFIG:-./infrastructure/livekit/livekit.mumbai.yaml}:/etc/livekit.yaml:ro
+    depends_on:
+      - redis
+
+  # ── Redis — the MEDIA node's own room-state store (NOT the app's huddleStore
+  # Redis, which stays on US-East). Internal-only; lets you add more SFU nodes
+  # later with no re-architecting. Optional for a single node, harmless to keep.
+  redis:
+    image: redis:7-alpine
+    container_name: colab-livekit-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  # ── coturn TURN relay (fallback for strict/symmetric-NAT clients) ───────────
+  # Co-located with the SFU, so it relays to the SFU over this same box (no
+  # cross-network routing). host networking gives it the real IP + the full UDP
+  # relay range. external-ip/relay-ip are passed on the command line (coturn does
+  # not expand ${ENV} inside turnserver.conf).
+  coturn:
+    image: coturn/coturn:4.6
+    container_name: colab-coturn
+    network_mode: host
+    restart: unless-stopped
+    command:
+      - "-c"
+      - "/etc/coturn/turnserver.conf"
+      - "--external-ip=${COTURN_PUBLIC_IP}/${COTURN_BIND_IP}"
+      - "--relay-ip=${COTURN_BIND_IP}"
+    volumes:
+      - ./infrastructure/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      # TLS certs for turns: — valid for turncollab.resulticks.com. Drop
+      # fullchain.pem + privkey.key here before `up` (see the runbook, certbot step).
+      - ./infrastructure/coturn/certs:/etc/coturn/certs:ro
+    depends_on:
+      - livekit

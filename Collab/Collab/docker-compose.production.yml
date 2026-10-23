@@ -1,0 +1,242 @@
+# CoLab — PRODUCTION stack (HTTPS everywhere, network-agnostic).
+#
+#   docker compose --env-file .env -f docker-compose.production.yml up -d --build
+#
+# The ONLY public web surface is Caddy (443 + 80). Caddy terminates TLS and
+# reverse-proxies the frontend, backend API, Socket.IO, LiveKit signalling, and
+# MinIO on a single HTTPS origin — so the browser always runs in a secure
+# context and calls/meetings work. The backend derives the browser LiveKit URL
+# from the request origin, so this works on ANY host (LAN IP, private host,
+# public domain) with no per-host rebuild and no LIVEKIT_WS_URL to set.
+#
+# Firewall: open 443/tcp + 80/tcp (web/TLS) and the LiveKit media ports
+# 7531/tcp, 7532/udp, 7533/udp (RTP + built-in TURN relay for cross-network
+# media). LiveKit signalling (7534) stays internal — Caddy proxies it at
+# /livekit. See docs/PRODUCTION_DEPLOY.md.
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: collab-caddy
+    restart: unless-stopped
+    # The HOST port is the per-server user-facing port (live=7524, teams=7520,
+    # default=443). Caddy still listens on 80/443 INSIDE the container; only
+    # the host-side mapping flexes. Set WEB_PORT + WEB_HTTP_PORT in .env.
+    ports:
+      - "${WEB_HTTP_PORT:-80}:80"
+      - "${WEB_PORT:-443}:443"
+      - "${WEB_PORT:-443}:443/udp" # HTTP/3
+    environment:
+      # Your server's domain or IP (no scheme). Empty → binds all hostnames on
+      # 443 with a self-signed cert (works on any network immediately).
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:-}
+    volumes:
+      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - collab_caddy_data:/data
+      - collab_caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
+      - livekit
+      - minio
+
+  # NOTE: No bundled `db:` service. The backend connects to the SHARED corporate
+  # MySQL (DBA-owned) via DATABASE_URL in .env (10.101.3.2:3603, user res_apdev2945).
+  # This is the same DB across teams + live so users see one consistent dataset.
+  # Migrations auto-run on backend boot, tracked in schema_migrations, and are
+  # idempotent + additive — safe to re-deploy without data loss.
+
+  redis:
+    image: redis:7-alpine
+    container_name: collab-redis
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: collab-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--address", ":9003", "--console-address", ":9004"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-colabminio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-colabminio123}
+    volumes:
+      - collab_minio:/data
+
+  livekit:
+    image: livekit/livekit-server:v1.9
+    container_name: collab-livekit
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    ports:
+      - "7531:7531" # ICE/TCP media fallback (UDP-blocked networks)
+      - "7532:7532/udp" # ICE/UDP media
+      - "7533:7533/udp" # built-in TURN relay (cross-network)
+    volumes:
+      # Per-server LiveKit config selected by LIVEKIT_CONFIG_FILE in that
+      # server's .env (so ONE compose serves both):
+      #   test → ./infrastructure/livekit/livekit.test.yaml  (node_ip 10.205.11.8)
+      #   live → ./infrastructure/livekit/livekit.live.yaml  (node_ip 10.200.3.17)
+      # Default keeps the generic use_external_ip config for internet-facing hosts.
+      - ${LIVEKIT_CONFIG_FILE:-./infrastructure/livekit/livekit.prod.yaml}:/etc/livekit.yaml:ro
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    # Allow graceful drain (sockets + in-flight requests + DB pool) on SIGTERM
+    # before Docker SIGKILLs the container.
+    stop_grace_period: 20s
+    environment:
+      NODE_ENV: production
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 4000
+      # Same-origin behind Caddy → CORS is a non-issue; this only bounds direct
+      # API access. Caddy forwards X-Forwarded-Proto/Host so the backend derives
+      # the correct wss://<host>/livekit for the browser.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      # Engineering Operations Portal (/dev). Empty password = portal DISABLED
+      # (secure default). Set OPS_PORTAL_PASSWORD in the live env to enable it.
+      # SECURITY: no default — an empty value keeps the portal disabled.
+      OPS_PORTAL_USER: ${OPS_PORTAL_USER:-admin}
+      OPS_PORTAL_PASSWORD: ${OPS_PORTAL_PASSWORD}
+      OPS_SESSION_TTL: ${OPS_SESSION_TTL:-12h}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      GIT_COMMIT: ${GIT_COMMIT:-}
+      AUTH_TOKEN_TTL: ${AUTH_TOKEN_TTL:-7d}
+      # Public self-service sign-up DISABLED by default in production. Set
+      # AUTH_SIGNUP_ENABLED=true explicitly if open registration is intended.
+      AUTH_SIGNUP_ENABLED: ${AUTH_SIGNUP_ENABLED:-false}
+      # SSO (OpenID Connect). The backend image does NOT bake .env, so these MUST be
+      # passed here (from the active --env-file) or the container reports "SSO not
+      # configured".
+      SSO_ENABLED: ${SSO_ENABLED:-false}
+      SSO_BASE_URL: ${SSO_BASE_URL:-}
+      SSO_IDP_URL: ${SSO_IDP_URL:-}
+      SSO_AUTHORIZE_URL: ${SSO_AUTHORIZE_URL:-}
+      SSO_TOKEN_URL: ${SSO_TOKEN_URL:-}
+      SSO_JWKS_URL: ${SSO_JWKS_URL:-}
+      SSO_USERINFO_URL: ${SSO_USERINFO_URL:-}
+      SSO_ISSUER: ${SSO_ISSUER:-}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID:-}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+      SSO_REDIRECT_URI: ${SSO_REDIRECT_URI:-}
+      SSO_SCOPE: ${SSO_SCOPE:-openid profile email}
+      SSO_STATE_SECRET: ${SSO_STATE_SECRET:-}
+      SSO_INSECURE_SKIP_VERIFY: ${SSO_INSECURE_SKIP_VERIFY:-false}
+      # Encrypted PII claims (claims_jwe): the RSA private key, inline PEM (raw or
+      # base64) or a path INSIDE the container — ./keys is mounted at /app/keys below.
+      SSO_JWE_PRIVATE_KEY: ${SSO_JWE_PRIVATE_KEY:-}
+      SSO_JWE_PRIVATE_KEY_FILE: ${SSO_JWE_PRIVATE_KEY_FILE:-}
+      # Shared corporate MySQL — set in .env. No fallback: if missing, fail fast.
+      DATABASE_URL: ${DATABASE_URL}
+      DEMO_DATABASE_URL: ${DEMO_DATABASE_URL}
+      DEMO_MODE: ${DEMO_MODE:-no}
+      # DB_PROFILE mechanism: set DB_PROFILE=<name> and DATABASE_URL_<NAME> is used.
+      DB_PROFILE: ${DB_PROFILE}
+      DATABASE_URL_LOCAL: ${DATABASE_URL_LOCAL}
+      DATABASE_URL_LIVE: ${DATABASE_URL_LIVE}
+      DATABASE_URL_DEMO: ${DATABASE_URL_DEMO}
+      # Leave LIVEKIT_WS_URL BLANK — the backend auto-derives wss://<host>/livekit
+      # from the request origin behind Caddy. Set it only to force a specific URL.
+      LIVEKIT_WS_URL: ${LIVEKIT_WS_URL:-}
+      LIVEKIT_SERVER_URL: ${LIVEKIT_SERVER_URL:-ws://livekit:7534}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_TOKEN_TTL_SEC: ${LIVEKIT_TOKEN_TTL_SEC:-3600}
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9003
+      # Local file-storage tier (docs/FILE_UPLOAD_STORAGE_CHAIN.md): named volume
+      # below; order disk,s3,db — set FILE_STORAGE_ORDER=s3,db to roll back.
+      FILE_STORAGE_DIR: /app/data/files
+      FILE_STORAGE_ORDER: ${FILE_STORAGE_ORDER:-disk,s3,db}
+      FILE_STORAGE_MIN_FREE_BYTES: ${FILE_STORAGE_MIN_FREE_BYTES:-536870912}
+      FILE_TIER_ENABLED: ${FILE_TIER_ENABLED:-true}
+      FILE_TIER_COLD_AFTER_DAYS: ${FILE_TIER_COLD_AFTER_DAYS:-30}
+      FILE_TIER_PRESSURE_PCT: ${FILE_TIER_PRESSURE_PCT:-80}
+      # Browser-facing storage URL = same origin via Caddy /minio.
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-colab-files}
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-colabminio}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-colabminio123}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      E2EE_ENABLED: ${E2EE_ENABLED:-false}
+      # Push notifications. The backend image does NOT bake .env, so these MUST be
+      # passed here or the backend boots with push disabled and notifications only
+      # reach clients holding a live socket (open tab / open app).
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@colab.app}
+      # Mobile push (FCM HTTP v1) — service account file lives in ./keys (mounted below).
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      FCM_SERVICE_ACCOUNT_FILE: ${FCM_SERVICE_ACCOUNT_FILE:-}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
+      FCM_MESSAGE_TTL_SEC: ${FCM_MESSAGE_TTL_SEC:-86400}
+      FCM_CALL_TTL_SEC: ${FCM_CALL_TTL_SEC:-45}
+      # iOS VoIP push (APNs direct) for CallKit ringing.
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_KEY_P8: ${APNS_KEY_P8:-}
+      APNS_KEY_FILE: ${APNS_KEY_FILE:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-com.resulticks.collab}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-}
+      # Automatic history recovery (docs/E2EE_AUTO_RECOVERY.md): server-escrowed
+      # per-user account key so any signed-in device restores with no prompt.
+      E2EE_AUTO_RECOVERY: ${E2EE_AUTO_RECOVERY:-true}
+      E2EE_ESCROW_SECRET: ${E2EE_ESCROW_SECRET:-}
+      # Collab Admin Panel (/admin). The image doesn't bake .env, so these MUST be
+      # forwarded here; otherwise production boots with the built-in default
+      # password and the boot guard refuses to start.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_SESSION_TTL: ${ADMIN_SESSION_TTL:-}
+    volumes:
+      # Local file-storage tier (first upload tier). Back this volume up with mysqldata/minio.
+      - files_data:/app/data/files
+      # SSO JWE private key (claims_jwe decryption). Host ./keys → /app/keys, read-only.
+      # Point SSO_JWE_PRIVATE_KEY_FILE=/app/keys/collab_private.pem (or use the inline var).
+      - ./keys:/app/keys:ro
+    depends_on:
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      livekit:
+        condition: service_started
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        # Same-origin: blank → the browser talks to its own origin (Caddy) and
+        # Next/Caddy proxy /api + /socket.io to the backend. No per-host rebuild.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL-}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL-}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-CoLab}
+        NEXT_PUBLIC_WORKSPACE_NAME: ${NEXT_PUBLIC_WORKSPACE_NAME:-CoLab}
+        NEXT_PUBLIC_USER_EMAIL: ${NEXT_PUBLIC_USER_EMAIL:-}
+        NEXT_PUBLIC_FEATURE_SIGNUP: ${NEXT_PUBLIC_FEATURE_SIGNUP:-1}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
+        NEXT_PUBLIC_E2EE_ENABLED: ${NEXT_PUBLIC_E2EE_ENABLED:-false}
+        BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:4000}
+    restart: unless-stopped
+    # No host port — only reachable through Caddy on the internal network.
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      BACKEND_INTERNAL_URL: http://backend:4000
+    depends_on:
+      - backend
+
+volumes:
+  files_data:
+  collab_minio:
+  collab_caddy_data:
+  collab_caddy_config:

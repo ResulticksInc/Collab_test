@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoLab — WebRTC Calls & Video Root Cause Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #121826;
+      --card-border: #1e293b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #6366f1;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --font: 'Inter', -apple-system, sans-serif;
+      --mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 40px 24px;
+    }
+    .container { max-width: 1060px; margin: 0 auto; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 12px;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #fca5a5;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    h1 { font-size: 30px; font-weight: 800; color: #fff; margin-bottom: 6px; }
+    .meta { color: var(--text-muted); font-size: 14px; margin-bottom: 30px; }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+    h2 { font-size: 18px; font-weight: 700; color: #e2e8f0; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+    .rc-box {
+      background: rgba(0,0,0,0.3);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 14px;
+      border-left: 4px solid var(--danger);
+    }
+    .rc-title { font-weight: 700; font-size: 15px; color: #fff; margin-bottom: 4px; }
+    .rc-desc { color: var(--text-muted); font-size: 13px; margin-bottom: 8px; }
+    .code-block {
+      background: #06090e;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: #38bdf8;
+      overflow-x: auto;
+    }
+    .fixed-box {
+      border-left-color: var(--success);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+    th { background: rgba(0,0,0,0.25); color: var(--text-muted); padding: 10px 14px; text-align: left; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--card-border); }
+    td { padding: 12px 14px; border-bottom: 1px solid rgba(30,41,59,0.5); }
+    .status-badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+    .status-ok { background: rgba(16,185,129,0.15); color: #34d399; }
+    .status-crit { background: rgba(239,68,68,0.15); color: #f87171; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="badge">Forensic Root Cause Analysis (Ponytail Mode)</div>
+    <h1>CoLab WebRTC Calls & Video Connection Breakdown</h1>
+    <div class="meta">
+      <strong>Environment:</strong> collab-uat.resulticks.com (10.200.3.64 / 34.73.179.104) &bull; <strong>Symptom:</strong> "Unable to reach media server" (25s Watchdog Timeout)
+    </div>
+
+    <div class="card">
+      <h2>1. The Real Technical Problem</h2>
+      <p style="font-size: 14px; color: #cbd5e1; margin-bottom: 12px;">
+        WebRTC audio/video calls require <strong>two distinct communication planes</strong>:
+      </p>
+      <ul style="padding-left: 20px; font-size: 13px; color: var(--text-muted); line-height: 1.8;">
+        <li><strong style="color:#fff;">Signalling Plane (HTTPS/WSS on Port 443/7524):</strong> Used to authenticate and exchange session descriptions. <span class="status-badge status-ok">WORKING</span> (Responded HTTP 400 to join probe).</li>
+        <li><strong style="color:#fff;">Media Plane (UDP/TCP on Ports 7531-7533 & TURN):</strong> Used to transport real-time audio/video RTP packets between browser and LiveKit. <span class="status-badge status-crit">FAILED</span> (Zero reachable ICE candidates).</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>2. Three Root Causes Identified & Fixed</h2>
+
+      <div class="rc-box fixed-box">
+        <div class="rc-title">Root Cause #1: Stale Media IP in LiveKit Configuration</div>
+        <div class="rc-desc">LiveKit was broadcasting <code>10.205.11.8</code> instead of the real host IP <code>10.200.3.64</code>. Browser attempted UDP transport to an unreachable IP.</div>
+        <div class="code-block">Fixed in infrastructure/livekit/livekit.test.yaml: node_ip: 10.200.3.64</div>
+      </div>
+
+      <div class="rc-box fixed-box">
+        <div class="rc-title">Root Cause #2: Dead TURN Domain (NXDOMAIN) in .env.teams</div>
+        <div class="rc-desc"><code>.env.teams</code> configured <code>turn.collab-uat.resulticks.com</code>. DNS lookup returned NXDOMAIN (domain does not exist). External clients had no working fallback.</div>
+        <div class="code-block">Fixed in .env.teams: TURN_URLS=turn:turncollab.resulticks.com:3478... (Resolves to 34.74.165.103)</div>
+      </div>
+
+      <div class="rc-box fixed-box">
+        <div class="rc-title">Root Cause #3: Missing Allowed Peer in Coturn ACL</div>
+        <div class="rc-desc">Coturn denies RFC1918 private subnets by default. Without an explicit allow rule, the relay dropped packets meant for LiveKit on 10.200.3.64.</div>
+        <div class="code-block">Fixed in infrastructure/coturn/turnserver.conf: allowed-peer-ip=10.200.3.64</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>3. Required Network Ports on Host 10.200.3.64</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Port</th>
+            <th>Protocol</th>
+            <th>Service</th>
+            <th>Direction</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>7524</strong></td>
+            <td>TCP</td>
+            <td>Nginx Web / API / WSS Signalling</td>
+            <td>Inbound</td>
+            <td><span class="status-badge status-ok">Configured</span></td>
+          </tr>
+          <tr>
+            <td><strong>7532</strong></td>
+            <td>UDP</td>
+            <td>LiveKit WebRTC Media (Audio/Video RTP)</td>
+            <td>Inbound</td>
+            <td><span class="status-badge status-crit">Must be open on Host Firewall</span></td>
+          </tr>
+          <tr>
+            <td><strong>7531</strong></td>
+            <td>TCP</td>
+            <td>LiveKit ICE TCP Fallback</td>
+            <td>Inbound</td>
+            <td><span class="status-badge status-crit">Must be open on Host Firewall</span></td>
+          </tr>
+          <tr>
+            <td><strong>3478 / 5349</strong></td>
+            <td>UDP/TCP</td>
+            <td>Public TURN Relay (turncollab.resulticks.com)</td>
+            <td>Outbound to Relay</td>
+            <td><span class="status-badge status-ok">Configured</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

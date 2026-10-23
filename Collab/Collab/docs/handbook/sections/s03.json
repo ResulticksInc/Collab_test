@@ -1,0 +1,261 @@
+[
+  {"t":"h","level":1,"text":"3. Complete System Architecture"},
+
+  {"t":"p","text":"This section is the authoritative, code-grounded description of how every part of CoLab fits together. It is written to be the single reference an engineer reaches for when they need to understand *where a component lives, what it is responsible for, how a request or a media stream actually travels through the system, and what breaks when a given box goes down*. Every claim here was verified against the real repository — the compose files (`docker-compose.yml`, `docker-compose.live.yml`), the edge configuration (`infrastructure/nginx/nginx.conf`, `infrastructure/caddy/Caddyfile`), the media configuration (`infrastructure/livekit/*.yaml`, `infrastructure/coturn/turnserver.conf`), and the backend boot sequence (`backend/app/src/index.ts`, `app.ts`, `realtime/socket.ts`)."},
+
+  {"t":"p","text":"CoLab is a self-hosted, enterprise team-collaboration platform — messaging, calls, meetings, files, tasks, reminders, and presence — built as a **monorepo** of independently-deployable services that are wired together with Docker Compose and fronted by a single reverse proxy. The deliberate architectural choice that shapes everything below is **same-origin delivery**: the browser only ever talks to one host, and the edge proxy fans traffic out to the backend API, the realtime socket, the LiveKit media server, and object storage. This removes an entire class of cross-origin / mixed-content / CORS failures that previously broke attachments and realtime updates."},
+
+  {"t":"callout","kind":"note","title":"How to read this section","text":"3.1 gives the layered picture and the component catalog. 3.2 walks the five canonical flows (request, response, authentication, media, storage-upload) each with a diagram and prose. 3.3 covers cross-cutting wiring, failure domains, and the maturity-honest component status. If you only read one thing, read the component table in 3.1 and the failure-impact column."},
+
+  {"t":"h","level":2,"text":"3.1 The Layered Architecture"},
+
+  {"t":"p","text":"CoLab is best understood as **five horizontal layers**. Traffic from a user's browser enters at the top and descends only as far as it needs to: a chat message touches the Client, Edge, Backend, and Data layers; a video call additionally lights up the Media layer and bypasses the Backend for the actual audio/video bytes. Each layer is a distinct failure domain — understanding the boundaries is the key to operating the system."},
+
+  {"t":"diagram","kind":"layered","title":"CoLab — five-layer system architecture","layers":[
+    {"label":"Client / Frontend","items":["Next.js 14 SPA","React 18","livekit-client + socket.io-client"]},
+    {"label":"Edge / Reverse Proxy","items":["nginx :7530 (live) or Caddy :443","TLS terminated upstream","same-origin fan-out"]},
+    {"label":"Backend API + Realtime","items":["Express :4000 (/api)","Socket.IO (/socket.io)","service layer + JWT auth"]},
+    {"label":"Data","items":["MySQL 8 (persistence)","Redis (adapter, blocklist, huddle)","MinIO S3 (blobs)"]},
+    {"label":"Media","items":["LiveKit SFU :7531-7534","coturn TURN relay","direct browser↔SFU RTP"]}
+  ]},
+
+  {"t":"p","text":"**Plain-language version:** the browser loads one web app. That app sends ordinary API calls and a persistent socket connection to a single front door (nginx or Caddy). The front door forwards API/socket traffic to the backend, which reads and writes a MySQL database, caches transient state in Redis, and stores file bytes in MinIO. When a call starts, the browser ALSO opens a *second, separate* connection straight to the LiveKit media server for the actual video and audio — that media never passes through the backend, only the *permission to join* (a signed token) does."},
+
+  {"t":"p","text":"**Engineering version:** the frontend is a fully client-rendered SPA (`frontend/app/src/app/page.tsx` is just `<CoLabV1/>` marked `'use client'`). It is served by a Next.js process (`next start` on container port 3000) which ALSO carries reverse-proxy rewrites for `/api`, `/socket.io`, and `/livekit` (see `frontend/app/next.config.js`). In the production topology, however, the authoritative edge is **nginx** (container port 7530) — `nginx.conf` routes `/api/` and `/socket.io/` to `backend:4000`, `/livekit` to `livekit:7534` (stripping the prefix), `/minio/` to `minio:9000`, and everything else to `frontend:3000`. The backend (`backend/app/src/index.ts`) is a single Node process exposing both the Express REST API and the Socket.IO server on the same HTTP server (`attachRealtime(server)`). Data persistence is MySQL via a memoized `mysql2/promise` pool; Redis backs the Socket.IO adapter, the JWT revocation blocklist, and the huddle store; MinIO (S3-compatible) holds file blobs. The media plane is a self-hosted LiveKit SFU plus an optional coturn TURN relay."},
+
+  {"t":"h","level":3,"text":"3.1.1 Why these layers, and where the boundaries sit"},
+
+  {"t":"p","text":"The layer boundaries are not cosmetic — they are the lines along which the system fails independently and is scaled independently. Three boundaries matter most:"},
+
+  {"t":"ul","items":[
+    {"text":"**Edge ↔ Backend (the same-origin boundary).** The browser is locked to one origin. nginx/Caddy is the only component that knows the internal service map. This is why `config.apiBaseUrl` and `config.socketUrl` default to the empty string (same-origin) in `lib/config.ts`, and why `next.config.js` keeps `NEXT_PUBLIC_API_BASE_URL` blank. A consequence: there is **no CORS surface** for normal traffic — the API and socket appear to the browser as paths on its own host.","items":["If the edge sets a wrong `X-Forwarded-Proto`, the backend derives a `ws://` LiveKit URL instead of `wss://` and calls fail with mixed-content errors. The nginx `map` block defaults `$fwd_proto` to `https` precisely to prevent this."]},
+    {"text":"**Backend ↔ Media (the signalling/media split).** The backend mints a LiveKit room token (signalling authority) but **never carries media**. Audio/video flows browser → SFU → browser. This is the single most important fact for capacity planning and latency: moving the SFU closer to users (the Mumbai relocation) cuts call latency without touching the backend at all."},
+    {"text":"**Data internal-only boundary.** In the live topology (`docker-compose.live.yml`) MySQL, Redis, MinIO, and the LiveKit signalling port are **not published to the host** — only nginx (`7524:7530`) and the three LiveKit media ports (`7531`, `7532/udp`, `7533/udp`) are reachable from outside the Docker network. This is both a security posture and a port-collision fix on the shared corporate box."}
+  ]},
+
+  {"t":"h","level":3,"text":"3.1.2 Component Catalog"},
+
+  {"t":"p","text":"The table below is the canonical inventory of every architectural component, what it is for, what it owns, and — critically — what happens to the product when it fails. The failure-impact column is the operational heart of this handbook: it is what an on-call engineer needs at 3 a.m."},
+
+  {"t":"table","headers":["Component","Purpose","Responsibilities","Failure impact"],"rows":[
+    ["Frontend (Next.js 14 SPA)","Deliver the entire user interface as one client-rendered app.","Render all `mode` views from the `CoLabV1` god-component; hold app state in React (no Redux); proxy `/api`, `/socket.io`, `/livekit` via `next.config.js` rewrites; bake `NEXT_PUBLIC_*` at build time; run the LiveKit and Socket.IO clients.","Total UI outage — users see nothing or a blank page. The backend keeps running, so data is safe; a frontend redeploy restores service. In the nginx topology, `nginx` refuses to boot if `frontend:3000` is missing, so a crash-looping frontend can also take the edge down."],
+    ["Edge — nginx (live) / Caddy (production)","Single public front door; same-origin fan-out; (Caddy) TLS termination.","Route `/api`+`/socket.io`→backend, `/livekit`→SFU signalling (strip prefix), `/minio/`→console, `/`→frontend; set `X-Forwarded-Proto`; hold WebSocket upgrades open (86400s read/send timeout on `/livekit`).","Complete outage of EVERYTHING served over HTTP/WS — UI, API, realtime, and call signalling all stop. Direct LiveKit *media* ports (7531-7533) are independent and would survive, but with no signalling no new call can start. This is the highest-blast-radius single component."],
+    ["Backend API (Express :4000)","Business logic, persistence gateway, token authority.","~20 route modules under `/api`; ~30 services holding all logic; JWT mint/verify; rate limiting; security headers; LiveKit token minting; webhook verification; background timers (scheduled-message poller, recording purge, stale-call sweep).","All data operations stop — no send/edit messages, no login, no file up/download, no call/meeting tokens. Realtime socket dies with it (same process). Existing in-progress call *media* continues (SFU is separate) but no new calls can be authorized. Data on disk is untouched; restart recovers."],
+    ["Database — MySQL 8 (InnoDB, utf8mb4)","Durable system of record for all non-blob data.","Persist users, conversations, messages, meetings, calls, tasks, reminders, files-metadata, notifications, audit log, E2EE public keys; enforce integrity (FKs, append-only audit triggers, soft-delete); serve keyset-paginated history; FULLTEXT search.","Catastrophic — the backend's resilient-boot loop will *wait/retry forever* rather than serve without it. No reads or writes succeed. Signups, messages, and history are at risk only if the `colab_mysqldata` volume is destroyed (`down -v`). Live calls in progress survive; everything else hangs."],
+    ["Cache — Redis 7","Coordinate multi-instance state and ephemeral fan-out.","Back the Socket.IO Redis adapter (cross-instance event delivery); the JWT revocation blocklist (`jwt:block:` keys); the huddle/hand-raise store; LiveKit Egress job coordination.","Graceful degradation by design. Every Redis consumer falls back: adapter→in-memory (single-instance fan-out still works), blocklist→in-memory Map, huddle→in-process Map. A *down* Redis cannot wedge the app (clients use `reconnectStrategy:false` + connect-race timeouts). Impact: logout-revocation and huddles stop being shared across instances; single-instance deploys are unaffected."],
+    ["Storage — MinIO (S3-compatible)","Primary blob store for file attachments and recordings.","Hold uploaded file bytes under `files/YYYY/MM/DD/<uploader>/<uuid>-<name>` in bucket `colab-files`; store meeting recordings under `recordings/<meetingId>/`; served only via the backend's auth-gated streaming download (never browser-direct).","Degraded, not fatal — on S3 error `fileService.create` *silently* falls back to storing bytes in the MySQL `data` LONGBLOB. New uploads succeed but bloat the DB with no operator alert. Downloads of S3-stored files fail until MinIO returns. Avatars/wallpapers are unaffected (they are DB data-URLs, a separate path)."],
+    ["Realtime — Socket.IO 4.8","Live, bidirectional event delivery.","Authenticated handshake (`handshake.auth.token`); `user:<uid>` + `conv:<cid>` + `meeting:<mid>` rooms; ~60 named events (message/call/huddle/meeting/presence/notification); per-user send throttle; optional Redis adapter; presence fan-out; reconnect resync.","Realtime stops: no live message echo, typing, presence, call ring, or notification push. The app degrades to REST — the frontend's reconnect logic refetches missed messages/badges on reconnect, so nothing is lost, but the experience becomes refresh-driven. Dies with the backend process (shared HTTP server)."],
+    ["LiveKit (SFU :7531-7534)","Selective-Forwarding-Unit media server for calls/meetings.","Terminate each participant's WebRTC publish; forward subscribed tracks (simulcast layers h180/h360/h1080); advertise ICE candidates (host + STUN public IP); built-in TURN on 7533; emit egress webhooks.","All audio/video stops — calls and meetings cannot connect or continue. Messaging, files, tasks, and the rest of the app are completely unaffected (separate plane). Signalling (7534) is internal-only behind nginx `/livekit`; media (7532/udp, 7531/tcp) is direct to the box public IP."],
+    ["TURN — coturn 4.6","Relay media for clients behind restrictive NAT.","Static long-term-credential (`lt-cred-mech`) TURN/STUN on 3478, TURN-over-TLS on 5349 and 443; relay UDP range 49152-49251; forward only to the whitelisted SFU IPs (`allowed-peer-ip`); reject all other RFC1918 (anti-SSRF).","Off-network / strict-NAT callers cannot establish media (their relay candidate fails) — calls hang for *those* users only. LAN/VPN callers are unaffected (ICE prefers the direct host candidate and ignores the relay). On the live box coturn is profile-gated OFF; the real relay runs on a dedicated public box (`turncollab.resulticks.com`)."],
+    ["MCP server (mcp/)","Expose CoLab capabilities to AI agents as JSON-RPC tools.","Hand-rolled JSON-RPC (no official SDK); 20 tools + 7 resources + 1 prompt; stdio + SSE transports; proxy every tool to the REST backend with a Bearer token (governance: agents never touch the DB directly).","None on the running product — it is a standalone scaffold, NOT wired into any deployment and invoked by nothing in frontend/backend. `AgentsView` reports 'No MCP server is configured'. Its absence changes no user-facing behavior."],
+    ["Agents (agents/)","Reserved namespace for a future AI Workspace Companion.","A single `companion` object literal whose three methods all `throw new Error('not implemented (Sprint 6)')`; participates in the lint/build graph only.","None — zero runtime behavior, imported nowhere. The working in-product AI is `aiService.ts` (branded 'Agen-X'), an entirely separate path that has nothing to do with this module."]
+  ],"widths":[1500,2300,3000,2200]},
+
+  {"t":"callout","kind":"warning","title":"Two honest 'scaffold' components","text":"MCP and Agents appear in the architecture for completeness, but neither runs in any deployment. MCP is real code (a working REST-proxying JSON-RPC server) that is simply not connected; Agents is a true interface-only stub. Do not present either as a live capability. The only functioning AI in the product is conversation summarize/ask via `backend/app/src/services/aiService.ts`, and it is OFF unless `LLM_BASE_URL` is set."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":3,"text":"3.1.3 Physical topology — what is published where"},
+
+  {"t":"p","text":"The logical layers map onto a concrete set of containers and ports. The live deployment is deliberately minimal in its host surface. The table below reflects `docker-compose.live.yml` (the authoritative live file) and `infrastructure/nginx/nginx.conf`."},
+
+  {"t":"table","headers":["Container","Image","Host port (live)","Internal address","Reached via"],"rows":[
+    ["colab-nginx","nginx:alpine (digest-pinned)","`${NGINX_PORT:-7524}:7530`","—","Corporate LB 443 → host 7524"],
+    ["colab-frontend","Dockerfile.frontend (Next 14)","none","frontend:3000","nginx `/`"],
+    ["colab-backend","Dockerfile.backend (Node 20 + tsx)","none","backend:4000","nginx `/api`, `/socket.io`"],
+    ["colab-db","mysql:8","none","db:3306","backend pool only"],
+    ["colab-redis","redis:7-alpine","none","redis:6379","backend only"],
+    ["colab-minio","minio RELEASE.2025-09-07","none","minio:9000 / :9001","backend (S3) + nginx `/minio/`"],
+    ["colab-livekit","livekit/livekit-server:v1.9","`7531`, `7532/udp`, `7533/udp`","livekit:7534","signalling via nginx `/livekit`; media direct"],
+    ["colab-coturn","coturn/coturn:4.6","host-net (profile OFF)","host network","off-box dedicated relay normally"]
+  ],"widths":[1700,2400,2000,1700,1200]},
+
+  {"t":"p","text":"The reason only nginx and the three LiveKit media ports are published is twofold. First, **port-collision avoidance**: the live box already runs its own MySQL on 3306, so binding the container's 3306 to the host would fail with 'address already in use'. Second, **attack surface reduction**: the database, cache, object store, and signalling endpoint are simply not reachable from outside the Docker bridge network, so they need no host-level firewalling. The only thing a browser can hit directly is the edge (HTTP/WS) and the SFU media ports (RTP/ICE)."},
+
+  {"t":"callout","kind":"risk","title":"Never run `docker compose down -v`","text":"The `-v` flag deletes the `colab_mysqldata` named volume — that is total, unrecoverable data loss of every signup, message, meeting, and file-metadata row. Use `down` (no flag) or `up -d --build` for redeploys; the named volume persists across rebuilds. `database/initdb/*.sql` only runs on an empty volume. Always take a `mysqldump` backup before any deploy."},
+
+  {"t":"h","level":2,"text":"3.2 The Five Canonical Flows"},
+
+  {"t":"p","text":"Understanding CoLab in motion means understanding five end-to-end flows. The first two (request, response) are the backbone of every data operation. Authentication gates all of them. The media flow is the one place the backend steps aside. The storage-upload flow shows how bytes get from a browser to durable storage and back. Each is presented as a diagram followed by prose covering the data path, the failure scenarios, the troubleshooting steps, and the business impact."},
+
+  {"t":"h","level":3,"text":"3.2.1 Request Flow"},
+
+  {"t":"p","text":"Plain-language: when you click 'send' or open a conversation, the browser makes an HTTPS request to its own host; the front door forwards it to the backend; the backend checks who you are, checks you're allowed, does the work in the database, and (for live updates) tells the realtime socket to notify everyone in the conversation."},
+
+  {"t":"diagram","kind":"pipeline","title":"Request flow — an authenticated API call","steps":[
+    {"label":"Browser → edge","detail":"fetch to same-origin /api/* with Authorization: Bearer <JWT>; TLS terminated at the LB/Caddy"},
+    {"label":"Edge → backend","detail":"nginx proxies to backend:4000, sets X-Forwarded-Proto and X-Forwarded-For (first hop = client IP)"},
+    {"label":"Middleware chain","detail":"rate limiter (IP fixed-window) → authMiddleware verifies JWT + checks blocklist → req.user set"},
+    {"label":"Route → service","detail":"thin controller calls a service (e.g. messageService.send) which runs the membership/role gate (403) and the SQL"},
+    {"label":"Persist + emit","detail":"service writes via the MySQL pool; route pulls req.app.get('io') and emits MESSAGE_NEW to conv:<cid>"}
+  ]},
+
+  {"t":"p","text":"**Engineering detail.** Every authenticated route passes through the middleware stack assembled in `app.ts`: `app.set('trust proxy', true)` (so `X-Forwarded-For` is honored), the global `apiLimiter` (default 600 req/min/IP, env `API_RATE_MAX`), then per-router `authMiddleware` (`middleware/auth.ts`). The auth middleware reads `Authorization: Bearer <jwt>`, verifies the HS256 signature via `authService.verify`, checks `tokenBlocklist.isBlocked(token)`, and sets `req.user = {userId, name}`. Routes are intentionally thin — they destructure/clamp input inline (there is no schema library) and delegate to a service in `backend/app/src/services/`. The service is where authorization actually lives: `messageService.send` calls `assertMember` (throws an error carrying `status=403`) and enforces DM-block rules before writing. The write goes through the memoized `mysql2/promise` pool (`database/src/drivers/mysql.ts`) whose internal `q()` shim translates a pg-style `$n` SQL dialect to MySQL `?` placeholders. Mutations then emit a Socket.IO event by pulling `req.app.get('io')`."},
+
+  {"t":"p","text":"**Failure scenarios & troubleshooting.**"},
+  {"t":"ul","items":[
+    {"text":"**401 on every request after login** — the JWT is expired (7-day default TTL, `AUTH_TOKEN_TTL`) or the token was logged-out (blocklisted). The frontend re-validates via `/api/auth/me` before dispatching `colab:unauthorized` to avoid logging out on a transient blip. Fix: re-authenticate."},
+    {"text":"**403 from a route** — membership/role gate denied the action (not a member of the conversation, not the meeting host). Clients key off `err.status === 403` to show the right denial reason. This is correct behavior, not a bug."},
+    {"text":"**429 RATE_LIMITED** — the IP exceeded the window (auth: 30/15min; global API: 600/min). Check `Retry-After` / `X-RateLimit-*` headers. Note the limiter is *per-instance and in-memory* — behind multiple backend instances the effective limit multiplies."},
+    {"text":"**Request hangs forever** — almost always the database is unreachable; the backend's boot loop waits for MySQL rather than failing. Check `docker ps` and `docker logs colab-db` first."},
+    {"text":"**Wrong scheme / mixed content** — the edge sent `X-Forwarded-Proto: http`; the backend then builds `ws://` LiveKit URLs. Verify the `map $http_x_forwarded_proto $fwd_proto` default in `nginx.conf` is `https`."}
+  ]},
+
+  {"t":"p","text":"**Business impact.** This flow is every data action in the product. A regression here — a broken middleware order, a leaked 403, a wedged pool — is a full-product incident, not a feature bug. The mitigations baked in (`asyncRouter.ts` routes all async throws to the central error handler so requests never hang; the central handler masks 5xx as a generic message and maps DB integrity errnos to friendly 400s) exist to keep a single bad request from cascading."},
+
+  {"t":"h","level":3,"text":"3.2.2 Response Flow"},
+
+  {"t":"p","text":"Plain-language: the backend answers your request with a small JSON envelope saying whether it worked, and — separately and in parallel — pushes a live event over the socket so that you and everyone else in the conversation see the change instantly without refreshing."},
+
+  {"t":"diagram","kind":"flow","title":"Response flow — REST envelope plus realtime echo","nodes":[
+    {"label":"Backend","sub":"service result"},
+    {"label":"REST {ok,data,error}","sub":"to the caller"},
+    {"label":"Socket.IO room","sub":"MESSAGE_NEW echo"},
+    {"label":"All clients","sub":"reconcile + render"}
+  ]},
+
+  {"t":"p","text":"**Engineering detail.** CoLab uses a **dual-channel response model**. The synchronous REST reply uses the standard envelope `{ok, data, error}` (the `ok()`/`fail()` helpers from `shared/src/http`, re-exported via `platform.ts`); the frontend `api.req()` helper unwraps `data` on success and throws an `Error` with `err.status` attached on failure. The asynchronous channel is the Socket.IO echo: after a successful write the route emits the *full* serialized object to the relevant room. The defining design choice is that **`MESSAGE_NEW` is both the delivery and the acknowledgement** — there is no separate per-message ACK event. The sender renders optimistically with a `_clientId`/`_status`, and when the room echo of `MESSAGE_NEW` arrives the client reconciles the optimistic bubble against the authoritative server object (`CoLabV1.tsx` replace-by-`_clientId`). A large family of 'changed' events (`CALL_NEW`, `TASK_CHANGED`, `REMINDER_CHANGED`, `CONVERSATION_*`, `MEETING_*`, `SCHEDULED_CHANGED`, `INVITE_*`) are intentionally **thin signals** — they carry only an ID and trigger a targeted REST refetch rather than shipping a full delta."},
+
+  {"t":"p","text":"All targeted fan-out goes to a per-user room (`user:<uid>`), never `io.emit`, so it works correctly across the Redis adapter in a multi-instance deployment. The two exceptions that DO use global `io.emit` are `USER_UPDATED` (a profile/avatar/manual-presence change) and `TASK_CHANGED` — both are deliberately global broadcasts."},
+
+  {"t":"p","text":"**Failure scenarios & troubleshooting.**"},
+  {"t":"ul","items":[
+    "**REST succeeds but no live update** — the socket is disconnected or the adapter swap dropped the room. On reconnect the frontend re-emits `CONVERSATION_JOIN`, refetches the active conversation's messages, refetches conversations, and re-pulls the unread count — so the missed echo is recovered. If updates only appear on manual refresh, the socket is down: check `connect_error` (surfaced as one toast on the 4th consecutive failure).",
+    "**Optimistic message stuck 'sending'** — the `MESSAGE_NEW` echo never arrived (socket gap) or the send was throttled (`message:rate_limited`) or rejected (`message:send_failed`, e.g. a blocked DM). These advisory events are sender-only side-channels.",
+    "**Multi-instance: notifications/call-rings silently missing** — the classic Redis-adapter race. The adapter swap must complete BEFORE any socket joins a room, or sockets on the old in-memory adapter stop receiving `io.to(userRoom)`. The code awaits `adapterReady` inside the auth middleware with a 3s cap to prevent exactly this."
+  ]},
+
+  {"t":"p","text":"**Business impact.** The dual-channel model is what makes CoLab feel like a real-time product rather than a refresh-driven CRUD app, while the REST envelope guarantees durability and the reconnect-resync guarantees no message is ever lost across a network gap. The trade-off is that realtime correctness depends on the Redis-adapter ordering invariant — a subtle multi-instance failure mode that is documented and guarded but must be respected by anyone changing the socket bootstrap."},
+
+  {"t":"h","level":3,"text":"3.2.3 Authentication Flow"},
+
+  {"t":"p","text":"Plain-language: you log in once; the server gives your browser a signed pass (a token) that proves who you are for the next 7 days. Every request and the live socket connection carry that pass. Logging out adds the pass to a 'revoked' list so it can't be reused."},
+
+  {"t":"diagram","kind":"pipeline","title":"Authentication flow — login to authorized session","steps":[
+    {"label":"Credentials","detail":"POST /api/auth/login; credentialPolicy validates; authService verifies scrypt hash (saltHex:hashHex) in constant time"},
+    {"label":"Mint JWT","detail":"jsonwebtoken HS256, payload {sub:userId, name}, signed with AUTH_JWT_SECRET, expiresIn = AUTH_TOKEN_TTL (default 7d)"},
+    {"label":"Client stores token","detail":"frontend keeps it in localStorage ('clb_token'); api.ts sends Authorization: Bearer per call"},
+    {"label":"Socket handshake","detail":"connectSocket(token): io.use verifies handshake.auth.token → socket.userId; joins user:<uid>"},
+    {"label":"Per-request gate","detail":"authMiddleware verifies signature + checks tokenBlocklist on EVERY HTTP request; logout/account-delete blocklists the token"}
+  ]},
+
+  {"t":"p","text":"**Engineering detail.** Passwords are hashed with Node's built-in `scrypt` (no external dependency), stored as `saltHex:hashHex` (16-byte salt, 64-byte key), and verified with `crypto.timingSafeEqual` for constant-time comparison (`authService.ts`). Signup is gated server-side by `credentialPolicy.ts` (the client mirror in `passwordPolicy.ts` is non-authoritative UX only): email shape + disposable-domain blocklist, and password minimum length 9 with upper/lower/digit/special and a common-password reject list. The session token is a **single long-lived JWT** — there is no refresh token and no silent remint; on expiry the user re-authenticates. Revocation is the one piece of server-side session state: on logout (or `DELETE /account`) the token's signature segment is added to `tokenBlocklist` (`jwt:block:` in Redis with TTL = the token's remaining life, or an in-memory Map swept every 60s when Redis is absent). The HTTP middleware checks this blocklist on every request; **the socket handshake does not** (only HTTP enforces revocation)."},
+
+  {"t":"callout","kind":"note","title":"Correcting a common misconception about token TTL","text":"There are TWO unrelated tokens. The **session JWT** defaults to a 7-day TTL (`AUTH_TOKEN_TTL`, `config/src/index.ts`). The **LiveKit room token** defaults to 1 hour / 3600s (`LIVEKIT_TOKEN_TTL_SEC`, used only to authorize joining a media room). Do not conflate them — the ~1h figure belongs to media access, not the login session."},
+
+  {"t":"p","text":"**Production hardening.** The backend refuses to boot in production (`assertProductionSecrets` in `index.ts`) if `AUTH_JWT_SECRET` is still `dev-only-change-me` or shorter than 32 chars, or if `LIVEKIT_API_SECRET` is the bundled default. It also refuses to boot if `LIVEKIT_WS_URL` points at localhost (`assertLiveKitUrl`) or if `DB_PROFILE` names a profile whose `DATABASE_URL_<PROFILE>` is missing (`assertDbProfile`). These are fail-fast guards against the most damaging misconfigurations."},
+
+  {"t":"p","text":"**Failure scenarios & troubleshooting.**"},
+  {"t":"ul","items":[
+    "**Cannot log in, correct password** — check the credential policy isn't rejecting a too-short/weak password on a fresh signup; check `docker logs colab-backend` for a DB-unreachable retry loop (login can't read `users`).",
+    "**Logged out unexpectedly** — token expired (7d), or a `colab:unauthorized` fired after a confirmed 401. The frontend double-checks `/api/auth/me` before logging out to ride through transient blips.",
+    "**Socket connects but HTTP 401s (or vice-versa)** — remember the socket does NOT check the blocklist; a logged-out token still opens a socket until it expires. This is a known asymmetry.",
+    "**Backend won't start in prod** — read the FATAL line: it names exactly which secret/URL/profile is wrong. This is intentional, not a crash."
+  ]},
+
+  {"t":"p","text":"**Business impact.** Auth is the gate on the entire product and the audit trail (`auditService.record` logs signup/login/logout/account.delete). The stateless-JWT-plus-blocklist design keeps the common path (verify a signature) cheap while still supporting real revocation. The honest limitations — no refresh flow, socket-handshake not re-checking the blocklist, JWT alg not pinned — are documented so they can be hardened deliberately rather than discovered in an incident."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":3,"text":"3.2.4 Media Flow (Client → SFU → Client)"},
+
+  {"t":"p","text":"Plain-language: for a call or meeting, the backend's only job is to hand your browser a signed ticket that says 'this person may join this room'. Your browser then opens a *direct* connection to the media server (LiveKit) and sends/receives video and audio there. The backend never sees the video. If your network is too locked-down to reach the media server directly, your browser bounces the media through a relay (coturn) that looks like ordinary HTTPS traffic."},
+
+  {"t":"diagram","kind":"flow","title":"Media flow — signalling vs. media planes","nodes":[
+    {"label":"Browser A","sub":"publishes RTP"},
+    {"label":"LiveKit SFU","sub":"forwards tracks"},
+    {"label":"Browser B","sub":"subscribes"}
+  ]},
+
+  {"t":"p","text":"**Engineering detail — the two planes.** A call has a *signalling plane* and a *media plane* that travel different routes. Signalling (the WebSocket that negotiates the session) goes browser → `wss://<host>/livekit` → nginx (which strips the `/livekit` prefix because LiveKit serves at `/rtc`) → `livekit:7534` internally. Media (the actual encrypted RTP) goes browser → the SFU's published media ports **directly on the box's public IP** (`7532/udp` for ICE/UDP, `7531/tcp` as fallback), never through nginx and never through the backend. The token that authorizes all of this is minted by `livekitService.roomToken` (`backend/app/src/services/livekitService.ts`): a `livekit-server-sdk` `AccessToken` signed with `LIVEKIT_API_KEY`/`SECRET`, identity `<userId>__<randomUUID>` (the per-join UUID means an honest page reload does not trip `DUPLICATE_IDENTITY`), grant `roomJoin/canPublish/canSubscribe/canPublishData`, TTL 3600s. The token response also embeds the `iceServers` (the coturn relay URLs/credentials) so the browser learns the relay path."},
+
+  {"t":"p","text":"**Engineering detail — ICE, NAT, and the TURN relay.** The SFU advertises ICE candidates. On the live box (`livekit.live.yaml`) `use_external_ip: true` with `node_ip` unset, so it advertises BOTH the internal host candidate `10.200.3.17` (which LAN/VPN clients pair on directly) AND the STUN-discovered public IP (which off-network clients pair on). This dual-candidate setup was the fix from live debugging — with `use_external_ip:false` only the private candidate was advertised and off-network calls hung. For the strictest NATs (corporate, mobile, hotel) where even the public SFU candidate is unreachable, the browser falls back to **coturn**, which relays media over `turn:3478`, `turns:5349`, and critically `turns:443` (looks like HTTPS, traverses almost any firewall). coturn uses a static long-term credential (`lt-cred-mech`) that the backend sends verbatim — it is NOT HMAC — and its peer ACL whitelists only the SFU IP so it cannot be abused as an open relay."},
+
+  {"t":"p","text":"**Token resolution and gating** (`routes/calls.ts POST /token`): a `{callId}` resolves to room `call_<id>` and requires the requester be the call's initiator or peer (IDOR guard → 403); a `{conversationId}` resolves to `conv_<id>` and requires conversation membership; a `{meetingId}` resolves to `meeting_<id>` and runs `meetingService.enterRoom`, which enforces eject/lock/lobby and throws 403 ('ended'/'removed'/'locked'/'not admitted yet'). `publicWsUrl(req)` derives the browser-facing signalling URL: an explicit non-loopback `LIVEKIT_WS_URL` wins; otherwise, behind a TLS proxy it returns `wss://<x-forwarded-host>/livekit`, so any deploy works with no env change."},
+
+  {"t":"p","text":"**Failure scenarios & troubleshooting.**"},
+  {"t":"ul","items":[
+    {"text":"**'Unable to reach media server' / call hangs at connecting** — almost always the media plane, not signalling. Check, in order:","items":["Are the containers actually running? `docker ps`.","Is the page served over HTTPS? Browsers block `getUserMedia`/`wss` in an insecure context — a bare-IP HTTP deploy will fail every call.","Are media ports open at the cloud firewall? `udp:7532` + `tcp:7531` must be reachable on the box public IP.","Off-network specifically failing? Either `use_external_ip` is false (only the private candidate advertised) or coturn/TURN ports (3478/5349/443) are blocked."]},
+    "**Off-network works but is laggy (~200-300ms)** — the SFU is geographically far (us-east) from the users (India). The SFU is NOT peer-to-peer, so every packet hairpins through it. The documented fix is the Mumbai relocation (move only the SFU + coturn to asia-south1) — no app code change.",
+    "**`DUPLICATE_IDENTITY`** — a genuine second tab/device for the same user, not a reload (reloads get a fresh per-join UUID). Expected behavior.",
+    "**Diagnosing the candidate pair** — enable the call debug panel (`localStorage colab_call_debug=1` or `?calldebug=1`); `callDiagnostics.ts` polls `getStats()` and logs grep-able `[CALLDIAG]` lines showing whether the selected pair is host/srflx/relay and whether TURN was used vs merely advertised."
+  ]},
+
+  {"t":"callout","kind":"tip","title":"The single most diagnostic fact about calls","text":"If messaging, files, and meetings-list all work but call/meeting AUDIO/VIDEO fails, the problem is in the media plane (LiveKit/coturn/firewall/TLS context) — it is NEVER the backend or database. Conversely if the meeting *list* won't load, that IS the backend. This split is the fastest triage in the whole system."},
+
+  {"t":"p","text":"**Business impact.** Calls and meetings are the demo-critical, executive-visible features. Because media is a wholly separate plane, call quality and reachability are governed by network topology (TLS context, firewall, NAT, geography) far more than by application code — which is why the team's deployment runbooks invest so heavily in TURN, ICE candidate advertisement, and regional SFU placement. The upside is strong isolation: a call surge cannot degrade messaging, and a backend deploy does not drop in-progress call media (`disconnectOnPageLeave:false`, 10-retry reconnect policy)."},
+
+  {"t":"h","level":3,"text":"3.2.5 Storage Flow (Upload)"},
+
+  {"t":"p","text":"Plain-language: when you attach a file, the browser streams the raw bytes to the backend, which stores them in the MinIO object store and records a small metadata row in the database. To download, you hit a backend URL that checks you're allowed and then streams the file back from MinIO. The browser never talks to MinIO directly — everything is same-origin and permission-checked."},
+
+  {"t":"diagram","kind":"pipeline","title":"Storage flow — file upload to durable object storage","steps":[
+    {"label":"Browser uploads","detail":"XHR PUT of raw bytes to /api/files?name=&mime=&conversationId= with Bearer token (XHR gives upload progress)"},
+    {"label":"Edge → backend","detail":"nginx (client_max_body_size 100M) proxies to backend; uploadLimiter (60/min/IP) runs BEFORE express.raw so a 429 never buffers 100mb"},
+    {"label":"Buffer + store","detail":"express.raw({type:'*/*',limit:'100mb'}) buffers the body; fileService.create → storage.upload to MinIO key files/YYYY/MM/DD/<uploader>/<uuid>-<name>"},
+    {"label":"Metadata + fallback","detail":"DB row written (storage_key set); on S3 failure SILENTLY falls back to MySQL data LONGBLOB; audit event file.upload recorded"},
+    {"label":"Download","detail":"GET /api/files/:id/download → permissionFor() gate → stream from S3 (piped, no OOM) or serve DB BLOB; Content-Disposition: attachment"}
+  ]},
+
+  {"t":"p","text":"**Engineering detail.** Uploads are raw-body, not multipart — `routes/files.ts` uses `express.raw({type:'*/*', limit:'100mb'})` to buffer the whole body into a Node `Buffer` (the frontend `api.uploadFile()` uses `XMLHttpRequest` specifically to report progress). The rate limiter is applied *before* `express.raw` so an over-limit client gets a cheap 429 instead of forcing the server to buffer 100 MB first. `storageService.ts` wraps `@aws-sdk/client-s3` (`forcePathStyle:true`, region hardcoded `us-east-1`) pointed at the internal `S3_ENDPOINT` (`http://minio:9000`), bucket `colab-files`. The download route streams: if `storage_key` is set it pipes the S3 `Readable` straight to the HTTP response (avoiding buffering large files into memory); if not, it serves the DB `data` BLOB. Permission is resolved by `fileService.permissionFor()` via the rank owner > edit > comment > view, derived from uploader-ownership, explicit `file_shares` grants, an active share link, or membership of the attached conversation. No permission → 404."},
+
+  {"t":"p","text":"**The same-origin serving model is the whole point.** Clients NEVER talk to MinIO directly for attachments. An attachment URL is `/api/files/:id/download` on the *same origin*, proxied frontend→backend→MinIO. This is what fixed the cross-host 'Couldn't load' attachment bug. Presigned URLs exist (`GET /api/files/:id/presigned`) but are effectively unused for delivery, because a presigned URL points at the *internal* `minio:9000` endpoint that a browser cannot reach in production — real delivery always goes through the proxied, auth-gated `/download` stream. The one unauthenticated path is the share link (`GET /api/files/link/:token`), registered BEFORE `authMiddleware`: the opaque UUID token *is* the credential, by design."},
+
+  {"t":"p","text":"Two adjacent storage paths are deliberately different: **avatars and wallpapers** are NOT in MinIO — they are compact downscaled JPEG `data:` URLs stored directly in the DB (`users.avatar_url`/`conversations.avatar_url`, widened to TEXT in migration 0033), chosen so an `<img>` renders with no auth header, no presigned URL, and no expiry. **Meeting recordings** DO go to MinIO (`recordings/<meetingId>/...`), via either LiveKit Egress server-side upload or a client-side MediaRecorder upload, and are served back through the same auth-gated streaming route."},
+
+  {"t":"callout","kind":"risk","title":"The silent DB-BLOB fallback","text":"If MinIO is down, `fileService.create` catches the S3 error and silently writes the bytes into the MySQL `data` LONGBLOB with no operator alert. Uploads keep succeeding, but the database bloats with binary data it was never meant to hold, and those files become unservable if the BLOB path is later disabled. There is no metric or log alarm for this today — monitor MinIO health independently. Default MinIO root credentials are also weak/hardcoded (`colab`/`colab` or `colabminio/colabminio123`) and not enforced for production."},
+
+  {"t":"p","text":"**Failure scenarios & troubleshooting.**"},
+  {"t":"ul","items":[
+    "**Upload returns 413** — body exceeded a limit. Two limits stack: nginx `client_max_body_size 100M` and `express.raw limit:'100mb'`. Both must be raised to allow larger files.",
+    "**Upload 429** — hit the 60-uploads/min/IP `uploadLimiter`. Expected throttle.",
+    "**Download fails for an S3-stored file** — MinIO is unreachable; check `docker logs colab-minio` and the bucket existence (`ensureBucket` runs non-fatally at boot, logging '[boot] S3 bucket check skipped' on failure).",
+    "**'Couldn't load' attachment across hosts** — a cross-origin regression; the file URL must be the same-origin `/api/files/:id/download`, not a direct MinIO/presigned URL.",
+    "**File downloads but is empty/corrupt and it's an old upload** — likely a silently DB-BLOB'd file from a period MinIO was down; check whether `storage_key` is null for that row."
+  ]},
+
+  {"t":"p","text":"**Business impact.** Files and attachments are core to collaboration, and the same-origin proxy model is what makes them work reliably across every deployment topology (bare IP, LAN, public domain, tunnel) without CORS configuration. The honest limitations — silent fallback, weak default creds, plaintext internal backend→MinIO hop, no encryption-at-rest unless app-level E2EE is enabled (off by default) — are real and should be weighed for any deployment handling sensitive documents."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"3.3 How Everything Connects — Cross-Cutting Wiring & Failure Domains"},
+
+  {"t":"p","text":"The flows above each isolate one path; this final part stitches them into the whole and states plainly how the components depend on one another and fail."},
+
+  {"t":"h","level":3,"text":"3.3.1 The dependency graph"},
+
+  {"t":"p","text":"Every browser interaction starts at the **edge**. The edge depends on the **frontend** and **backend** being up (in the nginx topology it refuses to boot if any proxied upstream — including MinIO — is missing). The **backend** hard-depends on **MySQL** (it will not serve without it) and soft-depends on **Redis**, **MinIO**, and **LiveKit** (each degrades gracefully). The **media plane** (LiveKit + coturn) depends on nothing in the data plane for the call itself — only on the backend being reachable *once* to mint the join token. This asymmetry is the system's resilience story: the parts that must be perfect (auth, DB) are few, and the parts that can fail soft (cache, storage, media-for-some-users) are isolated."},
+
+  {"t":"diagram","kind":"grid","title":"Failure domains at a glance","cols":3,"boxes":[
+    {"label":"Hard dependency","sub":"Edge, Backend, MySQL — outage = product down"},
+    {"label":"Soft / degrades","sub":"Redis, MinIO — fallbacks keep app running"},
+    {"label":"Isolated plane","sub":"LiveKit, coturn — calls only, never touch data"}
+  ]},
+
+  {"t":"h","level":3,"text":"3.3.2 Cross-cutting mechanisms"},
+
+  {"t":"ul","items":[
+    {"text":"**Same-origin everything.** `config.apiBaseUrl`/`socketUrl` default to empty; the edge maps `/api`, `/socket.io`, `/livekit`, `/minio` to internal services. One origin, no CORS for normal traffic."},
+    {"text":"**`X-Forwarded-Proto` propagation.** The LB/Caddy terminates TLS; nginx defaults `$fwd_proto` to `https`; the backend uses it to derive `wss://` LiveKit URLs and same-origin links. A wrong value here breaks calls with mixed-content errors."},
+    {"text":"**Graceful boot & shutdown.** The backend self-provisions (create DB → migrate idempotently → promote bundled snapshot once → seed) with a transient-error retry loop, and drains sockets + in-flight requests + the DB pool on `SIGTERM` (20s `stop_grace_period`)."},
+    {"text":"**Idempotent, statement-level migrations.** 47 migrations tracked in `schema_migrations`, applied statement-by-statement with errno-aware idempotency, auto-run on boot, additive-only — so a redeploy never crash-loops and never destroys data."},
+    {"text":"**Redis-optional by design.** Adapter, blocklist, and huddle store each fall back to in-process state; a down Redis cannot wedge handshakes (`reconnectStrategy:false` + connect-race timeouts)."}
+  ]},
+
+  {"t":"h","level":3,"text":"3.3.3 Honest maturity status of architectural components"},
+
+  {"t":"p","text":"To keep this handbook trustworthy, the following components are NOT fully live and must not be presented as such:"},
+
+  {"t":"table","headers":["Component","Status","Reality"],"rows":[
+    ["MCP server","Standalone, unwired","Real REST-proxying JSON-RPC server exists in `mcp/`, but no deployment runs it and nothing invokes it. `AgentsView` reports 'MCP not configured'."],
+    ["Agents module","Scaffold only","`companion` methods all `throw not implemented (Sprint 6)`; imported nowhere; zero runtime behavior."],
+    ["AI features","Partial","`aiService.ts` conversation-summarize works when `LLM_BASE_URL` is set (off by default, flag-gated UI); the 'ask' endpoint exists but has no UI wired."],
+    ["Server-side recording (Egress)","Partial","Code complete; depends on the `egress` worker container being deployed (profile `recording`). Client-side MediaRecorder path works without it."],
+    ["Global search / Agents nav","Hidden-but-built","Fully implemented; gated OFF by feature flags (`NEXT_PUBLIC_FEATURE_*`). Reactivation = flip an env var."],
+    ["E2EE (DM)","Built, off by default","Native WebCrypto ECIES, DM-only, server-blind, fail-closed; safety-number UI still pending. NOT the Signal protocol; no forward secrecy yet."]
+  ],"widths":[2000,1700,5300]},
+
+  {"t":"p","text":"Everything else in the catalog — auth, messaging, calls, meetings, contacts, calendar, activity/notifications, tasks, reminders, files, attachments, reactions, presence, voice messages, screen sharing, channels, groups, and DMs — is shipped and functioning. This section, and the catalog and flows within it, are the architectural ground truth for the next five years of work on CoLab; subsequent sections drill into each subsystem with the same code-grounded discipline."},
+
+  {"t":"callout","kind":"note","title":"Section 3 takeaway","text":"CoLab is a same-origin, five-layer system whose resilience comes from a small set of hard dependencies (edge, backend, MySQL) and a larger set of soft/isolated ones (Redis, MinIO, LiveKit/coturn). Messaging and data flow through the backend; call media flows around it. Triage by plane: data-plane symptoms point at backend/DB; media-plane symptoms point at LiveKit/coturn/firewall/TLS — never confuse the two."}
+]

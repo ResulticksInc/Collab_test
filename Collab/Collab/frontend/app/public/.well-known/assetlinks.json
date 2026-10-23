@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.resulticks.collab",
+      "sha256_cert_fingerprints": [
+        "4C:B1:41:97:9F:BD:50:F8:F3:4A:30:C4:32:27:9C:42:4D:AC:B7:87:F0:8F:97:7C:C4:82:AC:0F:F1:38:64:BC"
+      ]
+    }
+  }
+]

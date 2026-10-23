@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "lib": ["ES2021"],
+    "types": ["node"],
+    "esModuleInterop": true,
+    "allowJs": true,
+    "checkJs": false,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "forceConsistentCasingInFileNames": true,
+    "ignoreDeprecations": "6.0",
+    "moduleDetection": "force"
+  },
+  "include": [
+    "config/**/*.ts",
+    "shared/**/*.ts",
+    "database/**/*.ts",
+    "backend/**/*.ts",
+    "mcp/**/*.ts",
+    "agents/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/node_modules",
+    "frontend",
+    "**/dist",
+    "**/*.stories.*"
+  ]
+}

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'unsafe-inline';" />
+  <title>Choose what to share</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif; background: #11141b; color: #e8eaf0; -webkit-user-select: none; user-select: none; overflow: hidden; }
+    .wrap { height: 100%; display: flex; flex-direction: column; }
+    header { padding: 16px 20px 10px; }
+    header h1 { font-size: 16px; font-weight: 600; }
+    .tabs { display: flex; gap: 6px; padding: 0 20px 10px; }
+    .tab { font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); background: none; color: #aeb6c6; cursor: pointer; }
+    .tab.active { background: #635bff; border-color: #635bff; color: #fff; }
+    .grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; padding: 4px 20px 12px; align-content: start; }
+    .src { border: 2px solid transparent; border-radius: 10px; background: #1b1f29; cursor: pointer; overflow: hidden; transition: border-color .12s, transform .08s; }
+    .src:hover { transform: translateY(-1px); }
+    .src.sel { border-color: #635bff; }
+    .src .thumb { width: 100%; height: 118px; object-fit: cover; background: #0c0e13; display: block; }
+    .src .thumb-empty { width: 100%; height: 118px; background: #0c0e13; display: flex; align-items: center; justify-content: center; color: #5b6478; font-size: 11px; }
+    .src .meta { display: flex; align-items: center; gap: 7px; padding: 8px 10px; }
+    .src .icon { width: 16px; height: 16px; flex-shrink: 0; border-radius: 3px; }
+    .src .label { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    footer { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 20px; border-top: 1px solid rgba(255,255,255,.08); }
+    button.act { font: inherit; font-size: 13px; font-weight: 600; padding: 9px 20px; border-radius: 9px; cursor: pointer; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #e8eaf0; }
+    button.act:hover { background: rgba(255,255,255,.12); }
+    button.act.primary { background: #635bff; border-color: #635bff; color: #fff; }
+    button.act.primary:disabled { opacity: .45; cursor: not-allowed; }
+    .empty { padding: 40px; text-align: center; color: #7b8499; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header><h1>Choose what to share</h1></header>
+    <div class="tabs">
+      <button class="tab active" data-tab="screen" id="tab-screen">Entire screen</button>
+      <button class="tab" data-tab="window" id="tab-window">Application window</button>
+    </div>
+    <div class="grid" id="grid"><div class="empty">Loading sources…</div></div>
+    <footer>
+      <button class="act" id="cancel">Cancel</button>
+      <button class="act primary" id="share" disabled>Share</button>
+    </footer>
+  </div>
+  <script>
+    var allSources = [];
+    var tab = "screen";
+    var selectedId = null;
+
+    function render() {
+      var grid = document.getElementById("grid");
+      var list = allSources.filter(function (s) { return tab === "screen" ? s.isScreen : !s.isScreen; });
+      if (!list.length) { grid.innerHTML = '<div class="empty">Nothing available to share here.</div>'; return; }
+      grid.innerHTML = "";
+      list.forEach(function (s) {
+        var el = document.createElement("div");
+        el.className = "src" + (s.id === selectedId ? " sel" : "");
+        var thumb = s.thumbnail
+          ? '<img class="thumb" src="' + s.thumbnail + '" alt="" />'
+          : '<div class="thumb-empty">No preview</div>';
+        var icon = s.appIcon ? '<img class="icon" src="' + s.appIcon + '" alt="" />' : "";
+        el.innerHTML = thumb + '<div class="meta">' + icon + '<span class="label"></span></div>';
+        el.querySelector(".label").textContent = s.name || (s.isScreen ? "Screen" : "Window");
+        el.addEventListener("click", function () {
+          selectedId = s.id;
+          document.getElementById("share").disabled = false;
+          render();
+        });
+        el.addEventListener("dblclick", function () { selectedId = s.id; confirmShare(); });
+        grid.appendChild(el);
+      });
+    }
+
+    function setTab(t) {
+      tab = t; selectedId = null;
+      document.getElementById("share").disabled = true;
+      document.getElementById("tab-screen").classList.toggle("active", t === "screen");
+      document.getElementById("tab-window").classList.toggle("active", t === "window");
+      render();
+    }
+
+    function confirmShare() {
+      if (!selectedId) return;
+      try { window.picker.choose(selectedId); } catch (e) {}
+    }
+
+    document.getElementById("tab-screen").addEventListener("click", function () { setTab("screen"); });
+    document.getElementById("tab-window").addEventListener("click", function () { setTab("window"); });
+    document.getElementById("share").addEventListener("click", confirmShare);
+    document.getElementById("cancel").addEventListener("click", function () { try { window.picker.cancel(); } catch (e) {} });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { try { window.picker.cancel(); } catch (x) {} } });
+
+    try {
+      window.picker.onSources(function (sources) {
+        allSources = sources || [];
+        // Default to whichever tab has content (screens usually).
+        tab = allSources.some(function (s) { return s.isScreen; }) ? "screen" : "window";
+        setTab(tab);
+      });
+    } catch (e) {}
+  </script>
+</body>
+</html>

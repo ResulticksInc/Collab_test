@@ -1,0 +1,413 @@
+# Docker Compose for CoLab — full-stack with infra services.
+#
+# Start everything:
+#   docker compose up -d
+#
+# Start infra only (for local dev):
+#   docker compose up -d db redis coturn livekit
+#
+# Develop the frontend against the FULL Docker stack (hot reload, no image rebuild):
+#   docker compose up -d          # full stack; the built Docker frontend is on :3003
+#   npm run dev:local             # live-reloading LOCAL frontend on :3002 (frontend-only)
+#   → http://localhost:3002 = YOUR live-reloading local code (this is your dev URL)
+#   → http://localhost:3003 = the prod-like Docker frontend (built image)
+#   dev:local activates the local env, then serves ONLY the frontend on :3002 and
+#   proxies /api + /socket.io + /livekit to the Docker backend (:4000) + LiveKit
+#   (:7534). It starts NO local backend, so nothing contends for :4000, and the two
+#   frontends sit on different host ports so Docker never squats on the dev URL.
+#   (`npm run dev` is FULL-local — local backend + frontend — for when Docker is DOWN.)
+#
+# View logs:
+#   docker compose logs -f backend frontend
+#
+# PROJECT NAME is pinned so it never depends on the folder name. Without this,
+# renaming the project folder (e.g. CoLab -> Collab) changes Compose's default
+# project (colab -> collab), orphaning the running colab-* containers and breaking
+# their bind mounts (nginx/livekit then exit 127 on a stale mount path).
+name: collab
+# Bounded container logs on EVERY service. Docker's json-file driver grows
+# UNBOUNDED by default; on a shared host whose root filesystem already runs
+# ~84% full, runaway logs (one chatty reconnect loop is enough) can fill the
+# disk and take MySQL — and everything else on the box — down with it.
+# 10MB × 3 files = a hard 30MB ceiling per service.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    restart: unless-stopped
+    logging: *default-logging
+    image: mysql:8
+    # Allow the non-SUPER app user to create the triggers in migration 0009/0018
+    # while binary logging is on (MySQL 8 blocks this otherwise).
+    command: ["--log-bin-trust-function-creators=ON"]
+    container_name: collab-db
+    environment:
+      MYSQL_ROOT_PASSWORD: colab
+      MYSQL_DATABASE: colab
+      MYSQL_USER: colab
+      MYSQL_PASSWORD: colab
+    # Host port is OPTIONAL — other containers reach the DB as `db:3306` on the
+    # Docker internal network. Set DB_HOST_PORT to expose externally (e.g. 3307
+    # if the host already runs MySQL). Leave blank to skip host mapping entirely.
+    ports:
+      - "${DB_HOST_PORT:-3306}:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+      - ./database/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u colab -pcolab --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  # TURN/STUN relay for calls. host networking so the UDP relay range works.
+  # Set external-ip/relay-ip + static-auth-secret in turnserver.conf first, and
+  # point the app at it via TURN_URLS + TURN_SECRET (must match the secret).
+  coturn:
+    image: coturn/coturn:4.6
+    container_name: collab-coturn
+    network_mode: host
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      - "-c"
+      - "/etc/coturn/turnserver.conf"
+      # external-ip/relay-ip can't live in turnserver.conf (coturn doesn't expand
+      # env vars there). NAT-aware: ADVERTISE COTURN_PUBLIC_IP to browsers, BIND
+      # COTURN_BIND_IP (the box's real NIC IP) — needed when a public IP 1:1-NATs
+      # to a private box. Both default to 127.0.0.1 for local dev, where coturn is
+      # unused (localhost calls go direct, not through the relay). On a server set
+      # COTURN_PUBLIC_IP (public) + COTURN_BIND_IP (NIC) in the env file.
+      - "--external-ip=${COTURN_PUBLIC_IP:-127.0.0.1}/${COTURN_BIND_IP:-127.0.0.1}"
+      - "--relay-ip=${COTURN_BIND_IP:-127.0.0.1}"
+    volumes:
+      - ./infrastructure/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      # TLS certs for turns: (must be valid for turn.<host>). Drop fullchain.pem +
+      # privkey.key here on the box before bringing coturn up.
+      - ./infrastructure/coturn/certs:/etc/coturn/certs:ro
+
+  # Redis — coordinates the LiveKit SFU (and the Socket.IO adapter at scale).
+  # No host port mapping: other containers reach it via the internal Docker
+  # network as "redis:6379". Explicit host exposure would conflict with any
+  # system Redis or other container already on port 6379.
+  redis:
+    image: redis:7-alpine
+    container_name: collab-redis
+    restart: unless-stopped
+    logging: *default-logging
+  minio:
+    # Pinned to a known-good release that STILL ships the admin console. Do NOT use
+    # ":latest" — MinIO froze the community :latest in Sept 2025 and newer builds
+    # removed the console (which the nginx /minio route depends on). Bump only
+    # deliberately after testing.
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: collab-minio
+    restart: unless-stopped
+    logging: *default-logging
+    # MinIO on 9003 (S3 API) + 9004 (console) — ONE consistent port everywhere (env,
+    # yaml, nginx), no 9000-vs-9003 confusion. 9000/9001 stay FREE for a co-located
+    # project that binds MinIO's default ports on this machine.
+    command: ["server", "/data", "--address", ":9003", "--console-address", ":9004"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-colabminio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-colabminio123}
+    ports:
+      # host:container, both 9003 (API) / 9004 (console). Backend on the host reaches
+      # it via S3_ENDPOINT=http://localhost:9003; containers via http://minio:9003.
+      - "9003:9003"
+      - "9004:9004"
+    volumes:
+      - minio_data:/data
+  # LiveKit SFU — the media server for 1:1 + group calls and screen share.
+  # Explicit port publishing (NOT host networking) so media works on Docker
+  # Desktop for Windows/macOS. Ports come from livekit.yaml (udp_port/tcp_port).
+  livekit:
+    image: livekit/livekit-server:v1.9
+    container_name: collab-livekit
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["--config", "/etc/livekit.yaml"]
+    # API keys come from the app .env (single source of truth) so the tokens the
+    # backend mints with LIVEKIT_API_KEY/SECRET validate against this server.
+    # Compose interpolates these from the .env beside this file. Format is
+    # "<key>: <secret>". This OVERRIDES the placeholder keys in livekit.yaml.
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    ports:
+      - "7534:7534" # signalling (ws/http)
+      - "7531:7531" # ICE/TCP media fallback
+      - "7532:7532/udp" # ICE/UDP media
+      - "7533:7533/udp" # TURN relay
+    volumes:
+      - ${LIVEKIT_CONFIG:-./infrastructure/livekit/livekit.yaml}:/etc/livekit.yaml:ro
+
+  # LiveKit Egress worker — drives MEETING RECORDING. Opt-in via the "recording"
+  # profile so default stacks stay lean:
+  #   docker compose --profile recording up -d egress
+  # It runs headless Chrome to composite the room, coordinates with the SFU over
+  # the shared Redis bus, and uploads the MP4 to MinIO (the upload target is set
+  # per-request by the backend recordingService). After starting it, set
+  # EGRESS_ENABLED=yes in .env so the backend offers recording.
+  # CAVEAT (localhost/Docker Desktop): egress reaches the SFU media via the ICE
+  # candidates the SFU advertises (livekit.yaml node_ip). With node_ip 127.0.0.1
+  # the egress container cannot reach the media (that loopback is the egress
+  # container itself). Egress works on a real deployment host where node_ip is a
+  # routable address (see livekit.test.yaml / livekit.live.yaml).
+  egress:
+    profiles: ["recording"]
+    image: livekit/egress:latest
+    container_name: collab-egress
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      EGRESS_CONFIG_BODY: |
+        redis:
+          address: redis:6379
+        api_key: ${LIVEKIT_API_KEY}
+        api_secret: ${LIVEKIT_API_SECRET}
+        ws_url: ws://livekit:7534
+    cap_add:
+      - SYS_ADMIN
+    depends_on:
+      - redis
+      - livekit
+      - minio
+
+  # nginx reverse proxy — PRODUCTION ONLY (profile: production).
+  # Routes all HTTP/WS traffic through a single port (7530).
+  nginx:
+    profiles: ["production"]
+    # Pinned by digest for reproducible deploys (was the moving "nginx:alpine" tag).
+    # To update: docker pull nginx:alpine, then replace the digest below.
+    image: nginx:alpine@sha256:8b1e78743a03dbb2c95171cc58639fef29abc8816598e27fb910ed2e621e589a
+    container_name: collab-nginx
+    ports:
+      - "${NGINX_PORT:-7530}:7530"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    # AUDIT P2 (#42): gate on the backend being HEALTHY (migrated + serving), not
+    # merely started, so requests during a deploy don't hit a not-yet-ready backend.
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Backend — Express + Socket.IO API server (TypeScript via tsx).
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: collab-backend
+    restart: unless-stopped
+    logging: *default-logging
+    # Give the backend time to drain sockets + finish in-flight requests + close
+    # the DB pool on SIGTERM (graceful shutdown) before Docker SIGKILLs it.
+    stop_grace_period: 20s
+    ports:
+      - "4000:4000"
+    environment:
+      # Honor the active profile's NODE_ENV (local = development, teams/live =
+      # production) instead of hardcoding production. In production the boot guard
+      # requires a non-localhost LIVEKIT_WS_URL; the local profile is development,
+      # so the full stack runs on localhost without tripping that guard. Server
+      # deploys use .env.(teams|live) with NODE_ENV=production and a public URL.
+      NODE_ENV: ${NODE_ENV:-production}
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 4000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      AUTH_TOKEN_TTL: ${AUTH_TOKEN_TTL}
+      # Public self-service sign-up. OFF by default (SSO + admin-provisioned
+      # accounts). Set AUTH_SIGNUP_ENABLED=true only to allow self-registration.
+      AUTH_SIGNUP_ENABLED: ${AUTH_SIGNUP_ENABLED:-true}
+      # Engineering Operations Portal (/dev) credential + running-version stamp.
+      # OPS_PORTAL_PASSWORD gates the whole portal (empty = portal disabled).
+      # APP_VERSION / GIT_COMMIT are surfaced in the portal and stamped on each
+      # deployment-ledger row so errors can be correlated to a release.
+      OPS_PORTAL_USER: ${OPS_PORTAL_USER:-admin}
+      OPS_PORTAL_PASSWORD: ${OPS_PORTAL_PASSWORD:-}
+      OPS_SESSION_TTL: ${OPS_SESSION_TTL:-12h}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      GIT_COMMIT: ${GIT_COMMIT:-}
+      # SSO (OpenID Connect). The backend Docker image does NOT bake .env, so these
+      # MUST be passed here (interpolated from the active .env / --env-file) or the
+      # container reports "SSO not configured". Values come from the profile in use.
+      SSO_ENABLED: ${SSO_ENABLED:-false}
+      SSO_BASE_URL: ${SSO_BASE_URL:-}
+      SSO_IDP_URL: ${SSO_IDP_URL:-}
+      SSO_AUTHORIZE_URL: ${SSO_AUTHORIZE_URL:-}
+      SSO_TOKEN_URL: ${SSO_TOKEN_URL:-}
+      SSO_JWKS_URL: ${SSO_JWKS_URL:-}
+      SSO_USERINFO_URL: ${SSO_USERINFO_URL:-}
+      SSO_ISSUER: ${SSO_ISSUER:-}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID:-}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+      SSO_REDIRECT_URI: ${SSO_REDIRECT_URI:-}
+      SSO_SCOPE: ${SSO_SCOPE:-openid profile email}
+      SSO_STATE_SECRET: ${SSO_STATE_SECRET:-}
+      SSO_INSECURE_SKIP_VERIFY: ${SSO_INSECURE_SKIP_VERIFY:-false}
+      # Encrypted PII claims (claims_jwe): the RSA private key, inline PEM (raw or
+      # base64) or a path INSIDE the container — ./keys is mounted at /app/keys below.
+      SSO_JWE_PRIVATE_KEY: ${SSO_JWE_PRIVATE_KEY:-}
+      SSO_JWE_PRIVATE_KEY_FILE: ${SSO_JWE_PRIVATE_KEY_FILE:-}
+      # Chat media — GIF/sticker SEARCH key (GIPHY). OPTIONAL: the built-in sticker
+      # pack + creation studio work without it, and a tenant admin can set a per-org
+      # key in the admin console instead. The backend image does NOT bake .env, so
+      # it must be passed here to reach the container as a deployment-wide default.
+      GIPHY_API_KEY: ${GIPHY_API_KEY:-}
+      # DATABASE_URL_DOCKER overrides the DB URL INSIDE the container. Defaults to
+      # the Docker-internal service name `db` (NOT localhost, which resolves to the
+      # container itself). The base .env uses localhost:3306 for local-dev bare-metal
+      # runs; if that value leaked here it would break the backend container.
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-mysql://colab:colab@db:3306/colab}
+      DEMO_DATABASE_URL: ${DEMO_DATABASE_URL_DOCKER:-mysql://colab:colab@db:3306/colab_demo}
+      DEMO_MODE: ${DEMO_MODE}
+      # DB connection pool. Default 20; raised here for concurrent meeting load
+      # (many participants heartbeating at once). Stay well under MySQL
+      # max_connections (default 151) — 40 leaves ample headroom on one instance.
+      DB_POOL_LIMIT: ${DB_POOL_LIMIT:-40}
+      # DB_PROFILE mechanism: set DB_PROFILE=<name> and the corresponding
+      # DATABASE_URL_<NAME> is used. Leave DB_PROFILE blank for direct DATABASE_URL.
+      DB_PROFILE: ${DB_PROFILE}
+      DATABASE_URL_LOCAL: ${DATABASE_URL_LOCAL}
+      DATABASE_URL_LIVE: ${DATABASE_URL_LIVE}
+      DATABASE_URL_DEMO: ${DATABASE_URL_DEMO}
+      DATABASE_URL_TEAM: ${DATABASE_URL_TEAM:-${DATABASE_URL_LIVE}}
+      # One API gateway (optional DB-access proxy). The switch reaches the backend
+      # config here; it is INERT until a path is wired through oneApiClient.ts (the
+      # SQL executor uses the direct pool). See docs/ONE_API.md.
+      ONE_API_ENABLED: ${ONE_API_ENABLED:-false}
+      ONE_API_URL: ${ONE_API_URL:-}
+      ONE_API_DB_TYPE: ${ONE_API_DB_TYPE:-mysql}
+      ONE_API_DATABASE: ${ONE_API_DATABASE:-}
+      ONE_API_KEY: ${ONE_API_KEY:-}
+      LIVEKIT_WS_URL: ${LIVEKIT_WS_URL:-ws://localhost:7534}
+      LIVEKIT_SERVER_URL: ${LIVEKIT_SERVER_URL:-ws://livekit:7534}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_TOKEN_TTL_SEC: ${LIVEKIT_TOKEN_TTL_SEC}
+      # External TURN relay (coturn) advertised to browsers so off-LAN / global
+      # callers relay media over turns://<host>. Blank = internal/LAN-only (no
+      # relay). Set TURN_URLS/USERNAME/PASSWORD in .env.live (+ COTURN_PUBLIC_IP
+      # on the coturn service) to enable any-network calls.
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_PASSWORD: ${TURN_PASSWORD:-}
+      # Meeting recording. Leave blank/unset until the `egress` worker (above,
+      # --profile recording) is deployed; then set EGRESS_ENABLED=yes.
+      EGRESS_ENABLED: ${EGRESS_ENABLED}
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9003
+      # Local file-storage tier (docs/FILE_UPLOAD_STORAGE_CHAIN.md): named volume
+      # below; order disk,s3,db — set FILE_STORAGE_ORDER=s3,db to roll back.
+      FILE_STORAGE_DIR: /app/data/files
+      FILE_STORAGE_ORDER: ${FILE_STORAGE_ORDER:-disk,s3,db}
+      FILE_STORAGE_MIN_FREE_BYTES: ${FILE_STORAGE_MIN_FREE_BYTES:-536870912}
+      FILE_TIER_ENABLED: ${FILE_TIER_ENABLED:-true}
+      FILE_TIER_COLD_AFTER_DAYS: ${FILE_TIER_COLD_AFTER_DAYS:-30}
+      FILE_TIER_PRESSURE_PCT: ${FILE_TIER_PRESSURE_PCT:-80}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
+      S3_BUCKET: ${S3_BUCKET:-colab-files}
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-colabminio}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-colabminio123}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: ${LLM_MODEL}
+      E2EE_ENABLED: ${E2EE_ENABLED}
+      # Push notifications. The backend image does NOT bake .env, so these MUST be
+      # passed here or the backend boots with push disabled and notifications only
+      # reach clients holding a live socket (open tab / open app).
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@colab.app}
+      # Mobile push (FCM HTTP v1) — service account file lives in ./keys (mounted below).
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      FCM_SERVICE_ACCOUNT_FILE: ${FCM_SERVICE_ACCOUNT_FILE:-}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
+      FCM_MESSAGE_TTL_SEC: ${FCM_MESSAGE_TTL_SEC:-86400}
+      FCM_CALL_TTL_SEC: ${FCM_CALL_TTL_SEC:-45}
+      # iOS VoIP push (APNs direct) for CallKit ringing.
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_KEY_P8: ${APNS_KEY_P8:-}
+      APNS_KEY_FILE: ${APNS_KEY_FILE:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-com.resulticks.collab}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-}
+      # Automatic history recovery (docs/E2EE_AUTO_RECOVERY.md): server-escrowed
+      # per-user account key so any signed-in device restores with no prompt.
+      E2EE_AUTO_RECOVERY: ${E2EE_AUTO_RECOVERY:-true}
+      E2EE_ESCROW_SECRET: ${E2EE_ESCROW_SECRET:-}
+      # Collab Admin Panel (/admin). The image doesn't bake .env, so these MUST be
+      # forwarded here; otherwise production boots with the built-in default
+      # password and the boot guard refuses to start.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_SESSION_TTL: ${ADMIN_SESSION_TTL:-}
+    volumes:
+      # Local file-storage tier (first upload tier). Back this volume up with mysqldata/minio.
+      - files_data:/app/data/files
+      # SSO JWE private key (claims_jwe decryption). Host ./keys → /app/keys, read-only.
+      # Point SSO_JWE_PRIVATE_KEY_FILE=/app/keys/collab_private.pem (or use the inline var).
+      - ./keys:/app/keys:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      livekit:
+        condition: service_started
+
+  # Frontend — Next.js 14 App Router (static export with SSR).
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        # Blank by default → SAME-ORIGIN: the browser talks to the frontend's own
+        # host:port and Next reverse-proxies /api + /socket.io to the backend
+        # (BACKEND_INTERNAL_URL below). Works on any host/port with no CORS.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL-}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL-}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME}
+        NEXT_PUBLIC_WORKSPACE_NAME: ${NEXT_PUBLIC_WORKSPACE_NAME}
+        NEXT_PUBLIC_USER_EMAIL: ${NEXT_PUBLIC_USER_EMAIL}
+        NEXT_PUBLIC_FEATURE_SIGNUP: ${NEXT_PUBLIC_FEATURE_SIGNUP:-1}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
+        NEXT_PUBLIC_E2EE_ENABLED: ${NEXT_PUBLIC_E2EE_ENABLED}
+        # Build-time proxy target for Next's baked /api + /socket.io rewrites.
+        BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:4000}
+    container_name: collab-frontend
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      # User-facing port is profile-driven (set FRONTEND_PORT in the active .env):
+      # teams 7520, live 7524. LOCAL default is 3003 — deliberately NOT 3002 — so
+      # host port 3002 is reserved for `npm run dev:web` (the live-reloading LOCAL
+      # frontend). That way the built Docker frontend (3003) never squats on the
+      # dev URL. localhost:3002 = your code, localhost:3003 = the prod-like build.
+      - "${FRONTEND_PORT:-3003}:3000"
+    environment:
+      NODE_ENV: production
+      # Server-side proxy target for the /api and /socket.io rewrites (never sent
+      # to the browser). Points at the backend service on the compose network.
+      BACKEND_INTERNAL_URL: http://backend:4000
+    # AUDIT P2 (#42): wait for the backend to be HEALTHY before starting the frontend.
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  files_data:
+  mysqldata:
+  minio_data:

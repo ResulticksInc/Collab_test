@@ -1,0 +1,297 @@
+[
+  {"t":"h","level":1,"text":"9. Calls and Meetings Architecture"},
+
+  {"t":"p","text":"This section is the single source of truth for how real-time audio, video, screen sharing, and multi-party meetings work in CoLab. It is deliberately the most detailed section of the handbook because the call/meeting media plane is the part of the system that touches the most moving pieces at once: the browser, WebRTC, a self-hosted **LiveKit** SFU, a self-hosted **coturn** TURN relay, the corporate load balancer, the nginx reverse proxy, GCP firewalls, DNS, and TLS certificates. When any one of those is misconfigured, calls fail in ways that look like an application bug but almost never are. Read this section before debugging a call problem, before moving the media engine to a new region, and before standing up a new deployment tier."},
+
+  {"t":"p","text":"The most important mental model to carry through this section: **signalling and media travel on completely different paths.** Signalling (who is in the room, mute state, the WebSocket that negotiates the connection) flows through the same nginx/load-balancer path as the rest of the app, on `wss://collab.resulticks.com/livekit`. Media (the actual encrypted audio/video packets) flows **directly** from each browser to the LiveKit SFU's media ports, or relayed through coturn — it never goes through nginx. A huge fraction of historical call failures came from people assuming that because the app loads and chat works, the media path must also work. It does not follow. The two paths are independent and must be verified independently."},
+
+  {"t":"callout","kind":"note","title":"Where the code lives","text":"1:1 and group call connect logic lives inside `frontend/app/src/components/CoLabV1.tsx` (the god-component). Multi-party meetings live in `frontend/app/src/components/MeetingStage.tsx` (wrapped by `MeetingRoom.tsx`). Both share one diagnostics layer at `frontend/app/src/lib/callDiagnostics.ts` and one set of CSS classes (`.ms-*`). Backend token minting is `backend/app/src/services/livekitService.ts`, gated by `backend/app/src/routes/calls.ts` and `backend/app/src/services/meetingService.ts`. Infrastructure is `infrastructure/livekit/*.yaml` and `infrastructure/coturn/turnserver.conf`."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.1 WebRTC, LiveKit, and the SFU model"},
+
+  {"t":"h","level":3,"text":"9.1.1 What WebRTC is, in plain language"},
+
+  {"t":"p","text":"**WebRTC** (Web Real-Time Communication) is the browser technology that lets two web pages exchange live audio and video without a plugin. In plain terms: it is the set of standards that turns a `<video>` tag and a microphone into a phone call. In engineering terms, WebRTC bundles three hard problems and solves them together — (1) *connectivity*, getting two devices behind home routers and corporate firewalls to find a path to each other (this is ICE/STUN/TURN), (2) *security*, encrypting the media so nobody on the wire can listen in (this is DTLS/SRTP), and (3) *media transport*, packetising and pacing audio/video frames so they arrive smoothly (this is RTP/RTCP and the codecs). CoLab does not implement raw WebRTC by hand; it uses LiveKit, which packages all of this behind a clean SDK."},
+
+  {"t":"p","text":"The browser side is the `livekit-client` SDK, version 2.x (the code comments cite `2.19.1`; package declares `^2.19.1`). The key behavioural fact about the 2.x SDK that recurs in this codebase: the participant map is `room.remoteParticipants`. The old v1 alias `room.participants` is `undefined` in 2.x, and code that still reads it silently returns early and drops every third-and-later tile in a meeting. This was a real bug fixed in `MeetingStage.tsx` (`updateParticipants`, around line 448, reads `room.remoteParticipants || room.participants`)."},
+
+  {"t":"h","level":3,"text":"9.1.2 What LiveKit is and why CoLab uses it"},
+
+  {"t":"p","text":"**LiveKit** is an open-source (MIT-licensed, self-hostable, free) real-time media server and SDK. CoLab runs the server as a Docker container, image `livekit/livekit-server:v1.9`, pinned identically in `docker-compose.live.yml` (line 59) and `docker-compose.mumbai.yml` (line 26). CoLab uses LiveKit instead of raw peer-to-peer WebRTC for three reasons. First, raw P2P does not scale past a couple of participants — with N people, every browser would have to send its camera N-1 times, which a home uplink cannot do. Second, LiveKit gives a clean server-side control surface (mint a join token, mute a participant, remove a participant, start a recording) that CoLab's host controls are built on. Third, LiveKit is self-hostable, so call media can stay inside the corporate network and there is no per-minute SaaS bill and no third-party seeing the media."},
+
+  {"t":"p","text":"LiveKit is an **SFU** (Selective Forwarding Unit). The next subsection explains exactly what that means and why it is not peer-to-peer, because that single architectural fact drives every latency and firewall decision later in this section."},
+
+  {"t":"h","level":3,"text":"9.1.3 What an SFU is and why it is NOT peer-to-peer"},
+
+  {"t":"p","text":"In a **peer-to-peer (P2P)** call, the two browsers connect directly to each other and exchange media with no server in the middle. That works fine for 1:1 but collapses for groups: in a 5-person P2P mesh, each browser uploads its own camera 4 separate times and downloads 4 streams, so upstream bandwidth grows linearly with participant count and ordinary home/office uplinks saturate at 3-4 people."},
+
+  {"t":"p","text":"An **SFU** puts a server in the middle. Each browser uploads its camera and microphone *exactly once* to the SFU. The SFU then **selectively forwards** copies of those streams to the other participants who need them. \"Selectively\" is the important word: the SFU does not blindly fan everything out. With *simulcast* (CoLab publishes multiple resolution layers — see 9.4) and *dynacast*, the SFU sends a low-resolution layer to a viewer on weak bandwidth or a small tile, and a high-resolution layer to someone who has that speaker pinned full-screen. The SFU never decodes or re-encodes the media (that would be an MCU, which is far more expensive); it just chooses which already-encoded packets to relay. This keeps each browser's upload constant (one copy) no matter how many people are in the room, which is why CoLab meetings scale where a P2P mesh would not."},
+
+  {"t":"diagram","kind":"flow","title":"SFU media flow: every client uploads once, the SFU forwards selectively","nodes":[{"label":"Client A","sub":"uploads 1 stream"},{"label":"LiveKit SFU","sub":"selective forward"},{"label":"Client B","sub":"+ Client C, D…"}]},
+
+  {"t":"callout","kind":"warning","title":"The SFU is in the path — this is the latency trap","text":"Because media goes client → SFU → client (never client → client directly), even two people in the SAME room get the full round trip to wherever the SFU lives. If the SFU is in us-east and both users are in India, both legs cross the ocean and back: ~200-300 ms. The fix is never an app change — it is moving the SFU closer to the users (see 9.7, the Mumbai migration)."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.2 Connectivity: ICE, STUN, and TURN"},
+
+  {"t":"p","text":"Before any media can flow, the two endpoints (browser and SFU) have to discover a network path to each other. Both sit behind NAT (Network Address Translation) — home routers, corporate firewalls, mobile-carrier CGNAT — so neither knows the other's reachable address up front. WebRTC solves this with **ICE**, which leans on **STUN** and **TURN**. Understanding these three is the single highest-leverage thing for debugging call failures, so this subsection is deliberate and concrete."},
+
+  {"t":"h","level":3,"text":"9.2.1 STUN — \"what is my public address?\""},
+
+  {"t":"p","text":"**STUN** (Session Traversal Utilities for NAT) is a tiny request a device sends to a public server that answers, in effect, \"the public IP and port I see you coming from is X:Y.\" That public mapping is the device's *server-reflexive* address (abbreviated **srflx**). STUN is cheap and stateless — it only *discovers* an address; it never carries media. LiveKit's SFU uses STUN internally to discover its own public IP when `use_external_ip: true` is set (this is how the live and Mumbai configs auto-learn the box's internet-facing IP without anyone hand-editing it)."},
+
+  {"t":"h","level":3,"text":"9.2.2 TURN — \"relay my media when a direct path is impossible\""},
+
+  {"t":"p","text":"Sometimes no direct path exists — most often behind *symmetric NAT* (common on strict mobile carriers, hotels, and locked-down corporate networks), where the NAT assigns a different public port for every destination, so the srflx address learned via STUN is useless for the actual peer. **TURN** (Traversal Using Relays around NAT) is the fallback: a TURN server with a public address relays the media for both sides. The browser sends its media to the TURN server, and the TURN server forwards it to the SFU (and vice-versa). TURN always works when anything works, because it only needs each side to make an *outbound* connection to a public relay — which even strict firewalls allow. The cost is an extra hop (slightly more latency) and the relay's bandwidth. The relayed candidate is called a **relay** candidate."},
+
+  {"t":"p","text":"CoLab actually has TWO TURN capabilities. LiveKit ships a **built-in TURN relay** on UDP port 7533 (enabled via `turn.enabled: true` in every livekit yaml). Separately, CoLab runs a dedicated **coturn** server (image `coturn/coturn:4.6`) which is the heavy-duty relay used for the strictest networks, because only coturn can offer TURN-over-TLS on port 443 (see 9.3). Which one is used depends on what the backend advertises in the token's `iceServers` list."},
+
+  {"t":"h","level":3,"text":"9.2.3 ICE — gathering candidates and pairing them"},
+
+  {"t":"p","text":"**ICE** (Interactive Connectivity Establishment) is the algorithm that ties STUN and TURN together. Each side gathers a list of *candidates* — every address it might be reachable on — then the two sides exchange their lists and methodically test pairs until one works. The candidate types, in order of preference:"},
+
+  {"t":"ul","items":[
+    {"text":"**host** — a direct local-network address (e.g. `10.200.3.17`). Used when both endpoints are on the same LAN or VPN. Lowest latency, no relay.","items":["This is why internal/VPN users at Resulticks pair directly on the SFU's `10.200.3.17` host candidate and never touch the relay."]},
+    "**srflx** (server-reflexive) — the public address discovered via STUN. Used to traverse ordinary (cone) NAT directly, browser-to-SFU, with no relay.",
+    "**prflx** (peer-reflexive) — a public address learned during connectivity checks rather than from STUN; an opportunistic variant of srflx.",
+    {"text":"**relay** — an address on a TURN server. The last resort, used only when no host/srflx pair works. Always reachable, slightly higher latency.","items":["The diagnostics layer flags `turnUsed=true` when the SELECTED pair is a relay candidate."]}
+  ]},
+
+  {"t":"p","text":"ICE prefers cheaper candidates first, so a LAN user transparently uses `host`, an ordinary home user uses `srflx`, and only a user behind symmetric NAT falls back to `relay`. The `callDiagnostics.ts` layer reads exactly these fields from `getStats()` every 1500 ms: `selectedLocalType` / `selectedRemoteType` (host/srflx/prflx/relay), `selectedProtocol` (udp/tcp), `turnUsed`, and `turnAdvertised`. Reading those four values is how you diagnose *why* a specific call did or did not connect."},
+
+  {"t":"diagram","kind":"pipeline","title":"ICE candidate gathering and pairing","steps":[
+    {"label":"Gather host candidates","detail":"local LAN/VPN addresses (e.g. 10.200.3.17)"},
+    {"label":"Gather srflx via STUN","detail":"discover the public NAT mapping"},
+    {"label":"Gather relay via TURN","detail":"allocate a relay address on coturn / built-in TURN"},
+    {"label":"Exchange + pair","detail":"both sides trade lists, test pairs in priority order"},
+    {"label":"Select succeeded pair","detail":"first working pair wins; media flows on it"}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.3 Security: DTLS handshake and SRTP, plus the secure-context requirement"},
+
+  {"t":"h","level":3,"text":"9.3.1 DTLS and SRTP"},
+
+  {"t":"p","text":"Once ICE finds a working candidate pair, the two endpoints perform a **DTLS** handshake over it. **DTLS** (Datagram TLS) is TLS adapted to run over UDP (which is connectionless and lossy). The handshake authenticates both ends against fingerprints exchanged during signalling and derives a shared secret. That secret keys **SRTP** (Secure RTP), which is the encryption applied to every media packet. The net effect: all CoLab call/meeting media is encrypted in transit on the wire, end-to-end between each browser and the SFU. Nobody sniffing the network — including the relay operator — can decode the audio or video from the packets."},
+
+  {"t":"callout","kind":"note","title":"Media encryption vs message E2EE — do not conflate them","text":"DTLS/SRTP encrypts media browser-to-SFU. It is hop-by-hop in the sense that the SFU terminates DTLS (it must, to forward selectively). CoLab's optional message-level E2EE (DM-only, off by default) is a SEPARATE feature and does NOT apply to calls or meetings. Call/meeting media is NOT end-to-end encrypted past the SFU; LiveKit's insertable-streams E2EE is not enabled. State this accurately to security reviewers: media is encrypted in transit, but the SFU can see it."},
+
+  {"t":"h","level":3,"text":"9.3.2 The secure-context requirement (why TLS is mandatory)"},
+
+  {"t":"p","text":"Browsers refuse to expose `getUserMedia` (the API that opens the microphone and camera) on an *insecure context* — anything that is not `https://` or `localhost`. On a plain-`http://` page served from a bare IP, `navigator.mediaDevices` is simply `undefined`, and any attempt to start a call throws. This is a browser policy, not a CoLab bug, and it is the single most common cause of \"calls don't work\" on a fresh deployment. CoLab guards against it: `lib/mediaSupport.ts` provides a preflight (`mediaBlockedReason()` / `preferSecureWsUrl`), and `MeetingStage.tsx` calls it before touching the mic (around line 380) so the user gets a clear message instead of a crash. The structural fix is to always front the app with TLS — the corporate load balancer terminates HTTPS on 443, or Caddy terminates it in the production stack."},
+
+  {"t":"diagram","kind":"layered","title":"Media security stack (bottom builds on top of connectivity)","layers":[
+    {"label":"Connectivity (ICE)","items":["host / srflx / relay candidate pair"]},
+    {"label":"Authentication","items":["DTLS handshake over the chosen pair"]},
+    {"label":"Media encryption","items":["SRTP keyed by the DTLS secret"]},
+    {"label":"Transport","items":["RTP/RTCP carrying VP9/VP8 video + audio"]}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.4 Media flow: audio, video, meetings, and screen share"},
+
+  {"t":"p","text":"This subsection walks the concrete flows. In all of them, the **token mint** happens first: the browser calls `api.getCallToken(token, {...})`, the backend (`routes/calls.ts POST /token`) verifies the user is allowed into the room and returns `{ token, wsUrl, room, iceServers }`. The browser then constructs a `LK.Room({...})` with those `iceServers` baked into `rtcConfig.iceServers`, and calls `room.connect(preferSecureWsUrl(res.wsUrl), res.token)` (`MeetingStage.tsx` line 774). From there media negotiates as described in 9.2-9.3."},
+
+  {"t":"h","level":3,"text":"9.4.1 The canonical media path"},
+
+  {"t":"diagram","kind":"flow","title":"Client → SFU → Client (media never touches nginx)","nodes":[{"label":"Browser A","sub":"livekit-client"},{"label":"LiveKit SFU","sub":"7532/udp · 7531/tcp"},{"label":"Browser B","sub":"livekit-client"}]},
+
+  {"t":"p","text":"Signalling (`wss://collab.resulticks.com/livekit`) is proxied by nginx to `livekit:7534`. Media goes directly to the SFU's published media ports (7532/udp preferred, 7531/tcp fallback) or via the TURN relay. The token's `iceServers` is what teaches the browser the relay exists."},
+
+  {"t":"h","level":3,"text":"9.4.2 Audio call (1:1)"},
+
+  {"t":"p","text":"A 1:1 audio call is the simplest case. CoLab's 1:1 call signalling (ringing, accept, decline) is handled over Socket.IO inside `CoLabV1.tsx` and the backend socket layer (`CALL_REQUEST`/`CALL_ACCEPT`/etc.), entirely separate from LiveKit. Once both parties accept, each mints a LiveKit token for the room `call_<id>` and connects. Each browser publishes one audio track (Opus, with DTX — discontinuous transmission — so silence sends almost no packets) and subscribes to the other's. With only two participants the SFU is forwarding one audio stream each way. Latency is dominated by the round trip to the SFU."},
+
+  {"t":"h","level":3,"text":"9.4.3 Video call (1:1)"},
+
+  {"t":"p","text":"A 1:1 video call adds a camera track. The 1:1 room options (`CoLabV1.tsx` around line 6945) capture at **1080p30** (`VideoPresets.h1080.resolution`, `frameRate: 30`) and publish with **simulcast** enabled, sending two extra lower layers (`h180` and `h360`), codec **VP9** with a **VP8 backup codec**, `dtx: true`, and a video `maxBitrate` of **3,000,000** (3 Mbps). `adaptiveStream` and `dynacast` are on. Even in 1:1, simulcast lets the SFU drop to a lower layer if the receiver's bandwidth sags."},
+
+  {"t":"h","level":3,"text":"9.4.4 Meeting (multi-party)"},
+
+  {"t":"p","text":"A meeting is the multi-party case where the SFU model earns its keep. Each participant uploads once; the SFU forwards selectively to everyone else. The meeting room options (`MeetingStage.tsx` around line 410) are identical to the 1:1 call options with **one deliberate difference**: the video `maxBitrate` is **1,700,000** (1.7 Mbps) instead of 3 Mbps. The rationale is in the code comment: in a meeting many viewers with mixed bandwidth subscribe to each publisher, so each publisher is capped lower to protect the aggregate. Capture is still 1080p30 and simulcast still serves `h180`/`h360` down to weak viewers, so a participant on a small tile or a poor connection receives 180p while a pinned speaker is shown at full resolution."},
+
+  {"t":"table","headers":["Setting","1:1 Call (CoLabV1.tsx)","Meeting (MeetingStage.tsx)"],"rows":[
+    ["Capture resolution","1080p (VideoPresets.h1080) @ 30fps","1080p (VideoPresets.h1080) @ 30fps"],
+    ["Video maxBitrate","3,000,000 (3 Mbps)","1,700,000 (1.7 Mbps)"],
+    ["Simulcast layers","h180 + h360","h180 + h360"],
+    ["Video codec","VP9 (VP8 backup)","VP9 (VP8 backup)"],
+    ["adaptiveStream / dynacast","on / on","on / on"],
+    ["dtx (audio)","true","true"],
+    ["reconnectPolicy","10 retries over ~60s","10 retries over ~60s"]
+  ]},
+
+  {"t":"h","level":3,"text":"9.4.5 Screen share"},
+
+  {"t":"p","text":"Screen share is implemented identically in both paths via `localParticipant.setScreenShareEnabled(next, { audio: true, systemAudio: 'include' })`. The `audio: true` / `systemAudio: 'include'` is a best-effort attempt to also capture tab/system audio (so a shared video plays with sound); if the browser or user declines audio, the video share still publishes. The meeting path (`MeetingStage.tsx toggleScreen`, ~line 1068) reverts the local `screen` state on throw; the 1:1 path (`CoLabV1.tsx toggleScreen`, ~line 7720) swallows the throw (a thrown error there means the user cancelled the OS picker). The screen track is published as a separate `screen_share` source and rendered in its own tile (keyed `sid:screen`), so a presenter's camera and screen show as two distinct tiles."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.5 Every port and why it exists"},
+
+  {"t":"p","text":"This is the reference every operator and firewall admin needs. There are two clusters of ports: the **LiveKit SFU** ports (7531-7534) and the **coturn** ports (3478, 5349, 443, and the relay range). Each exists for a specific reason; opening or closing the wrong one is the cause of most off-network call failures."},
+
+  {"t":"table","headers":["Port","Service / purpose","Protocol","Why it exists"],"rows":[
+    ["7534","LiveKit signalling (ws/http)","TCP","The control WebSocket: join, mute, room state. Stays INTERNAL; nginx proxies wss://host/livekit to it. Never published to the public internet directly."],
+    ["7532","LiveKit ICE media — UDP","UDP","The PREFERRED media path. Real-time audio/video wants UDP (loss-tolerant, low latency). Browsers send RTP/SRTP straight here to the SFU's node_ip."],
+    ["7531","LiveKit ICE media — TCP fallback","TCP","Media fallback for networks that block UDP entirely. Slower than UDP but better than no call. ICE uses it only if 7532/udp can't pair."],
+    ["7533","LiveKit BUILT-IN TURN relay","UDP","LiveKit's own lightweight TURN, advertised via signalling as an ICE fallback when direct host/srflx pairs fail. Distinct from the standalone coturn."],
+    ["3478","coturn STUN + plain TURN","UDP + TCP","The standard TURN/STUN port. Plain (un-encrypted-transport) relay allocation and STUN address discovery."],
+    ["5349","coturn TURN-over-TLS (turns:)","TCP","Relay wrapped in TLS. Survives deep-packet-inspection networks that block plain TURN. Needs a valid cert for turncollab.resulticks.com."],
+    ["443","coturn TURN-over-TLS on 443 (turns:)","TCP","TURN that looks exactly like HTTPS. The ONLY transport that reliably traverses locked-down mobile / corporate / hotel networks. Critical for 'works on any network'."],
+    ["49152-49251","coturn relay UDP range","UDP","The ephemeral ports coturn allocates per relay session to actually carry the relayed media. Must be open or every relayed call fails after auth."]
+  ]},
+
+  {"t":"callout","kind":"warning","title":"The 443 collision constraint","text":"coturn's `:443` (alt-tls-listening-port) is the most important port for restrictive networks, but the site's public 443 is owned by the app load balancer (which forwards to nginx). So coturn CANNOT share the app box's 443. This is exactly why the live TURN relay runs on a SEPARATE public box: `turncollab.resulticks.com` resolves to its own IP (historically 34.74.165.103, per the live config comments) where coturn owns 443 outright. In `docker-compose.live.yml` the coturn service is profile-gated OFF (`profiles: [coturn]`) for this reason; in `docker-compose.mumbai.yml` coturn runs unconditionally because the Mumbai box's 443 is free."},
+
+  {"t":"h","level":3,"text":"9.5.1 What gets published where"},
+
+  {"t":"p","text":"In `docker-compose.live.yml` the LiveKit service publishes only the media ports to the host: `7531:7531`, `7532:7532/udp`, `7533:7533/udp` (lines 68-71). Signalling `7534` stays internal — nginx reaches it on the Docker network. The only other host-published surface in the live file is nginx itself (`${NGINX_PORT:-7524}:7530`). Everything else (db, backend, frontend, minio, livekit-signalling) is internal-only to avoid colliding with the shared server's own services."},
+
+  {"t":"h","level":3,"text":"9.5.2 coturn authentication and peer ACL"},
+
+  {"t":"p","text":"coturn uses **static long-term credentials** (`lt-cred-mech`), NOT the HMAC/ephemeral `use-auth-secret` scheme. The literal line in `turnserver.conf` is `user=collab-turn:8V$kR2!mQ9#zL4@xT7^nP1&cY6*Wj3HgF5sD` with `realm=collab.resulticks.com`. The backend sends `TURN_USERNAME` / `TURN_PASSWORD` verbatim (it does not compute an HMAC), so the conf and `.env.live` must match byte-for-byte. The password contains shell-special characters but inside `turnserver.conf` they are literal — do not quote or escape them. coturn's peer ACL is hardened: `allowed-peer-ip=10.200.3.17` (the live SFU) and `10.205.11.8` (the teams/test SFU) are whitelisted, and all RFC1918/bogon ranges are denied. That `allowed-peer-ip=10.200.3.17` exception is REQUIRED — it is what lets the relay forward media to the SFU's internal candidate; without it the broad `10.0.0.0/8` deny blocks the SFU and every relayed call fails DTLS."},
+
+  {"t":"callout","kind":"risk","title":"A real static TURN password is committed to the repo","text":"The literal coturn password lives in `infrastructure/coturn/turnserver.conf` (and is referenced in deploy docs). It is a static credential, so it is a rotation candidate. If this handbook drives a security hardening pass, rotating that password (and the matching `.env.live` values) is the action item. Note: this is not catastrophic on its own — the peer ACL prevents the relay from being abused as an open relay/SSRF vector — but a committed static secret should still be rotated and ideally moved out of version control."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.6 The us-east production findings: use_external_ip and the firewall"},
+
+  {"t":"p","text":"This subsection documents the hard-won lessons from debugging live calls on the us-east (10.200.3.17) box. These are the canonical failure patterns; future operators will hit them again and should recognise them instantly."},
+
+  {"t":"h","level":3,"text":"9.6.1 use_external_ip and node_ip — advertise BOTH candidates"},
+
+  {"t":"p","text":"The live SFU box has a private corporate NIC (`10.200.3.17`) AND a 1:1-NAT public IP. The critical setting is `use_external_ip: true` with `node_ip` left UNSET (`livekit.live.yaml`). This makes LiveKit advertise BOTH ICE candidates: the local host candidate `10.200.3.17` (so internal/VPN clients pair directly and are not forced to hairpin) AND the STUN-discovered public IP (so off-network clients on home/4G have a reachable candidate)."},
+
+  {"t":"p","text":"The failure this fixed: with `use_external_ip: false`, the SFU advertised ONLY `10.200.3.17`. Internal users were fine, but off-network clients had no reachable SFU candidate, so their calls hung. Crucially, `node_ip` is left unset rather than pinned — pinning `node_ip` would advertise a SINGLE IP and lose the dual-candidate behaviour. The local config (`livekit.yaml`) is the opposite: `use_external_ip: false` with `node_ip: 127.0.0.1`, correct for Docker Desktop where published ports map to loopback."},
+
+  {"t":"callout","kind":"tip","title":"use_external_ip:true is CORRECT for live — do not revert it","text":"A 24-agent pre-deploy audit confirmed `use_external_ip: true` is the right live setting. If you see it and are tempted to 'fix' it back to false because the local config uses false, STOP — the local and live configs are intentionally different. Reverting it re-breaks every off-network call."},
+
+  {"t":"h","level":3,"text":"9.6.2 The GCP firewall blocking inbound media — requestsReceived: 0"},
+
+  {"t":"p","text":"Even with the public IP correctly advertised, off-network calls still failed at one point. The diagnostic signature was unmistakable in `getStats()`: the relay/srflx candidate pairs showed `requestsReceived: 0` — the browser was sending ICE connectivity checks to the SFU's public IP, but the SFU was receiving NOTHING back. That asymmetry (packets sent, zero received) is the fingerprint of a firewall dropping inbound traffic."},
+
+  {"t":"p","text":"The root cause was a GCP VPC firewall blocking inbound `udp:7532` and `tcp:7531` to the SFU's public IP. The advertised candidate was reachable in theory but the firewall silently dropped the packets. The fix was opening those two ports at the firewall, scoped to the SFU VM (by network tag), with source `0.0.0.0/0` (browsers connect from anywhere). After opening them, `requestsReceived` became non-zero, ICE reached `connected`, and off-network calls worked. This also requires a TRUE 1:1 NAT — an inbound-capable external IP, not an egress-only Cloud NAT (Cloud NAT lets the box reach OUT but nothing can reach IN)."},
+
+  {"t":"diagram","kind":"pipeline","title":"Diagnosing the us-east off-network failure","steps":[
+    {"label":"Symptom","detail":"off-network calls hang at 'connecting'"},
+    {"label":"Check candidates","detail":"public IP advertised? (use_external_ip:true → yes)"},
+    {"label":"Check getStats","detail":"requestsReceived:0 on the pair → inbound blocked"},
+    {"label":"Open firewall","detail":"GCP ingress udp:7532 + tcp:7531 to SFU VM, 0.0.0.0/0"},
+    {"label":"Verify","detail":"requestsReceived>0, ICE connected, call works"}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.7 The Mumbai migration: moving the media engine near users"},
+
+  {"t":"p","text":"Because the SFU is in the path (9.1.3), us-east SFU + India users = ~200-300 ms RTT even between two people in the same room. The fix is to relocate ONLY the media engine to a GCP region near the users (`asia-south1` / Mumbai), dropping RTT to ~20-40 ms. This is a config + new-box job with **zero application code changes** — LiveKit and TURN are routed entirely through env/config. The runbook is `docs/DEPLOY_MUMBAI_REGION.md`; the compose file is `docker-compose.mumbai.yml`."},
+
+  {"t":"h","level":3,"text":"9.7.1 What moves vs what stays"},
+
+  {"t":"p","text":"Exactly ONE self-contained media server moves: LiveKit (SFU) + coturn (TURN) + a Redis for LiveKit room state. The entire stable US-East stack stays untouched: frontend, backend, database, authentication, messaging, file storage, and the app's own Redis. There are NO duplicate LiveKit/TURN copies across regions — exactly one of each, in Mumbai. This deliberately avoids 'enterprise spaghetti.'"},
+
+  {"t":"diagram","kind":"grid","title":"Mumbai split: media moves, the app stays","cols":2,"boxes":[
+    {"label":"US-East (17 box) — UNCHANGED","sub":"nginx · frontend · backend · DB · messaging · files · app Redis (huddleStore)"},
+    {"label":"Mumbai — NEW media server","sub":"LiveKit SFU · coturn TURN · Redis (room state)"}
+  ]},
+
+  {"t":"callout","kind":"warning","title":"The two-Redis nuance — do NOT cross the streams","text":"There are two separate Redises and they must stay separate. The MUMBAI Redis holds LiveKit's room state (and enables future multi-node SFU scaling) — declared in `livekit.mumbai.yaml` as `redis.address: redis:6379` and run as `colab-livekit-redis`. The US-EAST Redis is the APP's huddleStore (group-call/hand state, token blocklist, socket adapter). Do NOT point the backend at the Mumbai Redis — that would make every group-call and hand-raise operation cross the ocean, reintroducing the very latency you moved the media to eliminate."},
+
+  {"t":"h","level":3,"text":"9.7.2 Media goes to Mumbai; signalling stays on collab.resulticks.com"},
+
+  {"t":"p","text":"This is the subtle part. **Media** (RTP/ICE) goes from the client directly to the Mumbai box — that is the ~250 ms → ~30 ms win. **Signalling** (`/livekit`) stays on `collab.resulticks.com`: the 17 server's nginx proxies the signalling WebSocket to the Mumbai SFU's 7534. Signalling is a one-time setup hop per call, not latency-critical, so routing it through us-east is fine — and it lets you reuse the existing TLS cert and keep coturn's `:443` free. So the browser still connects `wss://collab.resulticks.com/livekit` (proxied to Mumbai), but its media packets fly straight to Mumbai's public IP."},
+
+  {"t":"h","level":3,"text":"9.7.3 The 17-side edits"},
+
+  {"t":"p","text":"Only two things change on the US-East box. (1) The nginx upstream `livekit_signal` is re-pointed from `server livekit:7534;` to `server <MUMBAI_PUBLIC_IP>:7534;` (`infrastructure/nginx/nginx.conf` line 3). (2) The backend's `LIVEKIT_SERVER_URL` (used by host controls — mute/remove via the RoomServiceClient) is set to `ws://<MUMBAI_PUBLIC_IP>:7534`. `LIVEKIT_WS_URL` (the browser-facing signalling URL) stays `wss://collab.resulticks.com/livekit` because nginx now proxies it to Mumbai. `TURN_URLS`/`TURN_USERNAME`/`TURN_PASSWORD` need no value change — you just re-point `turncollab.resulticks.com` DNS to the Mumbai public IP."},
+
+  {"t":"ol","items":[
+    "Stand up the Mumbai box: `docker compose --env-file .env.mumbai -f docker-compose.mumbai.yml up -d` (LiveKit + coturn + Redis).",
+    "Open the GCP firewall on the Mumbai VM (see the table below).",
+    "Re-point `turncollab.resulticks.com` DNS → Mumbai public IP (leave `collab.resulticks.com` as-is).",
+    "Issue a TLS cert for coturn: `certbot certonly --standalone -d turncollab.resulticks.com`, copy fullchain.pem + privkey.key into `infrastructure/coturn/certs/`.",
+    "On the 17 box: edit nginx upstream + `LIVEKIT_SERVER_URL`, stop the now-unused 17 livekit/coturn, reload nginx with `--no-deps --force-recreate`.",
+    "Verify off-network with `?calldebug=1`: ICE connected, rtt ~20-40 ms (was ~250 ms), and test host controls (they exercise `LIVEKIT_SERVER_URL`)."
+  ]},
+
+  {"t":"table","headers":["Ports","Source","Why"],"rows":[
+    ["udp:7532, tcp:7531","0.0.0.0/0","SFU media — browsers connect here directly"],
+    ["udp/tcp:3478, tcp:5349, tcp:443, udp:49152-49251","0.0.0.0/0","coturn TURN"],
+    ["tcp:7534","the 17 server's IP ONLY","SFU signalling — only 17's nginx proxies here"]
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Rollback is fast","text":"On the 17 box, revert the nginx upstream to `server livekit:7534;` and `LIVEKIT_SERVER_URL` to `ws://livekit:7534`, restart livekit, force-recreate nginx, and re-point `turncollab` DNS back. You are instantly on the old us-east media path. coturn/TURN changes are additive, so internal direct calls are never affected by a TURN rollback."},
+
+  {"t":"p","text":"Multi-region note: a single Mumbai SFU is still far for a US or EU user. For a truly global user base you would run an SFU node per region (or LiveKit Cloud, which auto-routes each user to the nearest node). For an India-primary user base, the single Mumbai box is the correct fix."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.8 TURN deployment requirements (cert, DNS, public IP, LB, firewall)"},
+
+  {"t":"p","text":"Standing up a working public TURN relay has five independent prerequisites. Miss any one and the strictest networks (mobile, hotel, corporate) will fail to connect even though the relay is 'running.'"},
+
+  {"t":"ul","items":[
+    {"text":"**Certificate** — TURN-over-TLS on 5349 and 443 needs a real TLS cert valid for the relay's hostname. coturn reads `/etc/coturn/certs/fullchain.pem` and `privkey.key` (gitignored, dropped on the box). For Mumbai, certbot standalone issues it for `turncollab.resulticks.com`.","items":["Without a valid cert, turns: handshakes fail and only plain `turn:3478` works — which restrictive networks block."]},
+    {"text":"**DNS** — the `turncollab` subdomain must resolve to the relay's public IP. `TURN_URLS` advertises hostnames (e.g. `turns:turncollab.resulticks.com:443`), so the name must resolve and match the cert.","items":["When the media engine moves region, this DNS record moves with it."]},
+    {"text":"**Public IP** — a TRUE inbound-capable external IP (1:1 NAT), NOT an egress-only Cloud NAT. Cloud NAT lets the box dial out but nothing can dial in, so no browser can ever reach the relay.","items":["This is the same constraint as the SFU's public IP in 9.6."]},
+    {"text":"**Load balancer / port alignment** — the corporate LB forwards public 443 → host `NGINX_PORT` (live `7524`) → nginx container `:7530` → frontend/backend/livekit. The `7524 → 7530` mapping must be correct end-to-end.","items":["The 'no healthy upstream' pitfall: nginx resolves ALL upstreams (including minio) at startup and refuses to boot if any is missing, which is why `depends_on` in the live compose lists minio. A missing upstream takes the whole edge down."]},
+    {"text":"**Firewall** — the relay's `3478` (udp/tcp), `5349` (tcp), `443` (tcp), and the `49152-49251` relay UDP range must all be open inbound. The relay range is the one people forget; auth succeeds but media dies without it.","items":["coturn's `--external-ip`/`--relay-ip` are passed on the compose command line (coturn doesn't expand env vars in its conf)."]}
+  ]},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.9 Troubleshooting"},
+
+  {"t":"p","text":"Use the diagnostics panel first. It is enabled in dev always, and in staging/prod by setting `localStorage.colab_call_debug=1` or appending `?calldebug=1` to the URL (`isCallDebugEnabled` in `callDiagnostics.ts`). The panel and the grep-able `[CALLDIAG]` console lines expose `signalState`, `iceState`, the selected candidate types/protocol, `turnUsed`, `turnAdvertised`, rtt, loss, and kbps — the exact fields you need below. The `copyText()` dump is designed to be pasted to IT."},
+
+  {"t":"h","level":3,"text":"9.9.1 Network failures"},
+
+  {"t":"ul","items":[
+    {"text":"**Symptom: stuck on 'Connecting…', then a 'Couldn't reach the media server' message (after 25s watchdog).**","items":["Signalling may be fine but media is blocked. Check `[CALLDIAG] ICE Failed`. If `requestsReceived:0` on the pair, the SFU media ports (7532/udp, 7531/tcp) are firewalled inbound — open them at the firewall scoped to the SFU VM (9.6.2).","If `turnAdvertised:false`, the token returned no TURN server — cross-network calls will fail. Confirm `TURN_URLS`/`TURN_USERNAME`/`TURN_PASSWORD` are set in the backend env so `iceServers` is populated."]},
+    {"text":"**Symptom: works on LAN/VPN, fails on home/4G.**","items":["Classic NAT-traversal gap. Internal users pair on the `host` candidate; external users need either the public SFU candidate (`use_external_ip:true`, firewall open) or a reachable TURN relay. Verify both."]},
+    {"text":"**Symptom: connects only over TCP, choppy.**","items":["`selectedProtocol=tcp` means UDP (7532) is blocked on that network and ICE fell back to TCP (7531). It works but is worse; nothing to fix app-side, it is the user's network."]}
+  ]},
+
+  {"t":"h","level":3,"text":"9.9.2 Media errors (insecure context, wrong ws URL)"},
+
+  {"t":"ul","items":[
+    {"text":"**Symptom: call crashes immediately or mic/camera never opens.**","items":["Almost always an insecure context. On plain-`http://` from a bare IP, `navigator.mediaDevices` is undefined (9.3.2). The `mediaBlockedReason()` preflight should surface a clear message. Fix: front the app with TLS (LB on 443 / Caddy).","`[CALLDIAG] Media Error` indicates a device-level problem (permission denied, or another app holding the camera). Hint: close other apps using the device, re-grant permissions."]},
+    {"text":"**Symptom: signalling never connects (`signalState` stuck at '—').**","items":["Wrong ws URL. `preferSecureWsUrl(res.wsUrl)` upgrades `ws://` to `wss://` on secure pages. If `LIVEKIT_WS_URL` is set to a loopback/`ws://localhost` value in a deployed env, the browser can't reach it. Leave `LIVEKIT_WS_URL` blank to auto-derive `wss://<host>/livekit` from the request origin behind the TLS proxy (the `publicWsUrl(req)` logic in `routes/calls.ts`)."]}
+  ]},
+
+  {"t":"h","level":3,"text":"9.9.3 Latency"},
+
+  {"t":"ul","items":[
+    {"text":"**Symptom: everyone sounds ~250 ms delayed even in the same city.**","items":["The SFU is in a far region. Because the SFU is always in the media path (9.1.3), two India users on a us-east SFU each cross the ocean and back. The diagnostics `rtt` will read ~200-300 ms. The fix is NOT app code — it is moving the media engine near the users (the Mumbai migration, 9.7), which drops rtt to ~20-40 ms."]},
+    {"text":"**Symptom: relay path is slow.**","items":["`turnUsed:true` means media is going through TURN (extra hop). That is expected for symmetric-NAT users but adds latency; if it's happening for users who should pair directly, check that the SFU's direct candidate is reachable (firewall/`use_external_ip`)."]}
+  ]},
+
+  {"t":"h","level":3,"text":"9.9.4 Call failures (DUPLICATE_IDENTITY, token TTL)"},
+
+  {"t":"p","text":"**DUPLICATE_IDENTITY** is a LiveKit error meaning two connections claimed the same participant identity. CoLab's token identity is `<userId>__<randomUUID>` (the `__` separator and a fresh per-join UUID, minted in `livekitService.ts makeIdentity`). The per-join UUID means an honest page reload does NOT trip DUPLICATE_IDENTITY — that error fires only on a genuine second tab/device, OR on a client double-connect race. The race was a real bug: the 1:1 path could fire two `connect()` calls in quick succession. The fix was a stable-call-key connect guard plus a ~500 ms settle delay (and `MeetingStage.tsx` awaits any prior disconnect before reconnecting — the `lkDisconnectingRef` guard around line 352, important for React StrictMode double-mount)."},
+
+  {"t":"ul","items":[
+    {"text":"**Symptom: DUPLICATE_IDENTITY on join.**","items":["Check for a genuine second session (another tab/device) first. If it's a single session, it's the double-connect race — ensure the connect guard and settle delay are present, and that StrictMode remounts await the prior disconnect."]},
+    {"text":"**Symptom: a long meeting drops media around the 1-hour mark.**","items":["The LiveKit room token TTL is `LIVEKIT_TOKEN_TTL_SEC`, default 3600 (1 hour). This is the MEDIA token, separate from the 7-day app session JWT. There is NO silent token re-mint flow — the SDK's reconnect re-uses the same token. For meetings expected to exceed the TTL, raise `LIVEKIT_TOKEN_TTL_SEC`; the reconnectPolicy (10 retries over ~60s) handles transient drops but cannot fix an expired token."]}
+  ]},
+
+  {"t":"callout","kind":"note","title":"Two different tokens, two different TTLs","text":"Do not confuse them. The APP session JWT (login) defaults to 7 days (`AUTH_TOKEN_TTL`). The LIVEKIT room token defaults to 1 hour (`LIVEKIT_TOKEN_TTL_SEC=3600`). The ~1h figure belongs to the media token only. A user can stay logged in all week but a single meeting's media token lasts an hour by default."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"9.10 Token minting and host controls (server-side authority)"},
+
+  {"t":"p","text":"All room access is gated server-side; the client is never trusted to decide who joins. `routes/calls.ts POST /token` resolves the room and enforces membership: `{callId}` → room `call_<id>` (must be the call's initiator or peer, else 403 — an IDOR guard); `{conversationId}` → `conv_<id>` (must be a conversation member); `{meetingId}` → `meeting_<id>`, where the real gate is `meetingService.enterRoom`, which consults eject/lock/lobby state and throws 403 with reasons like 'ended' / 'removed' / 'locked' / 'not admitted yet'. Only after the gate passes does `livekitService.roomToken` mint a `livekit-server-sdk` AccessToken signed with the API key/secret, granting `roomJoin`, `canPublish`, `canSubscribe`, `canPublishData`, with TTL `tokenTtlSec`. The response embeds the `iceServers` (built from `config.turn`) so the browser learns the relay."},
+
+  {"t":"p","text":"Host controls (mute, mute-all, remove) act over the LiveKit `RoomServiceClient` using `config.livekit.serverUrl` (`LIVEKIT_SERVER_URL`). The operator passes a bare USER ID; `findLiveIdentity` resolves it to the live `userId__<uuid>` from `listParticipants` (controls act on the identity PREFIX, the UUID is irrelevant). `removeParticipant` is a graceful no-op if the user isn't in the room. Group-call controls (`routes/calls.ts`) are gated by `requireConvOwner` (owner/admin); meeting controls (`routes/meetings.ts`) are gated by host = `meeting.createdBy` or a per-attendee `co-host` role, covering mute-all, per-participant mute, eject, readmit, promote/demote, and lobby/lock."},
+
+  {"t":"callout","kind":"warning","title":"Host controls depend on LIVEKIT_SERVER_URL being correct","text":"After the Mumbai migration, host controls break if `LIVEKIT_SERVER_URL` still points at the old `ws://livekit:7534` — the backend would issue RoomServiceClient calls to a box that no longer runs the SFU. This is why step 6 of the Mumbai runbook explicitly tests mute/remove: it is the canary for `LIVEKIT_SERVER_URL` being right."},
+
+  {"t":"p","text":"**Business impact summary.** Calls and meetings are the demo-critical, customer-facing surface of CoLab. The architecture is sound and self-hosted (no SaaS bill, media stays in the corporate network), but it is sensitive to deployment-environment facts that have nothing to do with application code: a firewall rule, a DNS record, a TLS cert, a load-balancer port mapping, an `use_external_ip` flag. When a call fails after a deploy, the playbook is: open `?calldebug=1`, read `iceState`/`turnUsed`/`turnAdvertised`/`requestsReceived`, and walk 9.9 — the failure is almost always one of the five infrastructure prerequisites (9.8), not the app."}
+]

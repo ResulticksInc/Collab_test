@@ -1,0 +1,880 @@
+{
+  "info": {
+    "name": "CoLab \u2014 External Data API",
+    "description": "Read a CoLab organization's data from another platform. Set baseUrl (e.g. http://localhost:4000/api) and either mint a key via the admin folder or paste one into externalApiKey. Guide: docs/EXTERNAL_DATA_API.html",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api"
+    },
+    {
+      "key": "externalApiKey",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "organizationId",
+      "value": ""
+    },
+    {
+      "key": "apiKeyId",
+      "value": ""
+    },
+    {
+      "key": "conversationId",
+      "value": ""
+    },
+    {
+      "key": "actorUserId",
+      "value": ""
+    },
+    {
+      "key": "peerUserId",
+      "value": ""
+    },
+    {
+      "key": "callId",
+      "value": ""
+    },
+    {
+      "key": "webhookId",
+      "value": ""
+    },
+    {
+      "key": "meetingId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0 \u00b7 Mint a key (admin portal)",
+      "item": [
+        {
+          "name": "Admin login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json(); if (b.token) pm.collectionVariables.set('adminToken', b.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"email\": \"admin@collab.local\", \"password\": \"admin1234\" }"
+            }
+          }
+        },
+        {
+          "name": "Create API key (org or platform)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json(); if (b.ok) { pm.collectionVariables.set('externalApiKey', b.data.key); pm.collectionVariables.set('apiKeyId', b.data.apiKey.id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/api-keys",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"name\": \"Postman\", \"organizationId\": \"{{organizationId}}\", \"scopes\": \"all\", \"userId\": \"{{actorUserId}}\" }"
+            },
+            "description": "Leave organizationId empty for a platform key. userId = default actor for write calls."
+          }
+        },
+        {
+          "name": "List keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/api-keys"
+          }
+        },
+        {
+          "name": "Rotate key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json(); if (b.ok) pm.collectionVariables.set('externalApiKey', b.data.key);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/api-keys/{{apiKeyId}}/rotate"
+          }
+        },
+        {
+          "name": "Revoke key",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/api-keys/{{apiKeyId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "1 \u00b7 Discover",
+      "item": [
+        {
+          "name": "Health (public)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/external/v1/health"
+          }
+        },
+        {
+          "name": "OpenAPI (public)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/external/v1/openapi.json"
+          }
+        },
+        {
+          "name": "Ping (who am I)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/ping"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 \u00b7 Typed endpoints",
+      "item": [
+        {
+          "name": "Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/external/v1/users?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "external",
+                "v1",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "since",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Conversations",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json(); if (b.ok && b.data[0]) pm.collectionVariables.set('conversationId', b.data[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/conversations"
+          }
+        },
+        {
+          "name": "Conversation members",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/conversations/{{conversationId}}/members"
+          }
+        },
+        {
+          "name": "Conversation messages",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/external/v1/conversations/{{conversationId}}/messages?limit=100&order=asc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "external",
+                "v1",
+                "conversations",
+                "{{conversationId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                },
+                {
+                  "key": "order",
+                  "value": "asc"
+                },
+                {
+                  "key": "since",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Messages (org-wide stream)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/external/v1/messages?since=2026-01-01T00:00:00Z&order=asc&limit=500",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "external",
+                "v1",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "2026-01-01T00:00:00Z"
+                },
+                {
+                  "key": "order",
+                  "value": "asc"
+                },
+                {
+                  "key": "limit",
+                  "value": "500"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Meetings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/external/v1/meetings?from=2026-01-01T00:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "external",
+                "v1",
+                "meetings"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-01-01T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Tasks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/external/v1/tasks?status=todo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "external",
+                "v1",
+                "tasks"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "todo"
+                },
+                {
+                  "key": "updatedSince",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Files (metadata)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/files"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 \u00b7 Generic tables",
+      "item": [
+        {
+          "name": "List readable tables",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/tables"
+          }
+        },
+        {
+          "name": "Read rows from a table",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/external/v1/tables/tasks?columns=id,title,status,due_at&filter[status]=todo&orderBy=due_at&limit=100",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "external",
+                "v1",
+                "tables",
+                "tasks"
+              ],
+              "query": [
+                {
+                  "key": "columns",
+                  "value": "id,title,status,due_at"
+                },
+                {
+                  "key": "filter[status]",
+                  "value": "todo"
+                },
+                {
+                  "key": "orderBy",
+                  "value": "due_at"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 \u00b7 Send & receive messages",
+      "item": [
+        {
+          "name": "Send to a conversation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/conversations/{{conversationId}}/messages",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hello from Postman\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Send to a person (DM)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/messages",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{peerUserId}}\",\n  \"text\": \"Hi \\u2014 sent via the External API\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Subscribe a webhook (receive)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json(); if (b.ok) pm.collectionVariables.set('webhookId', b.data.webhook.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/webhooks",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"targetUrl\": \"https://example.com/colab/inbound\",\n  \"events\": [\n    \"message.created\"\n  ],\n  \"name\": \"Postman hook\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List subscriptions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/webhooks"
+          }
+        },
+        {
+          "name": "Test delivery",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/webhooks/{{webhookId}}/test",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "Deliveries",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/webhooks/{{webhookId}}/deliveries"
+          }
+        },
+        {
+          "name": "Remove subscription",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/webhooks/{{webhookId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 \u00b7 Calls",
+      "item": [
+        {
+          "name": "Place a call",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json(); if (b.ok) pm.collectionVariables.set('callId', b.data.call.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/calls",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{peerUserId}}\",\n  \"kind\": \"audio\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Call status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/calls/{{callId}}"
+          }
+        },
+        {
+          "name": "Accept (as callee)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/calls/{{callId}}/accept",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "Decline (as callee)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/calls/{{callId}}/decline",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"In a meeting\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Hang up",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/calls/{{callId}}/hangup",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"durationSec\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "Re-mint join token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/calls/{{callId}}/token",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "Group call room token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/conversations/{{conversationId}}/call-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "Call history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/calls"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 \u00b7 Meetings",
+      "item": [
+        {
+          "name": "Schedule a meeting",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json(); if (b.ok) pm.collectionVariables.set('meetingId', b.data.meeting.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/meetings",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"External API demo\",\n  \"startsAt\": \"2026-12-01T09:30:00Z\",\n  \"durationMin\": 30,\n  \"attendees\": [\n    \"{{peerUserId}}\"\n  ],\n  \"description\": \"Scheduled from Postman\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Join token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{externalApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/external/v1/meetings/{{meetingId}}/token",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

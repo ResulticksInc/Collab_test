@@ -1,0 +1,137 @@
+# Azure DevOps pipeline — build the Collab desktop installers (Windows, macOS,
+# Linux) on native hosted agents and publish them to the served /desktop/ path.
+#
+# electron-builder CANNOT cross-build a .dmg, so macOS MUST run on a macOS agent
+# (Azure provides them); Windows/Linux likewise on their own agents. This is the
+# Azure equivalent of .github/workflows/desktop-build.yml (which only runs on
+# GitHub Actions and is inert on Azure DevOps).
+#
+# ── One-time setup ───────────────────────────────────────────────────────────
+# 1. Pipelines → New pipeline → Azure Repos Git → CoLab → "Existing Azure
+#    Pipelines YAML file" → branch: run → /azure-pipelines-desktop.yml.
+# 2. Edit the pipeline → Variables, add:
+#      DESKTOP_DEPLOY       = true                (plain variable — the on switch)
+#      DESKTOP_DEPLOY_HOST  = <web server host/IP>            (mark as secret)
+#      DESKTOP_DEPLOY_USER  = <ssh user>                      (secret)
+#      DESKTOP_DEPLOY_KEY   = <ssh PRIVATE key, PEM>          (secret)
+#      DESKTOP_DEPLOY_PATH  = <absolute served /desktop/ dir> (secret)
+#    (Optional signing — add CSC_LINK / CSC_KEY_PASSWORD for Windows and
+#     APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID for macOS notarize,
+#     then remove CSC_IDENTITY_AUTO_DISCOVERY below.)
+#
+# ── Cutting a desktop release ────────────────────────────────────────────────
+# No tags. Bump the version in desktop/package.json, then run your normal deploy
+# (push-to-run). This pipeline auto-runs whenever a change under desktop/ lands
+# on the run branch, builds all three OSes, and publishes them to /desktop/.
+
+trigger:
+  branches:
+    include:
+      - run
+  paths:
+    include:
+      - desktop/**
+      - azure-pipelines-desktop.yml
+
+pr: none
+
+stages:
+  - stage: build
+    displayName: Build installers
+    jobs:
+      - job: build
+        strategy:
+          matrix:
+            windows:
+              vmImage: windows-latest
+              buildCmd: npm run dist:win
+            macos:
+              vmImage: macOS-latest
+              buildCmd: npm run dist:mac
+            linux:
+              vmImage: ubuntu-latest
+              buildCmd: npm run dist:linux
+        pool:
+          vmImage: $(vmImage)
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: 20.x
+            displayName: Use Node 20
+
+          - bash: sudo apt-get update && sudo apt-get install -y rpm fakeroot
+            condition: eq(variables['Agent.OS'], 'Linux')
+            displayName: Linux packaging tools (rpm, fakeroot)
+
+          - bash: npm install --no-audit --no-fund
+            workingDirectory: desktop
+            displayName: Install desktop deps
+
+          - bash: $(buildCmd)
+            workingDirectory: desktop
+            env:
+              # Unsigned by default → Windows SmartScreen "unknown publisher" +
+              # macOS Gatekeeper first-open block. Add the signing secrets above
+              # and delete this line to sign/notarize automatically.
+              CSC_IDENTITY_AUTO_DISCOVERY: "false"
+            displayName: Build installer
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: desktop/dist
+              artifact: installers-$(Agent.OS)
+            displayName: Publish installers
+
+  - stage: publish
+    displayName: Publish to /desktop/
+    dependsOn: build
+    condition: succeeded()
+    jobs:
+      - job: publish
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self # for desktop/gen-latest.mjs
+
+          - task: NodeTool@0
+            inputs:
+              versionSpec: 20.x
+
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              path: $(Pipeline.Workspace)/artifacts
+            displayName: Download every OS's installers
+
+          # DownloadPipelineArtifact nests one folder per artifact — flatten the
+          # actual installer files into a single dist/ dir.
+          - bash: |
+              set -e
+              mkdir -p dist
+              find "$(Pipeline.Workspace)/artifacts" -type f \
+                \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \
+                   -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+                -exec cp {} dist/ \;
+              ls -la dist
+            displayName: Collect installers
+
+          - bash: node desktop/gen-latest.mjs dist stable
+            displayName: Generate latest.json (version + URLs + real sizes)
+
+          # rsync the installers + manifest to the served /desktop/ path. Gated on
+          # the DESKTOP_DEPLOY switch so it no-ops until the server vars are set.
+          - bash: |
+              set -e
+              install -m 700 -d ~/.ssh
+              printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_deploy
+              chmod 600 ~/.ssh/id_deploy
+              rsync -avz --chmod=F644 \
+                -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new" \
+                dist/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+              echo "Published installers + latest.json to $DEPLOY_HOST:$DEPLOY_PATH"
+            condition: eq(variables['DESKTOP_DEPLOY'], 'true')
+            env:
+              DEPLOY_HOST: $(DESKTOP_DEPLOY_HOST)
+              DEPLOY_USER: $(DESKTOP_DEPLOY_USER)
+              DEPLOY_KEY: $(DESKTOP_DEPLOY_KEY)
+              DEPLOY_PATH: $(DESKTOP_DEPLOY_PATH)
+            displayName: Publish to server /desktop/ (rsync)

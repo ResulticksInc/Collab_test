@@ -1,0 +1,190 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  CoLab — release-images (CD): build the BACKEND + FRONTEND Docker images   ║
+# ║  and push them to the GitHub Container Registry (ghcr.io).                  ║
+# ║                                                                            ║
+# ║  COST: $0. No paid infra, no invented secrets. ghcr.io is free for public  ║
+# ║  AND private images; the ONLY credential used is the auto-provided         ║
+# ║  ${{ secrets.GITHUB_TOKEN }} (no PAT, no registry password to create).     ║
+# ║                                                                            ║
+# ║  This is purely additive — it does NOT change the existing manual deploy   ║
+# ║  (`docker compose -f docker-compose.live.yml up -d --build` still builds   ║
+# ║  locally from the same Dockerfiles). It just ALSO publishes pull-deployable ║
+# ║  images so the operator can `docker compose pull && up -d` instead of       ║
+# ║  rebuilding on the box (see scripts/deploy-pull.sh + ENTERPRISE_DEPLOYMENT  ║
+# ║  §"CI/CD pipeline").                                                        ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+name: Release images (ghcr)
+
+on:
+  # Every push to main → publish `:latest` + `:sha-<short>` images.
+  push:
+    branches:
+      - main
+    # Don't rebuild images for desktop-shell / docs-only changes — those never
+    # affect the backend/frontend containers and have their own workflow.
+    paths-ignore:
+      - "desktop/**"
+      - "docs/**"
+      - "**/*.md"
+    # A `v*` version tag → also publish `:<version>` (e.g. v1.2.0 → :v1.2.0).
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Separate concurrency group from web-build (CI) so a CD run is never cancelled
+# by a CI run. Do NOT cancel-in-progress here: a tag build that is mid-push
+# should finish even if main moves on.
+concurrency:
+  group: release-images-${{ github.ref }}
+  cancel-in-progress: false
+
+# ${{ secrets.GITHUB_TOKEN }} needs `packages: write` to push to ghcr; `contents:
+# read` to checkout. Nothing else — least privilege.
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # ghcr is case-sensitive and requires a lowercase owner/repo. github.repository
+  # is "<owner>/<repo>"; we lowercase it in the metadata step below to be safe.
+  IMAGE_BASE: ${{ github.repository }}
+
+jobs:
+  build:
+    name: build + push ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Backend image — ghcr.io/<owner>/<repo>-backend
+          - image: backend
+            dockerfile: docker/Dockerfile.backend
+            # Backend takes no NEXT_PUBLIC_* build args (it's the API/socket
+            # server). Empty build-args block keeps the matrix uniform.
+            build-args: ""
+          # Frontend (web/shared "all" target) — ghcr.io/<owner>/<repo>-frontend
+          # NEXT_PUBLIC_* are baked at build time (see docker/Dockerfile.frontend).
+          # Blank API/socket URLs = same-origin (Next /api + /socket.io proxy) —
+          # NEVER bake localhost here (every remote browser would hit ITS OWN
+          # localhost). BUILD_TARGET=all = one bundle serving browser AND desktop.
+          - image: frontend
+            dockerfile: docker/Dockerfile.frontend
+            build-args: |
+              NEXT_PUBLIC_API_BASE_URL=
+              NEXT_PUBLIC_SOCKET_URL=
+              NEXT_PUBLIC_BUILD_TARGET=all
+              NEXT_PUBLIC_E2EE_ENABLED=true
+              NEXT_PUBLIC_E2EE_DECRYPT_LEGACY=true
+              BACKEND_INTERNAL_URL=http://backend:4000
+              LIVEKIT_INTERNAL_URL=http://livekit:7534
+    steps:
+      - uses: actions/checkout@v4
+
+      # Lowercase the owner/repo for the image name (ghcr rejects uppercase).
+      - name: Compute lowercase image name
+        id: img
+        run: |
+          echo "name=${REGISTRY}/$(echo "${IMAGE_BASE}" | tr '[:upper:]' '[:lower:]')-${{ matrix.image }}" >> "$GITHUB_OUTPUT"
+
+      # docker/metadata-action derives the tag set + OCI labels from the trigger:
+      #   • push to main   → :latest + :sha-<short>
+      #   • push tag vX.Y  → :vX.Y   + :sha-<short>  (no :latest moved by a tag)
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.img.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,prefix=sha-
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Auth to ghcr with the AUTO-PROVIDED token — no secret to create. The
+      # actor (the user/bot that triggered the run) owns the push.
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build from the REAL Dockerfile the compose uses, with GHA layer cache
+      # (free, scoped per image) so repeat builds are fast. Multi-stage layers
+      # (deps/build/runner) are cached across runs.
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.build-args }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # ── Gate: is the optional SSH deploy configured? ────────────────────────────
+  # GitHub Actions does NOT allow the `secrets` context in a job/step `if:`
+  # expression — it's only readable in `env`/`with`/`run`. So we read the secret
+  # into a job OUTPUT here, and the deploy job gates on that output. This is the
+  # correct, working way to make a job conditional on a secret's presence.
+  gate:
+    name: deploy gate (secret present?)
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' }} # never on workflow_dispatch dry-runs
+    outputs:
+      has_ssh: ${{ steps.check.outputs.has_ssh }}
+    steps:
+      - id: check
+        env:
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+        run: |
+          if [ -n "${DEPLOY_SSH_HOST}" ]; then
+            echo "has_ssh=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_ssh=false" >> "$GITHUB_OUTPUT"
+            echo "DEPLOY_SSH_HOST not set → skipping auto-deploy (use scripts/deploy-pull.sh)."
+          fi
+
+  # ── OPTIONAL pull-based auto-deploy over SSH ────────────────────────────────
+  # SKIPPED ENTIRELY unless the operator adds the DEPLOY_SSH_HOST secret (the gate
+  # job above resolves that). With no secrets, this job never runs — the
+  # $0/secret-free guarantee holds. When the secrets ARE set, it SSHes to the box
+  # and runs the same pull-based deploy the operator would run by hand
+  # (scripts/deploy-pull.sh). It does NOT rebuild and does NOT touch the media
+  # plane: it pulls the new backend+frontend images and recreates only those two
+  # services (livekit/coturn/db keep running → no call drop).
+  #
+  # To ENABLE, add these REPO SECRETS (Settings → Secrets and variables → Actions):
+  #   DEPLOY_SSH_HOST  — server hostname/IP (presence of THIS one enables the job)
+  #   DEPLOY_SSH_USER  — SSH user with docker permissions
+  #   DEPLOY_SSH_KEY   — private key (PEM) for that user
+  #   DEPLOY_PATH      — (optional) repo dir on the box; defaults to ~/CoLab
+  # All optional. Absent = no auto-deploy (use scripts/deploy-pull.sh by hand).
+  deploy:
+    name: optional SSH auto-deploy
+    needs: gate
+    runs-on: ubuntu-latest
+    # Runs ONLY when the gate found the SSH host secret. Secret absent → skipped.
+    if: ${{ needs.gate.outputs.has_ssh == 'true' }}
+    steps:
+      - name: Deploy over SSH (pull + up -d, no rebuild, no media restart)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH || '~/CoLab' }}"
+            # Pull the freshly-published images and recreate ONLY backend+frontend.
+            # --no-deps keeps livekit/coturn/db/nginx untouched → zero call drop.
+            docker compose --env-file .env.live -f docker-compose.live.yml pull backend frontend
+            docker compose --env-file .env.live -f docker-compose.live.yml up -d --no-deps backend frontend
+            docker image prune -f

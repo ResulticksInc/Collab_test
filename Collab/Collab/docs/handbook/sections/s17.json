@@ -1,0 +1,344 @@
+[
+  {"t":"h","level":1,"text":"17. QA Handbook"},
+
+  {"t":"p","text":"This section is the single source of truth for how CoLab is tested. It documents the **real, committed test harness** (Playwright end-to-end specs and Node `node:test` integration tests), explains how to run it, and then provides a large, actionable catalog of concrete test cases grouped by category (Smoke, Regression, Performance, Accessibility, Security, Cross-Browser, Mobile/Responsive, Meeting, and Call). Every claim about the existing automated suite is grounded in the files under `e2e/`, `playwright.config.ts`, and `backend/app/test/`. Where a test category is aspirational rather than already automated, that is stated plainly so the next engineer never mistakes a manual checklist for a green CI lane."},
+
+  {"t":"callout","kind":"note","title":"What is and is not automated today","text":"The committed automated suite is intentionally small: three Playwright e2e spec files (smoke, responsive, accessibility) run across three device profiles, plus two backend `node:test` integration files (calls signalling, identity). Everything else in this section — performance budgets, deep security cases, cross-browser matrices, full meeting/call media validation — is a **specified test plan** that a human or future automation executes. Do not assume a case is green in CI just because it appears in a table here."},
+
+  {"t":"h","level":2,"text":"17.1 Testing Philosophy and the Quality Gate"},
+
+  {"t":"p","text":"CoLab follows a *thin-but-real* testing strategy. Rather than mocking the backend, the end-to-end tests boot the **actual** Express backend and Next.js frontend against a real MySQL database and sign in like a real user. This catches integration defects (auth envelope shape, socket handshakes, same-origin proxy rewrites, hydration races) that a mock-heavy suite would miss. The trade-off is that the suite needs a running MySQL instance and is slower; it is therefore deliberately narrow, asserting the highest-value invariants (the app shell renders, no horizontal overflow at any width, no serious/critical accessibility violations, call signalling is gated and directional)."},
+
+  {"t":"p","text":"In plain language: the tests prove *the app actually starts, looks right on every screen size, lets a user in, and does not leak calls to people who should not be on them*. In engineering language: the suite exercises the real auth flow (`POST /api/auth/login` returning the `{ok,data,error}` envelope), the Socket.IO handshake (`auth:{token}` verified server-side), the LiveKit token-mint IDOR guards, and the responsive CSS `zoom` ramp — all against a live stack."},
+
+  {"t":"p","text":"The master quality gate is the `truth` npm script (aliased as `gate`). It chains every check in order and is the definition of \"done\" before a release. Any red link stops the chain."},
+
+  {"t":"code","lines":[
+    "npm run truth   # == npm run gate",
+    "  -> format:check   (prettier --check .)",
+    "  -> validate       (lint:arch + lint:circular + lint:orphans + lint:dead + lint:deps)",
+    "  -> typecheck      (typecheck:fe + typecheck:be, tsc --noEmit)",
+    "  -> test:unit      (node --import tsx --test backend/app/test/*.test.ts)",
+    "  -> build          (next build)",
+    "  -> test           (frontend workspace unit tests, --if-present)",
+    "  -> test:e2e       (playwright test)",
+    "  -> a11y           (playwright test accessibility)",
+    "  -> security       (audit-ci --high --config audit-ci.json)",
+    "  -> secrets        (secretlint \"**/*\")"
+  ]},
+
+  {"t":"p","text":"Note two important facts about this gate. First, `tsc --noEmit` is a hard gate even though `next.config.js` sets `eslint.ignoreDuringBuilds:true` — ESLint warnings do not block the build, but a TypeScript type error does. Second, `security` and `secrets` are supply-chain and secret-leak guards (npm-audit high-severity and secretlint), not application test cases; they belong to the gate but are out of scope for the functional test catalogs below."},
+
+  {"t":"h","level":2,"text":"17.2 Test Stack and Tooling"},
+
+  {"t":"table","headers":["Layer","Tool / Version","File(s)","What it covers"],"rows":[
+    ["E2E runner","`@playwright/test` ^1.48.0","`playwright.config.ts`","Boots real backend+frontend, drives a Chromium browser across 3 device profiles"],
+    ["Accessibility","`@axe-core/playwright` ^4.11.3","`e2e/accessibility.spec.ts`","Runs axe-core against the authenticated home view; fails on serious/critical only"],
+    ["Integration (backend)","Node built-in `node:test` + `tsx`","`backend/app/test/calls-signalling.test.ts`, `identity.test.ts`","In-process Express+Socket.IO boot, token mint, IDOR/membership gating, ringing flow"],
+    ["Supply chain","`audit-ci` ^7.1.0","`audit-ci.json`","Fails on high-severity dependency advisories"],
+    ["Secret scan","`secretlint` (preset-recommend)","`.secretlintrc.json`","Blocks committed credentials/tokens"],
+    ["Visual (optional)","`chromatic`","`npm run chromatic`","Visual-regression snapshots; run separately, `--exit-zero-on-changes`"],
+    ["Perf scan (manual)","`react-scan` (echo helper)","`npm run scan`","Prints a command to point react-scan at the dev server; not wired into CI"]
+  ]},
+
+  {"t":"callout","kind":"warning","title":"Single browser engine — \"cross-browser\" is not yet automated","text":"All three Playwright projects (`desktop`, `tablet`, `mobile`) use Chromium device descriptors (`Desktop Chrome`, `iPad (gen 7)`, `iPhone 13`). There is **no Firefox or WebKit/Safari project** in `playwright.config.ts`. The device profiles vary the viewport and touch/pointer affordances, not the rendering engine. The Cross-Browser test catalog in 17.11 is therefore a **manual matrix** until WebKit/Firefox projects are added. Treat Safari/iOS-Safari behaviour (especially `getUserMedia`, `setSinkId`, and `zoom`) as unverified by automation."},
+
+  {"t":"h","level":2,"text":"17.3 The Playwright E2E Harness in Detail"},
+
+  {"t":"h","level":3,"text":"17.3.1 Configuration"},
+
+  {"t":"p","text":"`playwright.config.ts` defines the whole e2e environment. Key settings: `testDir:\"./e2e\"`, `timeout:90000` (90s per test — generous because it waits on a real backend), `retries:1`, `workers:1` (serial; the tests share one database and one authenticated account so parallelism would cause cross-talk), `baseURL:\"http://localhost:3002\"` (the frontend dev port), and `trace:\"on-first-retry\"` (a Playwright trace is captured only when a test is retried, keeping artifacts small)."},
+
+  {"t":"p","text":"The config also *owns the stack lifecycle* via `webServer`. It starts `npm run dev:backend` and waits for `http://localhost:4000/api/health`, and starts `npm run dev:frontend` and waits for `http://localhost:3002`. `reuseExistingServer:true` means if you already have the stack running locally, Playwright attaches to it instead of spawning a duplicate. The backend is pinned to `DATABASE_URL=mysql://colab:colab@localhost:3306/colab`, and `DEMO_MODE` is deleted so the suite runs against the real (non-demo) database profile."},
+
+  {"t":"diagram","kind":"layered","title":"E2E stack the runner boots","layers":[
+    {"label":"Playwright runner","items":["Chromium","3 device projects","trace on retry"]},
+    {"label":"Frontend (dev)","items":["Next.js :3002","same-origin /api + /socket.io rewrites"]},
+    {"label":"Backend (dev)","items":["Express :4000","Socket.IO","/api/health probe"]},
+    {"label":"Data","items":["MySQL colab @ :3306","global-setup seeds users + convs"]}
+  ]},
+
+  {"t":"h","level":3,"text":"17.3.2 Global setup and the seeded account"},
+
+  {"t":"p","text":"`e2e/global-setup.ts` calls `prepareReleaseDatabases()` from `database/src/prepare-release-dbs.ts` before any test runs. That helper runs `migrate(url)` then `seedDemo(db,{usersOnly:true})` against each target database (default `colab` and `colab_demo`), and ensures two fixtures exist: a DM `conv_emily` between `u_you` and `u_emily`, and a channel `conv_general` containing `u_you`, `u_emily`, `u_marcus`, `u_priya`, `u_david`, `u_lena`. This guarantees the login account and at least one conversation always exist, so the smoke and responsive specs are deterministic."},
+
+  {"t":"p","text":"`e2e/_helpers.ts` exports `gotoApp(page)`, the login routine every spec calls. It navigates to `/`, fills the email (`you@colab.app`) and password (`demo1234`), and — critically — wraps the fill in an `expect(...).toPass()` retry loop. The comment documents the reason: the login form is a hydrated React controlled component, and a `fill()` that lands before hydration completes is reset to `\"\"` by React's first render, which then submits an empty email and fails with \"Invalid email or password.\" The retry re-fills until the values stick (hydration done) before clicking `button.btn-p`. It then waits for the `/api/auth/login` 200 response and for `#rail` to be attached and visible. **Any new e2e test must reuse `gotoApp` rather than re-implementing login**, or it will be flaky on the slower tablet/mobile projects against `next dev`."},
+
+  {"t":"callout","kind":"tip","title":"Hydration-race pattern is reusable","text":"The `expect(async () => { fill; assert value stuck }).toPass()` pattern in `_helpers.ts` is the canonical fix for any controlled-input flakiness against `next dev`. If you add tests that type into other controlled fields (search, composer, settings), wrap the fill the same way."},
+
+  {"t":"h","level":3,"text":"17.3.3 The committed e2e specs"},
+
+  {"t":"p","text":"`smoke.spec.ts` (2 tests): asserts the authenticated shell renders (`#rail`, `#vdash`, and a `.dash2-greet` containing the greeting text matching `/Good/`), and that the document has no horizontal overflow (`scrollWidth - innerWidth <= 2`)."},
+
+  {"t":"p","text":"`responsive.spec.ts` (5 tests): desktop shows `#sidebar` and `#main` together; mobile collapses to a single pane and the `.mobile-back` button returns to the sidebar; desktop hover tooltips are not clipped off-screen (`boundingBox().x/y >= 0`); **no horizontal overflow on any rail module** (walks Dashboard, Messages, Calls, Contacts, Calendar, Activity, Tasks, Reminders, Files and asserts `scrollWidth <= clientWidth+2` per view); and **no horizontal overflow across the width spectrum** (sweeps 320, 360, 390, 480, 600, 768, 1024, 1280, 1440, 1920, 2560, 3440 px and asserts no overflow at each). The desktop-only and mobile-only tests are scoped via `test.skip(project.name !== ...)`."},
+
+  {"t":"p","text":"`accessibility.spec.ts` (1 test): runs `new AxeBuilder({page}).analyze()` on the home view and asserts there are **zero** violations of impact `critical` or `serious`. Violations of impact `moderate` or `minor` are explicitly tolerated by this assertion — which is exactly where the known color-contrast gap lives (see 17.10)."},
+
+  {"t":"h","level":3,"text":"17.3.4 Backend integration tests (node:test)"},
+
+  {"t":"p","text":"`backend/app/test/calls-signalling.test.ts` is an in-process integration test. It sets test secrets (`AUTH_JWT_SECRET`, `LIVEKIT_API_KEY/SECRET`, `LIVEKIT_WS_URL`, `CALL_MISSED_MS=1500`), migrates+seeds the database, creates an Express app, attaches Socket.IO, and listens on an ephemeral port. If MySQL is unavailable the DB-backed cases **skip** (via the `dbTest` wrapper) while the pure token-minting case still runs. It asserts: `roomToken` mints a LiveKit-valid JWT whose `sub` is `u_alice` or `u_alice__<uuid>` with a `video` grant for the right room and `canPublish:true`; the `/api/calls/token` endpoint returns 401 without auth; group tokens require conversation membership (non-member gets **403**, IDOR closed); 1:1 tokens require being a participant in that specific call (a third user gets **403**); the ringing flow `request -> incoming -> accept` works and is membership-gated (a fresh non-connected user calling anyone gets a `call:error` with code **403**); and `CALL_INCOMING` reaches the correct peer in **both** directions (the directional-ringing regression)."},
+
+  {"t":"p","text":"`backend/app/test/identity.test.ts` unit-tests `otherMemberId([members], self)` from the frontend `lib/identity.ts`. It guards the directional ringing fix: the caller's `peerId` must resolve to the *other* member relative to the real self id in both directions and independent of member order; a hardcoded non-member self id (`u_you`) reproduces the original \"calls yourself\" bug; and empty/single-member/missing inputs return `null`."},
+
+  {"t":"h","level":2,"text":"17.4 How to Run the Tests"},
+
+  {"t":"ol","items":[
+    "Ensure MySQL is up and reachable at `mysql://colab:colab@localhost:3306/colab` (the e2e config and the backend integration test both default to this URL). Without it, e2e fails to boot and DB-backed `node:test` cases skip.",
+    "First time only, install Playwright browsers: `npx playwright install`.",
+    "Run the full e2e suite across all three device projects: `npm run test:e2e`.",
+    "Run only the accessibility lane: `npm run a11y`.",
+    "Run the backend integration/unit tests: `npm run test:unit`.",
+    "Run the entire release gate: `npm run truth` (a.k.a. `npm run gate`)."
+  ]},
+
+  {"t":"code","lines":[
+    "# Targeted runs",
+    "npx playwright test --project=desktop          # one device profile",
+    "npx playwright test e2e/responsive.spec.ts     # one spec",
+    "npx playwright test --project=mobile e2e/responsive.spec.ts",
+    "npx playwright show-trace                       # inspect a captured retry trace",
+    "node --import tsx --test backend/app/test/calls-signalling.test.ts"
+  ]},
+
+  {"t":"callout","kind":"warning","title":"The e2e suite mutates a real database","text":"`global-setup` migrates and seeds the `colab` (and `colab_demo`) databases and the calls integration test deletes rows from the `calls` table for the test users between subtests. Never point `DATABASE_URL` at a production database when running tests. Use a local/disposable MySQL. The `migrate-db.ts` script is guarded to refuse non-loopback hosts for exactly this reason."},
+
+  {"t":"pagebreak"},
+
+  {"t":"h","level":2,"text":"17.5 Test Case Catalogs — How to Read Them"},
+
+  {"t":"p","text":"Each catalog below is a table with columns **ID, Area, Steps, Expected result, Priority**. IDs are stable handles (e.g. `SMK-01`) so defects and CI lanes can reference them. Priority is P1 (release-blocking), P2 (important), or P3 (nice-to-have). Where a case is already covered by a committed automated test, the Steps or Expected column names the spec/file so you know it is green, not just planned. Cases without such a reference are manual or future-automation."},
+
+  {"t":"h","level":2,"text":"17.6 Smoke Tests"},
+
+  {"t":"p","text":"Smoke tests answer one question: *is the build fundamentally alive?* They are the fastest gate and run first. The first three are backed by `smoke.spec.ts` and `_helpers.ts`; the rest are the minimum manual sanity sweep before any deeper testing."},
+
+  {"t":"table","headers":["ID","Area","Steps","Expected result","Priority"],"widths":[1000,1400,3200,2600,800],"rows":[
+    ["SMK-01","App shell","`gotoApp` logs in as you@colab.app / demo1234; observe shell (automated: smoke.spec.ts)","`#rail`, `#vdash` visible; `.dash2-greet` contains `Good...`; dashboard is the landing view","P1"],
+    ["SMK-02","Layout","Load authenticated shell; measure `scrollWidth - innerWidth` (automated: smoke.spec.ts)","Horizontal overflow `<= 2px`","P1"],
+    ["SMK-03","Auth hydration","Submit login before/after React hydration (automated: _helpers.ts retry loop)","Email/password values stick; `/api/auth/login` returns 200; `#rail` attaches within 45s","P1"],
+    ["SMK-04","Login failure","Enter a wrong password and submit","\"Invalid email or password\" shown; no token written to localStorage `clb_token`","P1"],
+    ["SMK-05","Socket connect","After login, observe network for Socket.IO handshake (polling-first then websocket)","Socket connects; client receives `ready`; presence flips to on","P1"],
+    ["SMK-06","Messaging open","Click Rail `Messages`; open `conv_emily`","Sidebar lists conversations; ChatView renders message list + composer","P1"],
+    ["SMK-07","Send message","Type text in composer and press Enter","Optimistic bubble appears, then reconciles on `message:new` echo; persists on reload","P1"],
+    ["SMK-08","Module nav","Click each Rail module (Dashboard, Messages, Calls, Contacts, Calendar, Activity, Tasks, Reminders, Files)","Each view mounts without console error or blank screen","P1"],
+    ["SMK-09","Logout","Open Settings footer; Logout","Token blocklisted server-side; UI returns to login screen","P2"],
+    ["SMK-10","Health probe","`GET /api/health`","200 with ok envelope (Playwright webServer waits on this)","P1"]
+  ]},
+
+  {"t":"h","level":2,"text":"17.7 Regression Tests"},
+
+  {"t":"p","text":"Regression tests lock in behaviours that have broken before and must never break again. Several map directly to documented incidents and to the committed integration tests. They protect the most fragile seams: optimistic-message reconciliation, the same-origin proxy, reconnect resync, soft-delete tombstones, and directional call ringing."},
+
+  {"t":"table","headers":["ID","Area","Steps","Expected result","Priority"],"widths":[1000,1500,3100,2600,800],"rows":[
+    ["REG-01","Directional ringing","`otherMemberId` resolves the other party both ways (automated: identity.test.ts)","A->B resolves to B and B->A resolves to A, order-independent; bad self id reproduces old bug","P1"],
+    ["REG-02","Call IDOR","Non-member requests a group/1:1 LiveKit token (automated: calls-signalling.test.ts)","403 for non-members and non-participants; 401 unauthenticated","P1"],
+    ["REG-03","Ring both directions","A calls B, then B calls A over sockets (automated: calls-signalling.test.ts)","`CALL_INCOMING` reaches the correct peer with correct caller id each direction","P1"],
+    ["REG-04","Optimistic reconcile","Send a message; observe optimistic bubble then server echo","Optimistic row replaced by id; no duplicate; `_status` clears","P1"],
+    ["REG-05","Same-origin attachments","Upload a file in a DM; download it from another host/origin","Attachment loads via `/api/files/:id/download` (no cross-host \"Couldn't load\")","P1"],
+    ["REG-06","Reconnect resync","Kill the socket mid-session; restore network","Active conversation re-joins room, refetches messages + unread + notifications; no lost messages","P1"],
+    ["REG-07","Soft-delete tombstone","Delete a message for everyone","Bubble becomes a tombstone via `message:updated`; row persists with `deleted=1`; previews use lib/messageText.ts","P1"],
+    ["REG-08","Message preview","Send rich-HTML message; view it in conversation list and notifications","Preview is plain text via messagePreview/messageRowPreview; only the bubble renders sanitized HTML","P2"],
+    ["REG-09","DM uniqueness","Create a DM with a user who already has one","Existing DM reused (conversations.dm_key unique); no duplicate DM row","P2"],
+    ["REG-10","Settings whitelist","Change a setting that exists in backend DEFAULTS; reload","Setting persists; a setting absent from backend DEFAULTS is silently dropped (known gotcha)","P2"],
+    ["REG-11","ESC stack","Open emoji picker over a menu; press ESC twice","ESC closes the topmost transient surface first (consumes `colab:esc`), not module-back","P2"],
+    ["REG-12","No-clipping","Hover tooltips and open menus near viewport edges (automated edge: responsive.spec.ts tooltip test)","Tooltips/menus stay on-screen (boundingBox x/y >= 0); portal + edge-aware placement","P2"],
+    ["REG-13","Rate-limit advisory","Send >20 messages in a burst over socket","Sender receives `message:rate_limited`; no crash; throttle refills 5/s","P2"],
+    ["REG-14","401 auto-logout","Force-expire/blocklist the token, then act","api.ts re-validates via /api/auth/me, dispatches `colab:unauthorized`, app logs out cleanly","P1"],
+    ["REG-15","Modal focus","Open any Modal and type immediately","Input keeps focus per keystroke (setup effect is []-deps, not re-running on close prop)","P2"]
+  ]},
+
+  {"t":"h","level":2,"text":"17.8 Performance Tests"},
+
+  {"t":"p","text":"There is no automated performance suite committed today. `npm run scan` only prints a command to point `react-scan` at the running dev server, and `npm run analyze` builds with `@next/bundle-analyzer`. The cases below are the agreed performance plan; run them manually (react-scan, Chrome DevTools Performance panel, Lighthouse) until they are automated. They target the two known hotspots: the `CoLabV1` god-component re-render storm and large-list/keyset-pagination behaviour."},
+
+  {"t":"table","headers":["ID","Area","Steps","Expected result","Priority"],"widths":[1000,1500,3200,2500,800],"rows":[
+    ["PRF-01","Render storm","Open a busy conversation; with react-scan running, fire many socket events","Memo'd shells (ChatView/Rail) do not re-render the whole tree on every event","P1"],
+    ["PRF-02","Message pagination","Scroll a conversation with >100 messages upward","Keyset `?before&limit<=100` fetches additional pages smoothly; no full reload","P1"],
+    ["PRF-03","Conversation list","Load an account with many conversations","Sidebar renders without jank; stable React.memo identities (frozen EMPTY_ARR/OBJ)","P2"],
+    ["PRF-04","Upload progress","Upload a ~50MB file","XHR onProgress drives a smooth progress bar; UI stays responsive","P2"],
+    ["PRF-05","Bundle size","`npm run analyze`","No unexpected bundle bloat; @signalapp/libsignal aliased out of client bundle","P2"],
+    ["PRF-06","Zoom ramp","Resize to 4K/8K widths","CSS `zoom` ramp (1.15@2100 -> 4@7680) keeps UI crisp and proportional; no layout thrash","P3"],
+    ["PRF-07","Socket fan-out","Two tabs of the same user; trigger presence/notification events","Per-user `user:<uid>` room fan-out; no global io.emit storm; both tabs update","P2"],
+    ["PRF-08","Initial load","Cold-load `/` and time to interactive (Lighthouse)","Single SPA mounts at `/`; first meaningful paint within budget on mid-tier hardware","P2"],
+    ["PRF-09","Search latency","Run a global search query (when feature flag on)","FULLTEXT `idx_messages_fts` returns within budget; no table scan","P3"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Why the render-storm case is P1","text":"Per the architecture, `CoLabV1.tsx` is a ~9,000-line god-component holding nearly all app state; every socket event can re-render the whole tree unless children are memo'd and props are passed via refs. PRF-01 guards that the memoization (ChatView is React.memo'd, props stabilized via refs) is intact — a regression here degrades the entire app, not one screen."},
+
+  {"t":"h","level":2,"text":"17.9 Accessibility Tests"},
+
+  {"t":"p","text":"Accessibility has one automated guard (`accessibility.spec.ts`) and a broader manual plan. The automated guard runs axe-core on the home view and fails only on `critical`/`serious` violations. The cases below extend coverage to keyboard, focus, screen-reader semantics, and motion preferences. The single most important honest caveat is the **color-contrast gap** described in 17.10."},
+
+  {"t":"table","headers":["ID","Area","Steps","Expected result","Priority"],"widths":[1000,1500,3100,2600,800],"rows":[
+    ["A11Y-01","axe home view","Run axe-core on authenticated home (automated: accessibility.spec.ts)","Zero violations of impact serious or critical","P1"],
+    ["A11Y-02","axe per module","Run axe-core on Messages, Calls, Calendar, Tasks, Files, Settings","No new serious/critical violations per view (extend the automated lane)","P1"],
+    ["A11Y-03","Color contrast","Audit text/background pairs across light, dark, oled, midnight, slate, forest themes","KNOWN GAP: some pairs fail WCAG AA contrast; tracked, not yet fixed (see 17.10)","P1"],
+    ["A11Y-04","Keyboard nav","Tab through Rail, sidebar, composer, modals without a mouse","All interactive elements reachable and operable; logical tab order","P1"],
+    ["A11Y-05","Focus trap","Open a Modal; Tab repeatedly","Focus stays within the modal; ESC closes; focus returns to trigger","P1"],
+    ["A11Y-06","ARIA labels","Inspect Rail nav buttons","Each has `aria-label` (e.g. Messages, Calls) — relied on by responsive.spec.ts selectors","P1"],
+    ["A11Y-07","Reduced motion","Enable reduce-motion in Settings (body.reduce-motion)","Animations suppressed; welcome finale and ambient effects respect the flag","P2"],
+    ["A11Y-08","Larger text / dyslexia","Toggle larger-text and dyslexia-font in Settings","Body classes apply; text scales; no clipping or overflow introduced","P2"],
+    ["A11Y-09","High contrast","Enable high-contrast on dark/oled","body.dark.high-contrast / body.oled.high-contrast bump text contrast","P2"],
+    ["A11Y-10","Screen reader","Navigate message list and composer with NVDA/VoiceOver","Roles/labels announced sensibly; sanitized HTML does not break reading order","P2"],
+    ["A11Y-11","Tooltip clipping","Hover edge tooltips (automated: responsive.spec.ts)","Tooltips not clipped off-screen; boundingBox x/y >= 0","P2"]
+  ]},
+
+  {"t":"h","level":3,"text":"17.10 Known Accessibility Gap — Color Contrast"},
+
+  {"t":"callout","kind":"risk","title":"Color-contrast violations are NOT caught by the green a11y lane","text":"`accessibility.spec.ts` asserts only that there are no `serious`/`critical` axe violations. Color-contrast findings frequently surface at `moderate` impact, and the assertion deliberately filters those out (`impact === 'critical' || impact === 'serious'`). As a result the automated lane can be green while real AA contrast failures exist — especially on the accent-on-dark theme variants (oled/midnight/forest) where accent backgrounds are clamped. This is a deferred, design-owned item: the contrast remediation across all six themes is pending, and verification UI work was prioritized behind it."},
+
+  {"t":"p","text":"Action for QA: when running A11Y-03, do **not** rely on the e2e lane. Run an explicit axe color-contrast audit (or a manual contrast-checker) against each of the six themes — light, dark, oled, midnight, slate, forest — and each accent. File contrast failures against the design system tokens in `styles/v1.css` (`:root` grayscale ramp and `--ac*` accent set), not against individual screens, because the fix belongs at the token layer. Business impact: failing AA contrast blocks enterprise procurement that requires a VPAT/WCAG-AA conformance statement, so this gap is a sales-relevant risk, not a cosmetic one."},
+
+  {"t":"h","level":2,"text":"17.11 Cross-Browser Tests"},
+
+  {"t":"p","text":"As noted in 17.2, the automated suite runs only on Chromium. Cross-browser coverage is therefore a manual matrix today, prioritized by where browsers genuinely diverge for CoLab: media capture (`getUserMedia`), audio output routing (`setSinkId`), the CSS `zoom` property (non-standard, Chromium/WebKit support it; Firefox historically did not), screen share (`getDisplayMedia` with system audio), and IndexedDB (E2EE key storage). Each case should be run on the latest stable of each engine."},
+
+  {"t":"table","headers":["ID","Area","Steps","Expected result","Priority"],"widths":[1000,1600,3000,2600,800],"rows":[
+    ["XB-01","Chrome desktop","Run SMK-01..08 on latest Chrome","Full app works; baseline (matches Chromium e2e)","P1"],
+    ["XB-02","Edge desktop","Run smoke + a call on Edge","Parity with Chrome (same Chromium engine)","P2"],
+    ["XB-03","Firefox desktop","Run smoke + messaging; check `zoom` ramp + getUserMedia","App usable; note any `zoom` rendering differences and mic-permission UX","P1"],
+    ["XB-04","Safari desktop","Run smoke + 1:1 call + screen share on Safari","getUserMedia/getDisplayMedia + setSinkId behave; verify no console errors","P1"],
+    ["XB-05","iOS Safari","Run smoke + join a meeting on iPhone Safari","App loads; media permission prompts; secure-context (HTTPS) required for media","P1"],
+    ["XB-06","Android Chrome","Run smoke + a call on Android Chrome","Parity; verify TURN relay path on mobile network","P2"],
+    ["XB-07","Insecure context","Open the app over plain HTTP bare IP in any browser","mediaSupport.ts preflight detects insecure context; calls blocked with a clear message","P1"],
+    ["XB-08","E2EE storage","Enable E2EE (NEXT_PUBLIC_E2EE_ENABLED) and message in each browser","Non-extractable P-256 key persists in IndexedDB; encrypt/decrypt round-trips","P3"]
+  ]},
+
+  {"t":"callout","kind":"tip","title":"Add WebKit + Firefox projects to close XB-03/04/05","text":"To convert this matrix from manual to automated, add `{name:'webkit', use:{...devices['Desktop Safari']}}` and `{name:'firefox', use:{...devices['Desktop Firefox']}}` projects in `playwright.config.ts` and run `npx playwright install webkit firefox`. The existing specs (smoke, responsive, accessibility) are engine-agnostic and would run unchanged; only media-dependent cases need real hardware or fake-device flags."},
+
+  {"t":"h","level":2,"text":"17.12 Mobile / Responsive Tests"},
+
+  {"t":"p","text":"This is the best-automated category. `responsive.spec.ts` and the `mobile`/`tablet` Playwright projects cover the core responsive contract: single-pane mobile flow with working back navigation, no horizontal overflow on any module, and no overflow across a 320 -> 3440 px width sweep. The cases below name the automated ones and add the manual mobile-UX checks (touch targets, on-screen keyboard, orientation)."},
+
+  {"t":"table","headers":["ID","Area","Steps","Expected result","Priority"],"widths":[1000,1500,3200,2500,800],"rows":[
+    ["RSP-01","Desktop split","Open Messages on desktop (automated: responsive.spec.ts)","`#sidebar` and `#main` visible together","P1"],
+    ["RSP-02","Mobile single-pane","Open a conversation on mobile (automated: responsive.spec.ts)","Pane swaps via `mobilePane` state; `.mobile-back` returns to sidebar","P1"],
+    ["RSP-03","No module overflow","Walk all 9 rail modules at current viewport (automated: responsive.spec.ts)","`scrollWidth <= clientWidth + 2` on every module","P1"],
+    ["RSP-04","Width sweep","Sweep 320..3440px on the shell (automated: responsive.spec.ts)","No horizontal overflow at any width","P1"],
+    ["RSP-05","Tablet layout","Run smoke on the tablet project (iPad gen 7, 768x1024)","Layout adapts; no overflow; touch affordances work","P2"],
+    ["RSP-06","Touch targets","Tap small controls (reactions, menu items) on a phone","Targets are large enough to hit; no accidental neighbor taps","P2"],
+    ["RSP-07","On-screen keyboard","Focus the composer on a phone; type","Composer stays visible above the keyboard; layout does not break","P2"],
+    ["RSP-08","Orientation","Rotate phone portrait<->landscape in a call/meeting","Tiles re-flow; no overflow; controls remain reachable","P2"],
+    ["RSP-09","Resizable sidebar","Drag the conversation sidebar handle (desktop)","Width follows `--sbw` from settings.sidebarWidth (default 288); clamps sensibly","P3"],
+    ["RSP-10","Mobile gutter","Shrink below 640px","`--app-inset` goes to 0; #app drops radius/shadow; full-bleed layout","P3"],
+    ["RSP-11","Chat column cap","View long messages on a wide screen","Bubbles cap at min(72%,720px); readable measure preserved","P2"]
+  ]},
+
+  {"t":"h","level":2,"text":"17.13 Security Tests"},
+
+  {"t":"p","text":"Security cases combine the automated IDOR/membership guards (from `calls-signalling.test.ts`) with a manual plan covering authentication, authorization, rate limiting, headers, and the optional DM E2EE. The supply-chain (`audit-ci`) and secret-scan (`secretlint`) lanes run in the gate but are not application test cases. Authorization in CoLab is predominantly **resource-membership based** (e.g. `db.conversations.isMember`), not global-role based, so the highest-value security tests are membership/IDOR checks on every resource route."},
+
+  {"t":"table","headers":["ID","Area","Steps","Expected result","Priority"],"widths":[1000,1500,3100,2600,800],"rows":[
+    ["SEC-01","Auth required","Call any /api resource route without a Bearer token","401 UNAUTHORIZED (authMiddleware)","P1"],
+    ["SEC-02","Token revocation","Logout, then reuse the old JWT on an HTTP route","401 — token blocklisted by signature segment until exp","P1"],
+    ["SEC-03","Call token IDOR","Non-member/non-participant requests a LiveKit token (automated: calls-signalling.test.ts)","403 for group non-members and 1:1 non-participants","P1"],
+    ["SEC-04","Conversation access","Non-member fetches another conversation's messages","403/404; messageService.assertMember gate enforced","P1"],
+    ["SEC-05","Meeting eject/lock","Ejected user re-mints a meeting token; locked meeting join attempt","enterRoom consults meeting_ejected/lobby/lock first -> 403 removed/locked/not admitted","P1"],
+    ["SEC-06","Host controls","Non-host calls mute-all / eject on a meeting or group call","403 'Only host or co-host can ...'; controls act on identity prefix only","P1"],
+    ["SEC-07","Password policy","Sign up with a weak/common/disposable-domain email or password","Rejected server-side by credentialPolicy.ts; client cannot bypass","P1"],
+    ["SEC-08","Auth rate limit","Hammer /api/auth/login > 30 times in 15 min from one IP","429 RATE_LIMITED with Retry-After","P1"],
+    ["SEC-09","API rate limit","Exceed 600 req/min on /api from one IP","429 RATE_LIMITED; X-RateLimit-* headers set","P2"],
+    ["SEC-10","Socket send throttle","Burst > 20 messages over the socket","`message:rate_limited` to sender; token bucket refills 5/s","P2"],
+    ["SEC-11","Security headers","Inspect response headers from /api","nosniff, X-Frame-Options DENY, Referrer-Policy no-referrer, Permissions-Policy; HSTS in prod","P2"],
+    ["SEC-12","Prod secret guard","Boot backend in production with default AUTH_JWT_SECRET / LIVEKIT secret","Boot refuses (assertProductionSecrets); fails fast","P1"],
+    ["SEC-13","Debug routes off","Hit /api/debug in production","Not mounted (only when NODE_ENV !== production)","P1"],
+    ["SEC-14","DM E2EE blind","With E2EE on, inspect stored message rows / dump DB","Server stores only public keys + opaque ciphertext; plaintext unreadable; fail-closed encrypt","P2"],
+    ["SEC-15","E2EE downgrade","Tamper a message to claim encrypted but omit ciphertext","decryptMessageList rejects it (downgrade protection)","P2"],
+    ["SEC-16","Public share link","Open /api/files/link/:token without auth","Opaque token IS the credential; valid token downloads, revoked token 404","P2"],
+    ["SEC-17","XSS in messages","Send a message containing script/onerror HTML","Rendered through dompurify (sanitizeHtml.ts); no script execution","P1"],
+    ["SEC-18","Self-removal guard","Try to remove yourself via group/meeting host eject","Cannot remove self (server guard)","P3"]
+  ]},
+
+  {"t":"callout","kind":"warning","title":"Socket handshake does not re-check the blocklist","text":"SEC-02 is HTTP-scoped. The Socket.IO handshake verifies the JWT signature but does **not** consult the token blocklist (only the HTTP `authMiddleware` does). A token revoked at logout remains usable on an already-open or freshly-opened socket until it expires (7-day default TTL). When testing revocation, verify the HTTP path is blocked and note the socket path as a known limitation rather than a passing case."},
+
+  {"t":"h","level":2,"text":"17.14 Call Tests (1:1 and Group)"},
+
+  {"t":"p","text":"Calls are the highest-risk subsystem because they cross the media plane (LiveKit SFU + coturn TURN) and depend on the deployment's TLS and firewall posture. The signalling layer is partly automated (`calls-signalling.test.ts`), but **media flow (audio/video actually traversing ICE/DTLS) requires an HTTPS deployment with TURN and cannot be validated by the in-process tests** — those only prove tokens mint and ringing routes correctly. Use `lib/callDiagnostics.ts` / `CallDebugPanel.tsx` (enable via `localStorage colab_call_debug=1` or `?calldebug=1`) to inspect the selected ICE candidate pair (host/srflx/relay), protocol, RTT, and whether TURN was used."},
+
+  {"t":"diagram","kind":"flow","title":"1:1 call media path (SFU, not P2P)","nodes":[
+    {"label":"Caller","sub":"browser"},
+    {"label":"TURN relay","sub":"coturn (if needed)"},
+    {"label":"LiveKit SFU","sub":"7532/udp"},
+    {"label":"Callee","sub":"browser"}
+  ]},
+
+  {"t":"table","headers":["ID","Area","Steps","Expected result","Priority"],"widths":[1000,1500,3200,2500,800],"rows":[
+    ["CALL-01","Token mint","Mint a room token (automated: calls-signalling.test.ts)","Valid LiveKit JWT; identity `userId__<uuid>`; video grant; canPublish true","P1"],
+    ["CALL-02","Ring 1:1","A calls B; B accepts (automated signalling: calls-signalling.test.ts)","B rings (CALL_INCOMING with correct caller); accept emits CALL_ACCEPTED to both","P1"],
+    ["CALL-03","Decline + reply","B declines with a message","CALL_DECLINED to both; decline-reply lands as a DM message; call-log pill posted","P1"],
+    ["CALL-04","No-answer / missed","A calls B; B never answers","No-answer timer fires; CALL_MISSED; missed-call pill + notification","P1"],
+    ["CALL-05","Busy","Call a user already on a call","Caller gets CALL_BUSY; no second ring","P2"],
+    ["CALL-06","Hang up","Connect a call, then hang up","CALL_ENDED to both; duration logged; idempotent terminal status","P1"],
+    ["CALL-07","Media connects","Over an HTTPS deploy, complete a real 1:1 audio+video call","Both hear/see each other; CallDebugPanel shows a connected candidate pair","P1"],
+    ["CALL-08","Cross-network","Caller on office LAN, callee on mobile/4G","Call connects via TURN relay (relay candidate pair); no one-way audio","P1"],
+    ["CALL-09","Screen share (call)","Start screen share in a 1:1 call (CoLabV1 toggleScreen)","Screen track publishes; system/tab audio best-effort; cancel picker is swallowed (no crash)","P1"],
+    ["CALL-10","1:1 -> group","Add a participant to a 1:1 call","CALL_UPGRADED to the other party; huddle state broadcast; promoted to group","P2"],
+    ["CALL-11","Group huddle","Three+ users join a group call (huddle)","HUDDLE_STATE fans out to all members; 'Group call started/ended' system pills","P1"],
+    ["CALL-12","Group host controls","Owner/admin mute-all and per-participant mute/remove","Target's audio muted / removed; non-owner attempt is 403","P1"],
+    ["CALL-13","Device hotplug","Plug/unplug a USB/Bluetooth mic or headset mid-call","switchActiveDevice/setSinkId picks up the change; ActiveDeviceChanged handled; no drop","P1"],
+    ["CALL-14","Device switch UI","Change mic/camera/speaker from in-call settings mid-call","Active device switches live without rejoining the room","P2"],
+    ["CALL-15","Camera off (1:1)","Turn off camera in a 1:1 call","Avatar shown instead of black tile (camera-slash = device feed, not a bug)","P2"],
+    ["CALL-16","Insecure context","Attempt a call over plain HTTP bare IP","mediaSupport preflight blocks with a clear message; getUserMedia not attempted","P1"],
+    ["CALL-17","TURN advertised but unreachable","Misconfigure firewall so coturn ports are closed; place a cross-network call","CallDiagnostics ICE-failed hint distinguishes 'TURN advertised but not reachable (check 3478/5349/443)'","P2"],
+    ["CALL-18","Reconnect mid-call","Drop and restore network during a call","reconnectPolicy retries (~10 over 60s); call resyncs or 2x auto-rejoin; clear failure if exhausted","P1"],
+    ["CALL-19","Duplicate identity","Open the same call in a 2nd tab","No DUPLICATE_IDENTITY kick on honest reload (per-join UUID); a real 2nd device is treated correctly","P2"],
+    ["CALL-20","Voicemail","Leave a voicemail to an unavailable user; recipient plays it","Voicemail uploaded (raw blob), listed for recipient, playable, mark-listened works","P3"]
+  ]},
+
+  {"t":"callout","kind":"risk","title":"Media-plane cases need a real deployment","text":"CALL-07, CALL-08, CALL-13, CALL-16, CALL-17, and CALL-18 cannot be proven by the committed automated tests — they exercise actual WebRTC media over ICE/DTLS, which requires a secure (HTTPS/WSS) deployment, a reachable LiveKit SFU, and a correctly firewalled coturn. The signalling tests prove only that tokens and ringing are correct. Always run the media-plane cases on a staging deployment that mirrors production network topology (including the regional SFU if Mumbai media relocation is active), with `colab_call_debug=1` enabled, before signing off a release."},
+
+  {"t":"h","level":2,"text":"17.15 Meeting Tests"},
+
+  {"t":"p","text":"Meetings reuse the LiveKit media stack but add scheduling, recurrence, a lobby/lock/eject access model (where the meeting UUID is the access credential and `meetingService.enterRoom` is the real gate), host/co-host controls, persisted in-meeting chat, hand-raise, reactions, and recording. As with calls, signalling/authorization is testable in-process but real media and recording require a deployment (and server-side egress requires the egress container, which is not provisioned in current deployments — recording is PARTIAL)."},
+
+  {"t":"table","headers":["ID","Area","Steps","Expected result","Priority"],"widths":[1000,1500,3200,2500,800],"rows":[
+    ["MTG-01","Schedule","Create a meeting with a start time and invitees","Meeting row created; invite cards posted; MEETING_NEW to each attendee's userRoom","P1"],
+    ["MTG-02","Past-time guard","Schedule a meeting in the past","Rejected (DB trigger SIGNAL + app guard if starts_at < now-2min)","P2"],
+    ["MTG-03","Recurrence","Create a weekly/monthly recurring meeting","recurrence_rule stored (Outlook-style); expander produces correct occurrences","P2"],
+    ["MTG-04","Join by ID/link","Non-invited user joins with the meeting ID or link","Allowed (UUID = access credential); subject to lobby/lock/eject gates","P2"],
+    ["MTG-05","Lobby admit","Host enables lobby; a guest waits; host admits","Guest is in waiting state; admit lets them in; deny blocks; admit-all works","P1"],
+    ["MTG-06","Lock","Host locks the meeting; outsider tries to join","enterRoom returns 403 'locked' for non-host/co-host","P1"],
+    ["MTG-07","Eject persists","Host ejects a user; that user re-mints a token","meeting_ejected consulted first -> 403 'removed'; persists across token re-mint","P1"],
+    ["MTG-08","Host vs co-host","Host promotes a co-host; co-host uses lobby/mute controls","Host = createdBy; co-host can admit/deny/mute/eject; promoteCoHost is host-only","P1"],
+    ["MTG-09","Mute all","Host clicks mute-all in a meeting","Everyone's audio muted (except optional exception); non-host attempt 403","P1"],
+    ["MTG-10","In-meeting chat","Send chat messages during a meeting; a late joiner enters","MEETING_CHAT_NEW broadcast + persisted; joiner gets last 100 replayed","P2"],
+    ["MTG-11","Hand raise","Raise and lower hand","MEETING_HAND_STATE updates with hands list + names to the room","P3"],
+    ["MTG-12","Reactions","Send an in-meeting emoji reaction","MEETING_REACTION_BROADCAST to the room","P3"],
+    ["MTG-13","Screen share (meeting)","Start screen share in a meeting (MeetingStage toggleScreen)","Screen track publishes; reverts `screen` state on throw; system audio best-effort","P1"],
+    ["MTG-14","Presence count","Multiple users enter/leave the room","MEETING_PRESENCE shows accurate count/participants; revived on rejoin","P2"],
+    ["MTG-15","Recording (client)","Start client-side recording; stop; download later","MediaRecorder webm/mp4 uploads to S3; played back via auth'd membership-checked download","P2"],
+    ["MTG-16","Recording (egress)","Start server-side egress recording without the egress container","Honest 503 returned (egress not provisioned) — PARTIAL feature","P2"],
+    ["MTG-17","Reschedule/cancel","Reschedule then cancel a meeting","MEETING_UPDATED to attendees; statuses correct; lobby changes ride MEETING_UPDATED","P2"],
+    ["MTG-18","Meeting bitrate","Verify encoder settings in a meeting vs a 1:1 call","Meeting maxBitrate 1.7Mbps vs 1:1 3Mbps; same simulcast h180/h360, vp9+vp8 backup","P3"],
+    ["MTG-19","Device hotplug (meeting)","Swap mic/cam/speaker mid-meeting","switchActiveDevice + setSinkId apply live; ActiveDeviceChanged handled","P1"],
+    ["MTG-20","Cross-network meeting","Attendees on LAN + mobile join the same meeting","All connect via SFU (and TURN where needed); no one-way media","P1"]
+  ]},
+
+  {"t":"h","level":2,"text":"17.16 Defect Triage and Reporting"},
+
+  {"t":"p","text":"When a test fails, capture the evidence the suite already produces before re-running. Playwright writes a trace on first retry (`trace:\"on-first-retry\"`); open it with `npx playwright show-trace`. For runtime/app issues, the in-app DiagnosticsPanel (open via `Ctrl+Alt+D`, `?diag=1`, or `window.__colabDiag()`) renders health chips and a copyable build report from the `lib/logger.ts` ring buffer; `window.colabLogs.copy()` dumps the structured log. For call/meeting media issues, attach the `[CALLDIAG]` console trail and the CallDebugPanel readout (candidate-pair type, protocol, RTT, packet loss, TURN used/advertised)."},
+
+  {"t":"ol","items":[
+    "Reproduce against the local stack at the documented DB URL; confirm it is not a stale-data artifact (re-run global-setup).",
+    "Capture the Playwright trace (retry artifact) and/or the DiagnosticsPanel report and CALLDIAG trail.",
+    "Record the test ID (e.g. CALL-08), device project (desktop/tablet/mobile), browser engine, and deployment tier (local/teams/live).",
+    "Classify: P1 release-blocker, P2 important, P3 nice-to-have, mapping to the priority in the case tables.",
+    "For media-plane failures, state explicitly whether signalling passed (token + ring) and only media failed — that points at network/TLS/TURN, not app code."
+  ]},
+
+  {"t":"h","level":2,"text":"17.17 Coverage Gaps and Roadmap"},
+
+  {"t":"p","text":"To keep this handbook honest, the following are the explicit gaps between the case catalogs above and what is actually automated today. Each is a concrete next step for the test suite, not a hidden weakness."},
+
+  {"t":"table","headers":["Gap","Current state","Recommended next step"],"widths":[2800,3200,3000],"rows":[
+    ["Cross-browser engines","Chromium only (3 device profiles)","Add `webkit` and `firefox` Playwright projects; install engines","P1"],
+    ["Color contrast","a11y lane ignores moderate-impact violations","Add an explicit per-theme contrast audit; fix at the `--ac*`/grayscale token layer","P1"],
+    ["Performance","Manual react-scan/Lighthouse only","Add a render-count assertion harness for PRF-01 and a pagination perf budget","P2"],
+    ["Media plane","Signalling only is automated","Add a deployment smoke that joins a real LiveKit room with fake devices and asserts a connected pair","P1"],
+    ["Recording (egress)","Server-side egress not provisioned","Provision the egress container in staging; convert MTG-16 from 503-expected to a real recording case","P2"],
+    ["Socket revocation","Handshake skips the blocklist","Add a blocklist check to the socket auth middleware and a SEC-02 socket variant","P2"],
+    ["E2EE safety number","Computed but not wired to UI","Wire safety-number verification UI, then add an A11Y/SEC case for it","P3"]
+  ]},
+
+  {"t":"callout","kind":"note","title":"Definition of release-ready","text":"A release is QA-signed when: `npm run truth` is fully green; the media-plane call and meeting cases (CALL-07/08, MTG-05/06/07) pass on a staging deployment that mirrors production network topology; the per-theme color-contrast audit has no new regressions; and any open P1 defect has either a fix or an explicit, written waiver from the product owner. P2/P3 items may ship with tracked tickets."}
+]
